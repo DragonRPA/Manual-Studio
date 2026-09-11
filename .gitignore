@@ -7,6 +7,9 @@ __pycache__/
 temp/
 captures/
 test_captures/
+build/
+dist/
+*.exe
 *.tmp
 *.log
 

@@ -63,12 +63,19 @@ except ImportError:
     DRAGON_RPA_CI_BASE64 = ""
 
 
+def get_app_dir() -> str:
+    """실행 파일(.exe) 또는 소스코드(.py)의 기본 디렉토리 반환"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    try:
+        return os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        return os.getcwd()
+
+
 def get_dragon_rpa_ci_pixmap() -> QPixmap:
     """DragonRPA Co. CI 로고 QPixmap 로드 (로컬 파일 우선, Base64 폴백)"""
-    try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-    except Exception:
-        current_dir = os.getcwd()
+    current_dir = get_app_dir()
 
     assets_candidates = [
         os.path.join(current_dir, "assets", "dragon_rpa_ci.png"),
@@ -183,7 +190,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -4126,7 +4133,7 @@ class ManualStudioWindow(QMainWindow):
             return False
 
         save_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
+            get_app_dir(),
             self.config.get("save_directory", "captures")
         )
         today_str = datetime.now().strftime("%Y%m%d")
@@ -5133,7 +5140,7 @@ class ManualStudioWindow(QMainWindow):
             clipboard_ok = False
 
         # 4. 파워포인트 새 슬라이드 자동 생성
-        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        temp_dir = os.path.join(get_app_dir(), "temp")
         ppt_ok = False
         if self.config.get("ppt_auto_slide", True):
             ppt_layout = self.config.get("ppt_layout", {})
@@ -5143,7 +5150,7 @@ class ManualStudioWindow(QMainWindow):
         bundle_res = None
         if self.config.get("save_to_file", True):
             save_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
+                get_app_dir(),
                 self.config.get("save_directory", "captures")
             )
             bundle_res = ExportEngine.auto_backup_step_bundle(
