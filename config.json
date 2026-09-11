@@ -1,0 +1,85 @@
+{
+  "hotkey_capture": "F9",
+  "hotkey_export": "F10",
+  "target_width": 960,
+  "auto_resize": true,
+  "save_to_file": true,
+  "save_directory": "captures",
+  "include_cursor": false,
+  "stamp_style": {
+    "size": 32,
+    "bg_color": "#E53935",
+    "text_color": "#FFFFFF",
+    "font_family": "Malgun Gothic",
+    "font_bold": true,
+    "border_color": "#FFFFFF",
+    "border_width": 2
+  },
+  "text_style": {
+    "font_family": "Malgun Gothic",
+    "font_size": 14,
+    "font_bold": true,
+    "text_color": "#FFFFFF",
+    "bg_color": "#212121",
+    "bg_opacity": 220,
+    "border_color": "#E53935",
+    "border_width": 1,
+    "border_radius": 6,
+    "padding": 6
+  },
+  "highlight_box_style": {
+    "color": "#E53935",
+    "border_width": 3,
+    "fill": false
+  },
+  "arrow_style": {
+    "color": "#E53935",
+    "width": 3,
+    "head_size": 14
+  },
+  "callout_style": {
+    "font_size": 12,
+    "text_color": "#FFFFFF",
+    "bg_color": "#212121",
+    "bg_opacity": 230,
+    "border_color": "#E53935",
+    "border_width": 3,
+    "border_radius": 6
+  },
+  "elbow_style": {
+    "color": "#E53935",
+    "width": 3,
+    "head_size": 14,
+    "route_mode": "HV"
+  },
+  "blur_style": {
+    "block_size": 10
+  },
+  "hotkey_style": {
+    "font_size": 12,
+    "theme": "dark"
+  },
+  "fixed_rect_enabled": true,
+  "fixed_rect": {
+    "x": 3,
+    "y": 74,
+    "width": 347,
+    "height": 691
+  },
+  "ppt_auto_slide": true,
+  "ppt_layout": {
+    "left": 26,
+    "top": 50,
+    "scale": 24,
+    "include_title": true,
+    "title_left": 26,
+    "title_top": 5,
+    "title_width": 500,
+    "title_height": 20,
+    "title_font_family": "Malgun Gothic",
+    "title_font_size": 16,
+    "title_font_bold": false,
+    "title_font_color": "#000000",
+    "title_template": "Step {n}. [단계명 입력]"
+  }
+}
