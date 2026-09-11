@@ -1,5 +1,20 @@
 # Manual Studio Release Notes
 
+## [v1.2.0.Build.3] - 2026-09-11 13:45
+
+### ⚡ Nuitka C-컴파일러 완전 전환 (순수 기계어 바이너리)
+- **C-트랜스파일 및 네이티브 컴파일 완결**:
+  - Python 코드를 순수 C 언어로 변환 후 MinGW64 GCC 15.2.0 컴파일러를 통해 바이너리 생성 완료.
+  - 역컴파일(디컴파일러 공격)에 취약한 기존 바이트코드 번들링 방식(PyInstaller) 대비 100% 기계어 바이너리로 코드 보안성 및 저작권 방어력 극대화.
+- **초경량 단일 실행파일 달성**:
+  - 실행 파일 용량: 기존 58.7 MB(PyInstaller) ➔ **27.97 MB** (52% 다이어트 성공).
+  - 콘솔창 완전 제거 (`--windows-console-mode=disable` 적용)로 전문 상용 소프트웨어급 미려한 구동 UX 확보.
+- **Windows 한글 계정명 경로 결함 3중 방어막 구축**:
+  - `depends.exe` latin1 인코딩 깨짐 우회를 위해 순수 파이썬 PE 헤더 분석 엔진(`--experimental=force-dependencies-pefile`) 탑재.
+  - MinGW `ld.exe` 링커 호환을 위해 `C:\nuitka_libs` 순수 ASCII 라이브러리 fallback 경로 연동.
+  - GCC LTO 심볼 해석 경로 결함 차단을 위해 `--lto=no` 및 `C:\ManualStudioBuild\temp` 지정.
+- **원클릭 C-컴파일 배치 스크립트 제공**: `build_c.bat`
+
 ## [v1.2.0.Build.1] - 2026-09-11 13:15
 
 ### 🏢 회사 브랜딩 및 프로그램명 개편
