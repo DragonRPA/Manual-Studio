@@ -2016,6 +2016,112 @@ def test_ui_theme_styles_windows_and_macos():
 
     print("[PASS] test_ui_theme_styles_windows_and_macos (Windows/macOS QSS, MacTrafficLight, SettingsDialog, 9-lang i18n, and live hot-swap valid)")
 
+def test_ai_agent_cli_and_mcp_server():
+    """Test 44: AI 에이전트 전용 CLI 헤드리스 자동화 및 MCP (Model Context Protocol) 서버 전수 무결성 검증"""
+    import os
+    import tempfile
+    import json
+    from manual_cli import (
+        cli_status, cli_capture, cli_annotate, cli_render_project, cli_export,
+        handle_cli
+    )
+    from mcp_server import MCPServer, TOOLS_SPEC
+
+    # 1. AGENTS.md 명세서 존재 및 핵심 섹션 검증
+    agents_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AGENTS.md")
+    assert os.path.exists(agents_path), "AGENTS.md file must exist in project root"
+    with open(agents_path, "r", encoding="utf-8") as f:
+        agents_content = f.read()
+    assert "CLI Headless Interface" in agents_content
+    assert "Model Context Protocol (MCP) Server" in agents_content
+    assert "Declarative Project Specification" in agents_content
+
+    # 2. CLI status 무결성 검증
+    status_res = cli_status()
+    assert status_res.get("status") == "ok"
+    assert status_res.get("app_name") == "Manual Studio"
+    assert len(status_res.get("screens", [])) >= 1
+    assert "fixed_rect" in status_res
+
+    # 3. CLI capture 무결성 검증 (헤드리스 영역 캡처)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cap_file = os.path.join(tmpdir, "test_cap.png")
+        cap_res = cli_capture(rect="10,10,320,240", output=cap_file)
+        assert cap_res.get("status") == "ok"
+        assert os.path.exists(cap_file)
+        assert cap_res.get("width") == 320
+        assert cap_res.get("height") == 240
+
+        # 4. CLI annotate 무결성 검증 (스탬프, 박스, 화살표 일괄 합성)
+        ann_file = os.path.join(tmpdir, "test_annotated.png")
+        ann_res = cli_annotate(
+            input_path=cap_file,
+            output_path=ann_file,
+            stamps=["1:40,40:#E53935:32", "2:100,100"],
+            boxes=["50,50,150,100:#007AFF:3:fill"],
+            arrows=["20,20,60,60:#27C93F:3"],
+            texts=["AI Label:120,40"]
+        )
+        assert ann_res.get("status") == "ok"
+        assert os.path.exists(ann_file)
+        assert ann_res.get("items_applied") == 5
+
+        # 5. CLI render-project 무결성 검증 (.mcs.json 복원 렌더링)
+        proj_file = os.path.join(tmpdir, "test.mcs.json")
+        proj_data = {
+            "format": "ManualCaptureStudio_Project",
+            "version": "1.0",
+            "canvas_size": [320, 240],
+            "raw_image_file": os.path.basename(cap_file),
+            "items": [
+                {"type": "StampItem", "index": 1, "x": 50.0, "y": 50.0, "style": {}},
+                {"type": "HighlightBoxItem", "rect": [30, 30, 100, 80], "style": {}}
+            ]
+        }
+        with open(proj_file, "w", encoding="utf-8") as f:
+            json.dump(proj_data, f)
+
+        rnd_file = os.path.join(tmpdir, "test_rendered.png")
+        rnd_res = cli_render_project(project_path=proj_file, output_path=rnd_file)
+        assert rnd_res.get("status") == "ok"
+        assert os.path.exists(rnd_file)
+        assert rnd_res.get("items_count") == 2
+
+        # 6. MCP Server 도구 규격(TOOLS_SPEC) 6종 검증
+        assert len(TOOLS_SPEC) == 6
+        tool_names = [t["name"] for t in TOOLS_SPEC]
+        assert "manual_studio_status" in tool_names
+        assert "manual_studio_capture_screen" in tool_names
+        assert "manual_studio_add_annotations" in tool_names
+        assert "manual_studio_render_project" in tool_names
+        assert "manual_studio_export_presentation" in tool_names
+        assert "manual_studio_create_step" in tool_names
+
+        # 7. MCP Server 실행기 단위 검증
+        server = MCPServer()
+        mcp_stat = server.execute_tool("manual_studio_status", {})
+        assert mcp_stat.get("status") == "ok"
+
+        mcp_cap = server.execute_tool("manual_studio_capture_screen", {
+            "rect": "10,10,200,150",
+            "output_path": os.path.join(tmpdir, "mcp_cap.png")
+        })
+        assert mcp_cap.get("status") == "ok"
+
+        mcp_step = server.execute_tool("manual_studio_create_step", {
+            "rect": "10,10,200,150",
+            "annotations": {
+                "stamps": ["1:30,30"],
+                "boxes": ["20,20,80,60"]
+            },
+            "export_target": "none"
+        })
+        assert mcp_step.get("status") == "ok"
+        assert mcp_step.get("items_applied") == 2
+        assert os.path.exists(mcp_step.get("annotated_image"))
+
+    print("[PASS] test_ai_agent_cli_and_mcp_server (AGENTS.md, CLI headless capture/annotate/render, and MCP 6-tool engine fully verified)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -2060,7 +2166,8 @@ if __name__ == "__main__":
     test_dialog_multilingual_localization()
     test_google_slides_integration()
     test_ui_theme_styles_windows_and_macos()
-    print("\nALL 43 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES & DUAL UI THEME TESTS PASSED 100%!")
+    test_ai_agent_cli_and_mcp_server()
+    print("\nALL 44 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME & AI AGENT CLI/MCP TESTS PASSED 100%!")
     os._exit(0)
 
 

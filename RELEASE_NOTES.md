@@ -1,5 +1,36 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.13] - 2026-09-12 23:30
+
+### AI 에이전트 전용 호출 API, 헤드리스 CLI 엔진 및 Model Context Protocol (MCP) 서버 구축
+- **AGENTS.md 기계 판독형 초고밀도 에이전트 가이드 구축 (프로젝트 루트 배치)**:
+  - Claude Cowork, Claude Code, Cursor, Antigravity 등 LLM 에이전트가 리포지토리 접근 시 단 3초 만에 시스템 아키텍처, CLI 명령어, MCP 툴, 단축키 및 에러 복구 지침을 자율 학습할 수 있는 표준 가이드 제공.
+  - CLI 명령어 명세, MCP JSON-RPC stdio 설정 스니펫, UI 자동화 식별자(AutomationId) 매핑 및 선언적 프로젝트 포맷(.mcs.json) 스키마 수록.
+- **manual_cli.py 헤드리스 자동화 CLI 엔진 개발 및 --cli 플래그 연동**:
+  - GUI 창을 띄우지 않고 명령줄 인자만으로 모든 매뉴얼 제작 파이프라인을 완전 자동화:
+    1. `status`: 애플리케이션 버전, 정식 라이선스 여부, 연결된 다중 모니터 해상도, 고정 캡처 좌표 JSON 반환.
+    2. `capture`: 지정 영역(`--rect x,y,w,h`), 모니터(`--monitor`), 고정 영역(`--fixed`) 백그라운드 고해상도 PNG 캡처.
+    3. `annotate`: 원본 이미지에 번호 스탬프(`--stamp`), 강조 박스(`--box`), 화살표(`--arrow`), 지시선 말풍선(`--callout`), 텍스트 라벨(`--text`) 일괄 합성.
+    4. `render-project`: `.mcs.json` 프로젝트 파일을 읽어와 원본 비트맵과 모든 레이어 주석 객체를 완벽 복원 렌더링.
+    5. `export`: 파워포인트(로컬 COM) 또는 구글 슬라이드(웹 브라우저 매크로)로 원터치 즉시 주입.
+- **mcp_server.py 독립형 & 단일 바이너리 내장형 MCP 서버 탑재**:
+  - Anthropic Model Context Protocol (2024-11-05) 표준 stdio JSON-RPC 2.0 프로토콜 규격 완전 준수 (무의존성 순수 파이썬 표준 라이브러리 기반).
+  - 6대 전용 MCP 도구 등록:
+    - `manual_studio_status`: 시스템 상태 및 화면 정보 조회.
+    - `manual_studio_capture_screen`: 화면 및 영역 스크린샷 캡처.
+    - `manual_studio_add_annotations`: 이미지에 주석 객체 합성.
+    - `manual_studio_render_project`: .mcs.json 프로젝트 파일 렌더링.
+    - `manual_studio_export_presentation`: 파워포인트/구글 슬라이드 내보내기.
+    - `manual_studio_create_step`: 캡처 ➔ 주석 ➔ 프레젠테이션 주입을 단 1회의 툴 호출로 끝내는 올인원 복합 액션.
+  - Claude Desktop `claude_desktop_config.json`에 `ManualStudio.exe --mcp` 또는 `python mcp_server.py`로 등록 즉시 사용 가능.
+- **단일 실행 바이너리 엔트리포인트(manual_capture_studio.py) 지능형 분기 통합**:
+  - `--cli` 수신 시 콘솔 숨김 및 인스턴스 종료 없이 헤드리스 CLI 모드로 즉시 실행 후 종료.
+  - `--mcp` 수신 시 stdio JSON-RPC 서버로 즉시 진입하여 무중단 에이전트 도구 서비스 제공.
+  - 인자 미지정 시 기존과 동일하게 네이티브 데스크톱 GUI 스튜디오로 정상 기동 (100% 하위 호환성 보장).
+- **자동화 단위 테스트 44개 전 항목 100% 통과 (test_core_engine.py)**:
+  - `test_ai_agent_cli_and_mcp_server()` (Test 44) 추가: AGENTS.md, CLI 5대 명령, MCP 프로토콜 핸드셰이크(initialize, tools/list, tools/call) 및 6대 도구 실행 전수 검증 통과.
+- **C-컴파일러(Nuitka) 빌드 버전 v1.4.0.13 동기화**.
+
 ## [v1.4.0.Build.12] - 2026-09-12 22:50
 
 ### Macintosh (macOS) 호환성 발굴 워크숍 성계 도출 및 Windows/Macintosh 듀얼 UI 스타일 엔진 구축

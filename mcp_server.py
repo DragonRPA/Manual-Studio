@@ -1,0 +1,361 @@
+"""
+================================================================================
+DragonRPA Manual Studio - Model Context Protocol (MCP) Server
+================================================================================
+Standard stdio JSON-RPC 2.0 MCP Server adhering to Anthropic MCP (2024-11-05).
+Enables Claude Desktop, Claude Cowork, Cursor, and AI Agents to inspect and
+automate Manual Studio workflows directly via natural language tool calls.
+================================================================================
+"""
+
+import sys
+import os
+import json
+import traceback
+
+# CLI 엔진 함수들 임포트
+from manual_cli import (
+    cli_status, cli_capture, cli_annotate, cli_render_project, cli_export
+)
+
+SERVER_NAME = "manual-studio-mcp-server"
+SERVER_VERSION = "1.4.0"
+PROTOCOL_VERSION = "2024-11-05"
+
+TOOLS_SPEC = [
+    {
+        "name": "manual_studio_status",
+        "description": "Query Manual Studio application status, version, monitor geometries, and active configuration.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "manual_studio_capture_screen",
+        "description": "Capture the primary or secondary display or a specific rectangle (x,y,w,h) to a PNG file.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "rect": {"type": "string", "description": "Screen bounding box in 'x,y,w,h' format (e.g. '100,100,960,540')"},
+                "monitor": {"type": "integer", "description": "Monitor index (0=Primary display)"},
+                "fixed": {"type": "boolean", "description": "Use predefined fixed capture rectangle from config.json"},
+                "output_path": {"type": "string", "description": "Optional destination file path for PNG"}
+            }
+        }
+    },
+    {
+        "name": "manual_studio_add_annotations",
+        "description": "Apply visual annotations (numbered stamps, highlight boxes, arrows, callouts, text labels) onto an image.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string", "description": "Source image path to annotate"},
+                "output_path": {"type": "string", "description": "Optional destination path for annotated image"},
+                "stamps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of stamps in format 'index:x,y[:color:size]' (e.g. '1:150,220')"
+                },
+                "boxes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of boxes in format 'x,y,w,h[:color:width:fill]' (e.g. '100,180,300,120:#E53935:3:fill')"
+                },
+                "arrows": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of arrows in format 'x1,y1,x2,y2[:color:width]' (e.g. '120,100,150,200')"
+                },
+                "callouts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of callouts in format 'text:bx,by,bw,bh:tx,ty' (e.g. 'Click:200,100,150,50:180,160')"
+                },
+                "texts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of texts in format 'text:x,y[:color:size:bg]'"
+                },
+                "raw_items": {
+                    "type": "array",
+                    "description": "List of raw item dictionaries adhering to Manual Studio schema"
+                }
+            },
+            "required": ["input_path"]
+        }
+    },
+    {
+        "name": "manual_studio_render_project",
+        "description": "Render a Manual Studio project file (.mcs.json) into a final composite PNG image.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {"type": "string", "description": "Path to .mcs.json project file"},
+                "output_path": {"type": "string", "description": "Destination PNG path"},
+                "export_ppt": {"type": "boolean", "description": "Immediately push to active PowerPoint presentation"},
+                "export_slides": {"type": "boolean", "description": "Immediately push to active Google Slides in browser"}
+            },
+            "required": ["project_path"]
+        }
+    },
+    {
+        "name": "manual_studio_export_presentation",
+        "description": "Export an image into Microsoft PowerPoint or Google Slides.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string", "description": "Path to image to export"},
+                "target": {
+                    "type": "string",
+                    "enum": ["powerpoint", "google_slides", "clipboard"],
+                    "description": "Export destination"
+                },
+                "title": {"type": "string", "description": "Optional step title to insert onto the slide"},
+                "template": {"type": "string", "description": "Optional .pptx template path for new presentations"}
+            },
+            "required": ["input_path"]
+        }
+    },
+    {
+        "name": "manual_studio_create_step",
+        "description": "High-level all-in-one action: captures screen region, overlays annotations, and exports to presentation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "rect": {"type": "string", "description": "Screen bounding box 'x,y,w,h' or 'fixed'"},
+                "monitor": {"type": "integer", "description": "Monitor index (0=Primary)"},
+                "annotations": {
+                    "type": "object",
+                    "properties": {
+                        "stamps": {"type": "array", "items": {"type": "string"}},
+                        "boxes": {"type": "array", "items": {"type": "string"}},
+                        "arrows": {"type": "array", "items": {"type": "string"}},
+                        "callouts": {"type": "array", "items": {"type": "string"}},
+                        "texts": {"type": "array", "items": {"type": "string"}}
+                    }
+                },
+                "export_target": {
+                    "type": "string",
+                    "enum": ["powerpoint", "google_slides", "clipboard", "none"],
+                    "description": "Destination presentation"
+                },
+                "step_title": {"type": "string", "description": "Step title in presentation"}
+            }
+        }
+    }
+]
+
+
+class MCPServer:
+    """단일 프로세스 stdio JSON-RPC 2.0 MCP 프로토콜 핸들러"""
+
+    def __init__(self):
+        self.running = True
+
+    def log(self, msg: str):
+        sys.stderr.write(f"[ManualStudio-MCP] {msg}\n")
+        sys.stderr.flush()
+
+    def send_response(self, resp: dict):
+        line = json.dumps(resp, ensure_ascii=False)
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+    def handle_request(self, req: dict):
+        req_id = req.get("id")
+        method = req.get("method")
+        params = req.get("params", {})
+
+        if method == "initialize":
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": SERVER_NAME,
+                        "version": SERVER_VERSION
+                    }
+                }
+            })
+            return
+
+        elif method == "notifications/initialized":
+            # 클라이언트 초기화 완료 통지
+            return
+
+        elif method == "ping":
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {}
+            })
+            return
+
+        elif method == "tools/list":
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "tools": TOOLS_SPEC
+                }
+            })
+            return
+
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            tool_args = params.get("arguments", {})
+            try:
+                res_data = self.execute_tool(tool_name, tool_args)
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(res_data, indent=2, ensure_ascii=False)
+                            }
+                        ],
+                        "isError": res_data.get("status") == "error"
+                    }
+                })
+            except Exception as e:
+                self.log(f"Error executing tool {tool_name}: {traceback.format_exc()}")
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Error: {str(e)}"
+                            }
+                        ],
+                        "isError": True
+                    }
+                })
+            return
+
+        else:
+            # 알 수 없는 메서드
+            if req_id is not None:
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {method}"
+                    }
+                })
+
+    def execute_tool(self, name: str, args: dict) -> dict:
+        if name == "manual_studio_status":
+            return cli_status()
+
+        elif name == "manual_studio_capture_screen":
+            rect = args.get("rect")
+            monitor = int(args.get("monitor", 0))
+            fixed = bool(args.get("fixed", False))
+            out = args.get("output_path")
+            return cli_capture(rect=rect, monitor=monitor, fixed=fixed, output=out)
+
+        elif name == "manual_studio_add_annotations":
+            return cli_annotate(
+                input_path=args.get("input_path"),
+                output_path=args.get("output_path"),
+                stamps=args.get("stamps"),
+                boxes=args.get("boxes"),
+                arrows=args.get("arrows"),
+                callouts=args.get("callouts"),
+                texts=args.get("texts"),
+                raw_items=args.get("raw_items")
+            )
+
+        elif name == "manual_studio_render_project":
+            return cli_render_project(
+                project_path=args.get("project_path"),
+                output_path=args.get("output_path"),
+                export_ppt=bool(args.get("export_ppt", False)),
+                export_slides=bool(args.get("export_slides", False))
+            )
+
+        elif name == "manual_studio_export_presentation":
+            return cli_export(
+                input_path=args.get("input_path"),
+                target=args.get("target", "powerpoint"),
+                title=args.get("title"),
+                template=args.get("template")
+            )
+
+        elif name == "manual_studio_create_step":
+            # 올인원 복합 액션: 캡처 -> 주석 -> 내보내기
+            rect_arg = args.get("rect", "fixed")
+            is_fixed = (rect_arg == "fixed")
+            rect_val = None if is_fixed else rect_arg
+            mon = int(args.get("monitor", 0))
+
+            cap_res = cli_capture(rect=rect_val, monitor=mon, fixed=is_fixed)
+            if cap_res.get("status") != "ok":
+                return cap_res
+
+            raw_file = cap_res["output_file"]
+            ann_spec = args.get("annotations", {})
+
+            ann_res = cli_annotate(
+                input_path=raw_file,
+                stamps=ann_spec.get("stamps"),
+                boxes=ann_spec.get("boxes"),
+                arrows=ann_spec.get("arrows"),
+                callouts=ann_spec.get("callouts"),
+                texts=ann_spec.get("texts")
+            )
+            if ann_res.get("status") != "ok":
+                return ann_res
+
+            final_file = ann_res["output_file"]
+            export_target = args.get("export_target", "none")
+            step_title = args.get("step_title")
+
+            exp_res = None
+            if export_target and export_target != "none":
+                exp_res = cli_export(input_path=final_file, target=export_target, title=step_title)
+
+            return {
+                "status": "ok",
+                "raw_capture": raw_file,
+                "annotated_image": final_file,
+                "items_applied": ann_res.get("items_applied", 0),
+                "export_result": exp_res
+            }
+
+        else:
+            return {"status": "error", "message": f"Unknown tool: {name}"}
+
+    def run(self):
+        self.log(f"Starting {SERVER_NAME} v{SERVER_VERSION} on stdio...")
+        while self.running:
+            try:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                req = json.loads(line)
+                self.handle_request(req)
+            except Exception as e:
+                self.log(f"Unhandled loop error: {e}")
+
+
+def run_mcp_server():
+    server = MCPServer()
+    server.run()
+
+
+if __name__ == "__main__":
+    run_mcp_server()

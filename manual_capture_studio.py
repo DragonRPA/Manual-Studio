@@ -9303,6 +9303,27 @@ def kill_other_instances():
 # 9. 엔트리 포인트
 # ==============================================================================
 def main():
+    # AI 에이전트 및 CLI 헤드리스 모드 사전 분기
+    if "--mcp" in sys.argv:
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.kernel32.AttachConsole(-1)
+            except Exception:
+                pass
+        from mcp_server import run_mcp_server
+        run_mcp_server()
+        return
+
+    if "--cli" in sys.argv:
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.kernel32.AttachConsole(-1)
+            except Exception:
+                pass
+        from manual_cli import handle_cli
+        cli_args = [a for a in sys.argv[1:] if a != "--cli"]
+        sys.exit(handle_cli(cli_args))
+
     # 0. Windows 환경에서 python.exe로 실행 시 검은 콘솔창 즉시 숨김
     hide_console_window()
 
