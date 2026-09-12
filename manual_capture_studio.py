@@ -24,31 +24,34 @@ from ctypes import wintypes
 
 # Windows 환경에서 Qt 플랫폼 플러그인(qwindows.dll) 탐색 실패 원천 방지
 try:
-    import PyQt5
-    pyqt_dir = os.path.dirname(PyQt5.__file__)
-    plugins_dir = os.path.join(pyqt_dir, "Qt5", "plugins")
+    import PySide6
+    pyside_dir = os.path.dirname(PySide6.__file__)
+    plugins_dir = os.path.join(pyside_dir, "plugins")
     platforms_dir = os.path.join(plugins_dir, "platforms")
     if os.path.exists(platforms_dir):
         os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = platforms_dir
-    elif os.path.exists(os.path.join(pyqt_dir, "Qt", "plugins", "platforms")):
-        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(pyqt_dir, "Qt", "plugins", "platforms")
 except Exception:
     pass
 
-from PyQt5.QtCore import (
-    Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, pyqtSignal, QTimer, QCoreApplication,
+from PySide6.QtCore import (
+    Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, Signal, Slot, QTimer, QCoreApplication,
     QByteArray, QBuffer, QIODevice, QUrl
 )
-from PyQt5.QtGui import (
+# 하위 호환성 별칭 제공
+pyqtSignal = Signal
+pyqtSlot = Slot
+
+from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
-    QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices
+    QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices,
+    QFontDatabase, QGuiApplication, QScreen, QAction
 )
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QDialog, QSpinBox, QColorDialog,
-    QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea, QAction,
+    QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
-    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit
+    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QComboBox, QFontComboBox
 )
 
 from PIL import Image
@@ -56,6 +59,9 @@ import win32gui
 import win32con
 import win32clipboard
 import win32com.client
+
+from i18n_manager import I18nManager, tr
+from license_engine import LicenseEngine, LicenseType
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -165,6 +171,23 @@ DEFAULT_CONFIG = {
         "font_size": 12,
         "theme": "dark"
     },
+    "wordart_style": {
+        "text": "주요 확인",
+        "font_family": "Malgun Gothic",
+        "font_size": 24,
+        "font_bold": True,
+        "text_color": "#FFFFFF",
+        "stroke_color": "#000000",
+        "stroke_width": 3,
+        "shadow_enabled": True,
+        "shadow_color": "#000000",
+        "shadow_alpha": 180,
+        "shadow_offset_x": 2.0,
+        "shadow_offset_y": 2.0,
+        "preset_id": "white_pop"
+    },
+    "custom_fonts": [],
+    "target_monitor": 0,
     "fixed_rect_enabled": True,
     "fixed_rect": {
         "x": 100,
@@ -187,7 +210,11 @@ DEFAULT_CONFIG = {
         "title_font_bold": True,
         "title_font_color": "#000000",
         "title_template": "Step {n}. [단계명 입력]"
-    }
+    },
+    "locale": "auto",
+    "auto_save_enabled": True,
+    "auto_save_interval_min": 5,
+    "ppt_template_path": ""
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -201,7 +228,7 @@ def load_config():
                 merged.update(cfg)
                 for sub_key in [
                     "stamp_style", "text_style", "highlight_box_style", "arrow_style",
-                    "callout_style", "elbow_style", "blur_style", "hotkey_style",
+                    "callout_style", "elbow_style", "blur_style", "hotkey_style", "wordart_style",
                     "fixed_rect", "ppt_layout"
                 ]:
                     if sub_key in DEFAULT_CONFIG:
@@ -220,6 +247,165 @@ def save_config(cfg):
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[Config] 설정 저장 실패: {e}")
+
+
+# ==============================================================================
+# 1-1. 외부/유료/토너절약 폰트 관리자 (CustomFontManager)
+# ==============================================================================
+class CustomFontManager:
+    """고객사 고유 폰트(.ttf, .otf, .ttc) 등록 및 QFontDatabase 연동 관리자"""
+    _instance = None
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        self.fonts_dir = os.path.join(get_app_dir(), "fonts")
+        if not os.path.exists(self.fonts_dir):
+            try:
+                os.makedirs(self.fonts_dir, exist_ok=True)
+            except Exception:
+                pass
+        self.loaded_families = []
+        self.registered_files = []
+
+    def load_all_fonts(self, config_custom_fonts=None):
+        """fonts/ 디렉토리 및 config에 명시된 폰트 파일 일괄 적재"""
+        self.loaded_families.clear()
+        self.registered_files.clear()
+
+        # 1. fonts 디렉토리 스캔
+        if os.path.exists(self.fonts_dir):
+            for fname in os.listdir(self.fonts_dir):
+                if fname.lower().endswith((".ttf", ".otf", ".ttc", ".woff")):
+                    fpath = os.path.join(self.fonts_dir, fname)
+                    self._register_single_font(fpath)
+
+        # 2. 추가 config 파일 목록 로드
+        if config_custom_fonts and isinstance(config_custom_fonts, list):
+            for fpath in config_custom_fonts:
+                if os.path.exists(fpath) and fpath not in self.registered_files:
+                    self._register_single_font(fpath)
+
+        return list(self.loaded_families)
+
+    def _register_single_font(self, fpath):
+        try:
+            font_id = QFontDatabase.addApplicationFont(fpath)
+            if font_id >= 0:
+                families = QFontDatabase.applicationFontFamilies(font_id)
+                for fam in families:
+                    if fam not in self.loaded_families:
+                        self.loaded_families.append(fam)
+                if fpath not in self.registered_files:
+                    self.registered_files.append(fpath)
+                return families
+        except Exception as e:
+            print(f"[CustomFontManager] 폰트 로드 실패 ({fpath}): {e}")
+        return []
+
+    def import_font_file(self, source_path):
+        """외부 폰트 파일을 fonts/ 디렉토리로 복사 후 시스템 등록"""
+        if not os.path.exists(source_path):
+            return [], None
+        fname = os.path.basename(source_path)
+        dest_path = os.path.join(self.fonts_dir, fname)
+        if os.path.abspath(source_path) != os.path.abspath(dest_path):
+            import shutil
+            shutil.copy2(source_path, dest_path)
+        families = self._register_single_font(dest_path)
+        return families, dest_path
+
+
+# ==============================================================================
+# 1-2. 다중 모니터 좌표/영역 관리자 (MultiMonitorManager)
+# ==============================================================================
+class MultiMonitorManager:
+    """최대 4개 이상의 다중 모니터 인식 및 가상 데스크톱/상대 좌표 매핑 관리자"""
+    @staticmethod
+    def get_screens():
+        return list(QGuiApplication.screens())
+
+    @staticmethod
+    def get_monitor_info_list():
+        """모니터 목록 반환: [{'index': i, 'label': str, 'geometry': QRect, 'is_primary': bool}, ...]"""
+        screens = MultiMonitorManager.get_screens()
+        primary = QGuiApplication.primaryScreen()
+        info_list = []
+        for i, s in enumerate(screens):
+            geo = s.geometry()
+            is_prim = (s == primary)
+            prim_tag = " ★주화면" if is_prim else ""
+            label = f"모니터 {i+1}: {s.name()} ({geo.width()}×{geo.height()}){prim_tag}"
+            info_list.append({
+                "index": i,
+                "label": label,
+                "geometry": geo,
+                "screen": s,
+                "is_primary": is_prim
+            })
+        return info_list
+
+    @staticmethod
+    def get_virtual_desktop_rect():
+        """모든 모니터를 포함하는 전체 가상 데스크톱 사각 영역 계산"""
+        screens = MultiMonitorManager.get_screens()
+        if not screens:
+            return QRect(0, 0, 1920, 1080)
+        min_x = min(s.geometry().x() for s in screens)
+        min_y = min(s.geometry().y() for s in screens)
+        max_x = max(s.geometry().x() + s.geometry().width() for s in screens)
+        max_y = max(s.geometry().y() + s.geometry().height() for s in screens)
+        return QRect(min_x, min_y, max_x - min_x, max_y - min_y)
+
+    @staticmethod
+    def to_global_rect(target_monitor, rel_rect):
+        """특정 모니터 기준 상대 좌표(rel_rect)를 전체 가상 데스크톱 글로벌 좌표로 변환"""
+        screens = MultiMonitorManager.get_screens()
+        if target_monitor is None or target_monitor < 0 or target_monitor >= len(screens):
+            v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+            return QRect(v_rect.x() + rel_rect.x(), v_rect.y() + rel_rect.y(), rel_rect.width(), rel_rect.height())
+        screen_geo = screens[target_monitor].geometry()
+        return QRect(screen_geo.x() + rel_rect.x(), screen_geo.y() + rel_rect.y(), rel_rect.width(), rel_rect.height())
+
+    @staticmethod
+    def to_relative_rect(target_monitor, global_rect):
+        """가상 데스크톱 글로벌 좌표를 특정 모니터 기준 상대 좌표로 변환"""
+        screens = MultiMonitorManager.get_screens()
+        if target_monitor is None or target_monitor < 0 or target_monitor >= len(screens):
+            v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+            return QRect(global_rect.x() - v_rect.x(), global_rect.y() - v_rect.y(), global_rect.width(), global_rect.height())
+        screen_geo = screens[target_monitor].geometry()
+        return QRect(global_rect.x() - screen_geo.x(), global_rect.y() - screen_geo.y(), global_rect.width(), global_rect.height())
+
+    @staticmethod
+    def grab_target_area(target_monitor, rel_rect):
+        """선택된 모니터의 상대 좌표 영역을 고품질 캡처하여 QPixmap 반환"""
+        screens = MultiMonitorManager.get_screens()
+        rx = max(0, rel_rect.x())
+        ry = max(0, rel_rect.y())
+        rw = max(10, rel_rect.width())
+        rh = max(10, rel_rect.height())
+
+        # 특정 단일 모니터 지정인 경우
+        if 0 <= target_monitor < len(screens):
+            screen = screens[target_monitor]
+            return screen.grabWindow(0, rx, ry, rw, rh)
+
+        # 전체 가상 데스크톱 대상인 경우: 모든 모니터 스크린샷 결합
+        v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+        canvas_pix = QPixmap(v_rect.size())
+        canvas_pix.fill(Qt.black)
+        painter = QPainter(canvas_pix)
+        for s in screens:
+            sg = s.geometry()
+            s_pix = s.grabWindow(0)
+            painter.drawPixmap(sg.x() - v_rect.x(), sg.y() - v_rect.y(), s_pix)
+        painter.end()
+        return canvas_pix.copy(rx, ry, rw, rh)
 
 
 # ==============================================================================
@@ -390,11 +576,17 @@ class TextLabelItem:
     def from_dict(cls, data):
         return cls(str(data["text"]), float(data["x"]), float(data["y"]), data.get("style", {}))
 
-    def get_rect(self, painter_or_metrics=None):
+    def get_font(self):
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 13))
         font = QFont(font_family, font_size)
-        font.setBold(self.style.get("font_bold", True))
+        font.setBold(bool(self.style.get("font_bold", True)))
+        families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
+        font.setFamilies(families)
+        return font
+
+    def get_rect(self, painter_or_metrics=None):
+        font = self.get_font()
         fm = QFontMetrics(font)
         pad = int(self.style.get("padding", 6))
         tw = fm.horizontalAdvance(self.text) + (pad * 2) + 4
@@ -438,8 +630,7 @@ class TextLabelItem:
         painter.drawRoundedRect(rect, radius, radius)
 
         # 글자
-        font = QFont(self.style.get("font_family", "Malgun Gothic"), int(self.style.get("font_size", 13)))
-        font.setBold(self.style.get("font_bold", True))
+        font = self.get_font()
         painter.setFont(font)
         painter.setPen(text_col)
 
@@ -670,14 +861,22 @@ class StepArrowItem:
 
 class ElbowArrowItem:
     """직각(ㄱ, ㄴ, Z자) 우회 화살표 연결선 객체"""
-    def __init__(self, start_pos, end_pos, style, route_mode="HV"):
+    def __init__(self, start_pos, end_pos, style=None, route_mode="HV"):
         self.start_pos = QPointF(start_pos)
         self.end_pos = QPointF(end_pos)
-        self.style = style.copy() if hasattr(style, "copy") else dict(style)
-        self.route_mode = route_mode  # HV (가로 먼저) 또는 VH (세로 먼저)
+        if style is None:
+            self.style = {"color": "#E53935", "width": 3, "head_size": 14}
+        else:
+            self.style = style.copy() if hasattr(style, "copy") else dict(style)
+        self.route_mode = route_mode  # HV (가로 먼저: ㄱ자형) 또는 VH (세로 먼저: ㄴ자형)
 
     def clone(self):
         return ElbowArrowItem(QPointF(self.start_pos), QPointF(self.end_pos), self.style.copy(), self.route_mode)
+
+    def toggle_route_mode(self):
+        """HV ↔ VH 실시간 반전 (ㄱ자 ↔ ㄴ자)"""
+        self.route_mode = "VH" if self.route_mode == "HV" else "HV"
+        return self.route_mode
 
     def to_dict(self):
         return {
@@ -872,8 +1071,12 @@ class CalloutItem:
         painter.drawPath(full_path)
 
         # 텍스트
-        font = QFont(self.style.get("font_family", "Malgun Gothic"), int(self.style.get("font_size", 12)))
-        font.setBold(self.style.get("font_bold", True))
+        font_family = self.style.get("font_family", "Malgun Gothic")
+        font_size = int(self.style.get("font_size", 12))
+        font = QFont(font_family, font_size)
+        font.setBold(bool(self.style.get("font_bold", True)))
+        families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
+        font.setFamilies(families)
         painter.setFont(font)
         painter.setPen(text_col)
         pad = 6
@@ -1276,6 +1479,178 @@ class DraftStampItem:
         return item
 
 
+# ==============================================================================
+# 워드아트 객체 (WordArtItem)
+# ==============================================================================
+class WordArtItem:
+    """파워포인트 스타일 입체 외곽선/그림자 워드아트 텍스트 주석 객체"""
+
+    PRESETS = {
+        "white_pop": {
+            "name": "화이트 팝 (고대비 표준)",
+            "text_color": "#FFFFFF",
+            "stroke_color": "#000000",
+            "stroke_width": 3.0,
+            "shadow_enabled": True,
+            "shadow_color": "#000000",
+            "shadow_alpha": 180,
+            "shadow_offset_x": 2.5,
+            "shadow_offset_y": 2.5
+        },
+        "gold_title": {
+            "name": "골드 메탈릭 (핵심 강조)",
+            "text_color": "#FFD700",
+            "stroke_color": "#3E2723",
+            "stroke_width": 3.0,
+            "shadow_enabled": True,
+            "shadow_color": "#1A0C08",
+            "shadow_alpha": 210,
+            "shadow_offset_x": 2.5,
+            "shadow_offset_y": 2.5
+        },
+        "neon_cyan": {
+            "name": "네온 사이언 (전산 지시)",
+            "text_color": "#00E5FF",
+            "stroke_color": "#002171",
+            "stroke_width": 2.5,
+            "shadow_enabled": True,
+            "shadow_color": "#0091EA",
+            "shadow_alpha": 180,
+            "shadow_offset_x": 2.0,
+            "shadow_offset_y": 2.0
+        },
+        "red_warning": {
+            "name": "레드 경고 (주의/금지)",
+            "text_color": "#D50000",
+            "stroke_color": "#FFFFFF",
+            "stroke_width": 2.5,
+            "shadow_enabled": True,
+            "shadow_color": "#000000",
+            "shadow_alpha": 220,
+            "shadow_offset_x": 2.5,
+            "shadow_offset_y": 2.5
+        },
+        "slate_modern": {
+            "name": "차콜 모던 (테크니컬)",
+            "text_color": "#212121",
+            "stroke_color": "#FF6D00",
+            "stroke_width": 2.0,
+            "shadow_enabled": True,
+            "shadow_color": "#FF9100",
+            "shadow_alpha": 130,
+            "shadow_offset_x": 2.0,
+            "shadow_offset_y": 2.0
+        }
+    }
+
+    def __init__(self, text="주요 확인", x=100.0, y=100.0, style=None):
+        self.text = str(text)
+        self.pos = QPointF(float(x), float(y))
+        self.style = style.copy() if (style and hasattr(style, "copy")) else dict(style or {})
+        self._cached_rect = QRectF(x, y, 120, 40)
+
+    def clone(self):
+        return WordArtItem(self.text, self.pos.x(), self.pos.y(), self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "WordArtItem",
+            "text": str(self.text),
+            "x": float(self.pos.x()),
+            "y": float(self.pos.y()),
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            text=str(data.get("text", "주요 확인")),
+            x=float(data.get("x", 100.0)),
+            y=float(data.get("y", 100.0)),
+            style=data.get("style", {})
+        )
+
+    def get_font(self):
+        font_family = self.style.get("font_family", "Malgun Gothic")
+        font_size = int(self.style.get("font_size", 24))
+        font = QFont(font_family, font_size)
+        font.setBold(bool(self.style.get("font_bold", True)))
+        families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
+        font.setFamilies(families)
+        return font
+
+    def get_rect(self, painter_or_metrics=None):
+        font = self.get_font()
+        fm = QFontMetrics(font)
+        sw = float(self.style.get("stroke_width", 3.0))
+        pad = 8.0
+        tw = fm.horizontalAdvance(self.text) + (sw * 2) + (pad * 2)
+        th = fm.height() + (sw * 2) + (pad * 2)
+        self._cached_rect = QRectF(self.pos.x(), self.pos.y(), max(tw, 50.0), max(th, 30.0))
+        return self._cached_rect
+
+    def contains(self, pt):
+        return self.get_rect().contains(pt)
+
+    def apply_preset(self, preset_id):
+        if preset_id in self.PRESETS:
+            p_data = self.PRESETS[preset_id]
+            for k, v in p_data.items():
+                if k != "name":
+                    self.style[k] = v
+            self.style["preset_id"] = preset_id
+
+    def render(self, painter: QPainter):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        font = self.get_font()
+        fm = QFontMetrics(font)
+        ascent = fm.ascent()
+        sw = float(self.style.get("stroke_width", 3.0))
+        pad = 8.0
+
+        text_x = self.pos.x() + pad + sw
+        text_y = self.pos.y() + pad + sw + ascent
+
+        path = QPainterPath()
+        path.addText(text_x, text_y, font, self.text)
+
+        # 1. 드롭 섀도우 (Drop Shadow)
+        if self.style.get("shadow_enabled", True):
+            sh_x = float(self.style.get("shadow_offset_x", 2.5))
+            sh_y = float(self.style.get("shadow_offset_y", 2.5))
+            sh_col = QColor(self.style.get("shadow_color", "#000000"))
+            sh_alpha = int(self.style.get("shadow_alpha", 180))
+            sh_col.setAlpha(max(0, min(255, sh_alpha)))
+
+            shadow_path = QPainterPath(path)
+            shadow_path.translate(sh_x, sh_y)
+            if sw > 0:
+                painter.setPen(QPen(sh_col, (sw * 2) + 1, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawPath(shadow_path)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(sh_col))
+            painter.drawPath(shadow_path)
+
+        # 2. 외곽선 (Stroke / Outline)
+        if sw > 0:
+            stroke_col = QColor(self.style.get("stroke_color", "#000000"))
+            painter.setPen(QPen(stroke_col, sw * 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+
+        # 3. 내부 글자 채우기 (Fill)
+        text_col = QColor(self.style.get("text_color", "#FFFFFF"))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(text_col))
+        painter.drawPath(path)
+
+        painter.restore()
+
+
 # ------------------------------------------------------------------------------
 # 주석 직렬화 레지스트리 및 팩토리 (Annotation Registry & Factory)
 # ------------------------------------------------------------------------------
@@ -1291,6 +1666,7 @@ ITEM_REGISTRY = {
     "HotkeyBadgeItem": HotkeyBadgeItem,
     "ImageOverlayItem": ImageOverlayItem,
     "DraftStampItem": DraftStampItem,
+    "WordArtItem": WordArtItem,
 }
 
 def item_from_dict(data):
@@ -1438,10 +1814,11 @@ class CaptureOverlayWidget(QWidget):
     sig_captured = pyqtSignal(QPixmap, QRect)
     sig_cancelled = pyqtSignal()
 
-    def __init__(self, last_rect=None, config=None, is_sub_capture=False, parent=None):
+    def __init__(self, last_rect=None, config=None, is_sub_capture=False, target_monitor=None, parent=None):
         super().__init__(parent)
         self.is_captured = False
         self.is_sub_capture = is_sub_capture
+        self.target_monitor = target_monitor
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
             Qt.FramelessWindowHint |
@@ -1453,20 +1830,29 @@ class CaptureOverlayWidget(QWidget):
         self.config = config or DEFAULT_CONFIG
         self.last_rect = last_rect
 
-        # 전체 가상 화면 캡처
-        screens = QApplication.screens()
-        min_x = min(s.geometry().x() for s in screens)
-        min_y = min(s.geometry().y() for s in screens)
-        max_x = max(s.geometry().x() + s.geometry().width() for s in screens)
-        max_y = max(s.geometry().y() + s.geometry().height() for s in screens)
-        self.virtual_rect = QRect(min_x, min_y, max_x - min_x, max_y - min_y)
-        self.setGeometry(self.virtual_rect)
+        screens = MultiMonitorManager.get_screens()
+        self.screens = screens
 
-        # 원본 데스크톱 화면 캡처
-        self.full_screen_pixmap = QApplication.primaryScreen().grabWindow(
-            0, self.virtual_rect.x(), self.virtual_rect.y(),
-            self.virtual_rect.width(), self.virtual_rect.height()
-        )
+        # 타깃 모니터가 단일 모니터(0..N-1)로 유효하게 지정된 경우
+        if self.target_monitor is not None and 0 <= self.target_monitor < len(screens):
+            target_screen = screens[self.target_monitor]
+            self.virtual_rect = target_screen.geometry()
+            self.setGeometry(self.virtual_rect)
+            self.full_screen_pixmap = target_screen.grabWindow(0)
+        else:
+            # 전체 가상 데스크톱 대상 (모든 모니터 포괄 및 합성)
+            self.target_monitor = -1
+            self.virtual_rect = MultiMonitorManager.get_virtual_desktop_rect()
+            self.setGeometry(self.virtual_rect)
+
+            pix = QPixmap(self.virtual_rect.size())
+            pix.fill(Qt.black)
+            p = QPainter(pix)
+            for s in screens:
+                sg = s.geometry()
+                p.drawPixmap(sg.x() - self.virtual_rect.x(), sg.y() - self.virtual_rect.y(), s.grabWindow(0))
+            p.end()
+            self.full_screen_pixmap = pix
 
         # 상태 관리
         self.selecting = False
@@ -1603,6 +1989,10 @@ class CaptureOverlayWidget(QWidget):
                 else:
                     self.selected_rect = r
                 self.update()
+
+                # 엔터 대기 없이 마우스 릴리즈 즉시 캡처 확정
+                if not self.selected_rect.isEmpty() and self.selected_rect.width() >= 10 and self.selected_rect.height() >= 10:
+                    self.confirm_capture()
             elif self.resizing_handle:
                 self.resizing_handle = None
             elif self.moving_rect:
@@ -1619,13 +2009,18 @@ class CaptureOverlayWidget(QWidget):
             return
         self.is_captured = True
         cropped = self.full_screen_pixmap.copy(r)
-        global_rect = QRect(
-            self.virtual_rect.x() + r.x(),
-            self.virtual_rect.y() + r.y(),
-            r.width(),
-            r.height()
-        )
-        self.sig_captured.emit(cropped, global_rect)
+
+        # 특정 단일 모니터 기준이면 r은 해당 모니터의 상대 좌표(0..W, 0..H)
+        if self.target_monitor is not None and self.target_monitor >= 0:
+            emit_rect = r
+        else:
+            emit_rect = QRect(
+                self.virtual_rect.x() + r.x(),
+                self.virtual_rect.y() + r.y(),
+                r.width(),
+                r.height()
+            )
+        self.sig_captured.emit(cropped, emit_rect)
         self.close()
 
     def closeEvent(self, event):
@@ -1837,6 +2232,7 @@ class StudioCanvasWidget(QWidget):
         self.drawing_elbow = False
         self.elbow_start = QPointF()
         self.elbow_end = QPointF()
+        self.current_elbow_route_mode = "HV"
 
         # 말풍선 그리기용
         self.drawing_callout = False
@@ -1850,6 +2246,27 @@ class StudioCanvasWidget(QWidget):
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Tab, Qt.Key_Space):
+            if self.drawing_elbow:
+                self.current_elbow_route_mode = "VH" if self.current_elbow_route_mode == "HV" else "HV"
+                self.update()
+                event.accept()
+                return
+            elif self.selected_item and isinstance(self.selected_item, ElbowArrowItem):
+                self.push_undo()
+                self.selected_item.toggle_route_mode()
+                self.update()
+                self.sig_content_changed.emit()
+                event.accept()
+                return
+        elif event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            if self.selected_item:
+                self.delete_selected_item()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def set_arrow_color(self, color):
         self.current_arrow_color = color
@@ -2131,6 +2548,20 @@ class StudioCanvasWidget(QWidget):
                     self.sig_content_changed.emit()
                 self.set_mode("SELECT")
 
+            elif self.current_mode == "WORDART":
+                wa_style = dict(self.config.get("wordart_style", DEFAULT_CONFIG["wordart_style"]))
+                default_text = wa_style.get("text", "주요 확인")
+                text, ok = self.prompt_text_dialog(default_text, title="워드아트 문구 입력")
+                if ok and text.strip():
+                    self.push_undo()
+                    wa_item = WordArtItem(text.strip(), pt.x(), pt.y(), wa_style)
+                    self.items.append(wa_item)
+                    self.selected_item = wa_item
+                    self.sig_item_selected.emit(wa_item)
+                    self.update()
+                    self.sig_content_changed.emit()
+                self.set_mode("SELECT")
+
             elif self.current_mode == "SELECT":
                 # 1. 이미 선택된 ImageOverlayItem의 4각 코너 리사이즈 핸들 클릭 여부 확인
                 if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
@@ -2300,7 +2731,7 @@ class StudioCanvasWidget(QWidget):
                         "width": self.current_arrow_width,
                         "head_size": self.current_arrow_head_size
                     }
-                    self.items.append(ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, "HV"))
+                    self.items.append(ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, getattr(self, "current_elbow_route_mode", "HV")))
                     self.update()
                     self.sig_content_changed.emit()
                 self.set_mode("SELECT")
@@ -2351,6 +2782,14 @@ class StudioCanvasWidget(QWidget):
                     self.update()
                     self.sig_content_changed.emit()
                 break
+            elif isinstance(it, WordArtItem) and it.contains(pt):
+                new_text, ok = self.prompt_text_dialog(it.text, title="워드아트 문구 수정")
+                if ok and new_text.strip():
+                    self.push_undo()
+                    it.text = new_text.strip()
+                    self.update()
+                    self.sig_content_changed.emit()
+                break
             elif isinstance(it, HotkeyBadgeItem) and it.contains(pt):
                 new_text, ok = self.prompt_hotkey_dialog(it.key_text)
                 if ok and new_text.strip():
@@ -2368,14 +2807,14 @@ class StudioCanvasWidget(QWidget):
                     self.sig_content_changed.emit()
                 break
 
-    def prompt_text_dialog(self, initial_text):
+    def prompt_text_dialog(self, initial_text, title="설명 텍스트 입력"):
         try:
             dlg = QDialog(self)
-            dlg.setWindowTitle("설명 텍스트 입력")
+            dlg.setWindowTitle(title)
             dlg.setFixedSize(360, 140)
             layout = QVBoxLayout(dlg)
 
-            lbl = QLabel("표시할 설명 텍스트를 입력하세요:", dlg)
+            lbl = QLabel(f"표시할 {title}을(를) 입력하세요:", dlg)
             lbl.setFont(QFont("Malgun Gothic", 10))
             layout.addWidget(lbl)
 
@@ -2583,7 +3022,7 @@ class StudioCanvasWidget(QWidget):
                     "width": self.current_arrow_width,
                     "head_size": self.current_arrow_head_size
                 }
-                temp_elbow = ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, "HV")
+                temp_elbow = ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, getattr(self, "current_elbow_route_mode", "HV"))
                 temp_elbow.render(painter)
                 painter.restore()
 
@@ -2617,7 +3056,7 @@ class StudioCanvasWidget(QWidget):
                 elif isinstance(self.selected_item, StampItem):
                     r = self.selected_item.style.get("size", 32) / 2.0 + 3
                     painter.drawEllipse(self.selected_item.pos, r, r)
-                elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem)):
+                elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
                     painter.drawRect(self.selected_item.get_rect().adjusted(-2, -2, 2, 2))
                 elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem)):
                     painter.drawRect(self.selected_item.rect.adjusted(-2, -2, 2, 2))
@@ -2668,9 +3107,58 @@ class StudioCanvasWidget(QWidget):
                         item.render(painter)
                 except Exception as e:
                     print(f"[합성 주석 렌더링 예외]: {e}")
+
+            # 평가판 / 미인증 시 워터마크 자동 삽입 (정식 인증 시 완전 제거)
+            if not LicenseEngine.is_licensed():
+                self._render_watermark(painter, img.width(), img.height())
         finally:
             painter.end()
         return img
+
+    def _render_watermark(self, painter: QPainter, width: int, height: int):
+        """평가판 상태일 때 자동 삽입되는 다국어 워터마크"""
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        wm_text = tr("watermark_text", "Manual Studio • Trial Version")
+
+        # 1. 우측 하단 반투명 캡슐 배지
+        font_badge = QFont("Segoe UI", 11)
+        font_badge.setBold(True)
+        fm = QFontMetrics(font_badge)
+        tw = fm.horizontalAdvance(wm_text)
+        th = fm.height()
+        pad_x, pad_y = 12, 6
+        badge_w = tw + pad_x * 2
+        badge_h = th + pad_y * 2
+        badge_x = width - badge_w - 15
+        badge_y = height - badge_h - 15
+
+        if badge_x > 0 and badge_y > 0:
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+            painter.setPen(QPen(QColor(255, 255, 255, 120), 1))
+            painter.setBrush(QColor(15, 23, 42, 190))
+            painter.drawRoundedRect(badge_rect, 6, 6)
+
+            painter.setFont(font_badge)
+            painter.setPen(QColor(255, 255, 255, 230))
+            painter.drawText(badge_rect, Qt.AlignCenter, wm_text)
+
+        # 2. 중앙 은은한 대각선 워터마크
+        diag_size = max(16, int(min(width, height) / 22))
+        font_diag = QFont("Segoe UI", diag_size)
+        font_diag.setBold(True)
+        painter.setFont(font_diag)
+        painter.setPen(QColor(148, 163, 184, 50))
+
+        painter.translate(width / 2.0, height / 2.0)
+        painter.rotate(-28.0)
+        center_fm = QFontMetrics(font_diag)
+        c_tw = center_fm.horizontalAdvance(wm_text)
+        c_th = center_fm.height()
+        painter.drawText(int(-c_tw / 2), int(c_th / 4), wm_text)
+
+        painter.restore()
 
 
 # ==============================================================================
@@ -2735,9 +3223,18 @@ class ExportEngine:
                 return False
 
         try:
+            layout_cfg = ppt_layout or {}
+            tpl_path = str(layout_cfg.get("template_path", "")).strip()
+
             if ppt_app.Presentations.Count == 0:
-                # 열려 있는 프레젠테이션이 없으면 새 프레젠테이션 생성
-                pres = ppt_app.Presentations.Add()
+                # 열려 있는 프레젠테이션이 없으면 템플릿 열기 또는 새 프레젠테이션 생성
+                if tpl_path and os.path.exists(tpl_path):
+                    try:
+                        pres = ppt_app.Presentations.Open(os.path.abspath(tpl_path))
+                    except Exception:
+                        pres = ppt_app.Presentations.Add()
+                else:
+                    pres = ppt_app.Presentations.Add()
             else:
                 pres = ppt_app.ActivePresentation
 
@@ -3094,6 +3591,11 @@ class LicenseValidator:
         라이선스 만료일 및 안티 롤백 검증
         반환값: (is_valid: bool, message: str)
         """
+        # 정식 라이선스가 등록되어 활성화된 경우 즉시 정상 통과
+        if LicenseEngine.is_licensed():
+            st = LicenseEngine.check_license_status()
+            return True, f"정식 라이선스 인증: {st.get('badge_text')} ({st.get('issued_to')})"
+
         now = datetime.now()
 
         # 1차: 만료일(2026-12-31) 도과 여부 검사
@@ -3140,7 +3642,17 @@ class LicenseValidator:
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("매뉴얼 스튜디오 (Manual Studio) - DragonRPA Co. [평가판]")
+        self.config = load_config()
+        self.current_project_path = None
+        self.last_capture_rect = None
+        self.overlay_window = None
+        self.current_target_monitor = self.config.get("target_monitor", -1)
+
+        loc = self.config.get("locale", "auto")
+        if loc != "auto":
+            I18nManager.instance().set_locale(loc)
+
+        self.update_window_title()
         self.resize(1180, 780)
 
         # 윈도우 및 작업표시줄 아이콘 설정 (DragonRPA CI)
@@ -3148,10 +3660,8 @@ class ManualStudioWindow(QMainWindow):
         if not ci_pix.isNull():
             self.setWindowIcon(QIcon(ci_pix))
 
-        self.config = load_config()
-        self.last_capture_rect = None
-        self.overlay_window = None
-        self.current_project_path = None
+        # 폰트 매니저 초기화 및 등록된 폰트 로드
+        CustomFontManager.instance().load_all_fonts(self.config.get("custom_fonts", []))
 
         # 실시간 서식 상태
         self.current_stamp_color = self.config.get("stamp_style", {}).get("bg_color", "#E53935")
@@ -3161,6 +3671,8 @@ class ManualStudioWindow(QMainWindow):
 
         self.init_ui()
         self.init_hotkey()
+        self.init_autosave()
+        QTimer.singleShot(1000, self.check_and_prompt_recovery)
 
     def init_ui(self):
         # 0. 상단 메뉴바 초기화 (우측 끝에 CI + 회사명 + About 버튼 탑재)
@@ -3286,12 +3798,17 @@ class ManualStudioWindow(QMainWindow):
         self.btn_sub_capture.setStyleSheet("background-color: #FFF3E0; color: #E65100; border-color: #FFCC80;")
         self.btn_sub_capture.clicked.connect(self.start_sub_capture)
 
+        self.combo_tab_monitor = QComboBox(self)
+        self.combo_tab_monitor.setToolTip("캡처 대상 모니터 (최대 4개 다중 모니터 지원)")
+        self.combo_tab_monitor.currentIndexChanged.connect(self.on_tab_monitor_changed)
+
         cap_grid = QGridLayout()
         cap_grid.setContentsMargins(0, 0, 0, 0)
         cap_grid.setSpacing(3)
         cap_grid.addWidget(self.btn_capture, 0, 0)
         cap_grid.addWidget(self.btn_drag_capture, 1, 0)
-        cap_grid.addWidget(self.btn_sub_capture, 0, 1, 2, 1)
+        cap_grid.addWidget(self.btn_sub_capture, 0, 1)
+        cap_grid.addWidget(self.create_stack_field("화면 선택", self.combo_tab_monitor), 1, 1)
         tools_layout.addWidget(self.create_ribbon_group("캡처", cap_grid))
 
         # 2) [프로젝트] 그룹
@@ -3406,13 +3923,19 @@ class ManualStudioWindow(QMainWindow):
         self.btn_mode_hotkey.setToolTip("Ctrl+C, Enter 등 3D 키캡 스타일 단축키를 배치합니다.")
         self.btn_mode_hotkey.clicked.connect(lambda: self.switch_mode("HOTKEY"))
 
+        self.btn_mode_wordart = QPushButton("🎨 워드아트", self)
+        self.btn_mode_wordart.setCheckable(True)
+        self.btn_mode_wordart.setToolTip("외곽선과 그림자가 있는 파워포인트 워드아트 스타일 텍스트를 배치합니다.")
+        self.btn_mode_wordart.clicked.connect(lambda: self.switch_mode("WORDART"))
+
         text_grid = QGridLayout()
         text_grid.setContentsMargins(0, 0, 0, 0)
         text_grid.setSpacing(3)
         text_grid.addWidget(self.btn_mode_callout, 0, 0)
         text_grid.addWidget(self.btn_mode_text, 0, 1)
-        text_grid.addWidget(self.btn_mode_hotkey, 1, 0, 1, 2)
-        tools_layout.addWidget(self.create_ribbon_group("텍스트·단축키", text_grid))
+        text_grid.addWidget(self.btn_mode_hotkey, 1, 0)
+        text_grid.addWidget(self.btn_mode_wordart, 1, 1)
+        tools_layout.addWidget(self.create_ribbon_group("텍스트·워드아트", text_grid))
 
         # 6) [PPT 출력] 그룹
         self.btn_export = QPushButton("🚀 슬라이드 생성 (F10)", self)
@@ -3505,6 +4028,26 @@ class ManualStudioWindow(QMainWindow):
         self.spin_arrow_head.setFixedWidth(56)
         self.spin_arrow_head.valueChanged.connect(self.on_arrow_head_changed)
 
+        self.combo_elbow_route = QComboBox(self)
+        self.combo_elbow_route.addItem("ㄱ/┘ (가로 우선)", "HV")
+        self.combo_elbow_route.addItem("ㄴ/┌ (세로 우선)", "VH")
+        self.combo_elbow_route.setToolTip("직각 꺾임 축 (단축키 Tab/Space로도 실시간 전환)")
+        self.combo_elbow_route.setFixedWidth(108)
+        self.combo_elbow_route.currentIndexChanged.connect(self.on_elbow_route_combo_changed)
+
+        self.btn_flip_elbow = QPushButton("🔄", self)
+        self.btn_flip_elbow.setToolTip("직각 꺾임 축 반전 (Tab/Space)")
+        self.btn_flip_elbow.setFixedSize(26, 24)
+        self.btn_flip_elbow.clicked.connect(self.action_flip_elbow)
+
+        elbow_box = QHBoxLayout()
+        elbow_box.setContentsMargins(0, 0, 0, 0)
+        elbow_box.setSpacing(2)
+        elbow_box.addWidget(self.combo_elbow_route)
+        elbow_box.addWidget(self.btn_flip_elbow)
+        elbow_widget = QWidget(self)
+        elbow_widget.setLayout(elbow_box)
+
         self.chk_box_fill_tab = QCheckBox("음영", self)
         self.chk_box_fill_tab.setChecked(self.config.get("highlight_box_style", {}).get("fill", False))
 
@@ -3513,10 +4056,30 @@ class ManualStudioWindow(QMainWindow):
         ln_lay.setSpacing(4)
         ln_lay.addWidget(self.create_stack_field("선 두께", self.spin_box_width_tab))
         ln_lay.addWidget(self.create_stack_field("촉 크기", self.spin_arrow_head))
+        ln_lay.addWidget(self.create_stack_field("꺾임 축", elbow_widget))
         ln_lay.addWidget(self.create_stack_field("채우기", self.chk_box_fill_tab))
         format_layout.addWidget(self.create_ribbon_group("선·화살표", ln_lay))
 
-        # 3) [텍스트·말풍선] 서식 그룹
+        # 3) [텍스트·글꼴] 서식 그룹
+        self.combo_text_font = QFontComboBox(self)
+        self.combo_text_font.setFixedWidth(120)
+        cur_f = self.config.get("text_style", {}).get("font_family", "Malgun Gothic")
+        self.combo_text_font.setCurrentFont(QFont(cur_f))
+        self.combo_text_font.currentFontChanged.connect(self.on_text_font_family_changed)
+
+        self.btn_add_custom_font = QPushButton("➕", self)
+        self.btn_add_custom_font.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
+        self.btn_add_custom_font.setFixedSize(26, 24)
+        self.btn_add_custom_font.clicked.connect(self.action_add_custom_font)
+
+        font_box = QHBoxLayout()
+        font_box.setContentsMargins(0, 0, 0, 0)
+        font_box.setSpacing(2)
+        font_box.addWidget(self.combo_text_font)
+        font_box.addWidget(self.btn_add_custom_font)
+        font_box_widget = QWidget(self)
+        font_box_widget.setLayout(font_box)
+
         self.spin_text_font_size = QSpinBox(self)
         self.spin_text_font_size.setRange(8, 72)
         self.spin_text_font_size.setValue(self.config.get("text_style", {}).get("font_size", 14))
@@ -3544,11 +4107,51 @@ class ManualStudioWindow(QMainWindow):
         tx_lay = QHBoxLayout()
         tx_lay.setContentsMargins(0, 0, 0, 0)
         tx_lay.setSpacing(4)
-        tx_lay.addWidget(self.create_stack_field("글꼴", self.spin_text_font_size))
+        tx_lay.addWidget(self.create_stack_field("서체", font_box_widget))
+        tx_lay.addWidget(self.create_stack_field("크기", self.spin_text_font_size))
         tx_lay.addWidget(self.create_stack_field("글자색", self.btn_text_color))
         tx_lay.addWidget(self.create_stack_field("배경색", self.btn_text_bg_color))
         tx_lay.addWidget(self.create_stack_field("꼬리 너비", self.spin_callout_tail_size))
-        format_layout.addWidget(self.create_ribbon_group("텍스트·말풍선", tx_lay))
+        format_layout.addWidget(self.create_ribbon_group("텍스트·글꼴", tx_lay))
+
+        # 4) [워드아트] 서식 그룹
+        wa_cfg = self.config.get("wordart_style", {})
+        self.combo_wordart_preset = QComboBox(self)
+        for p_key, p_val in WordArtItem.PRESETS.items():
+            self.combo_wordart_preset.addItem(p_val["name"], p_key)
+        cur_preset = wa_cfg.get("preset_id", "white_pop")
+        idx_p = self.combo_wordart_preset.findData(cur_preset)
+        if idx_p >= 0:
+            self.combo_wordart_preset.setCurrentIndex(idx_p)
+        self.combo_wordart_preset.setFixedWidth(130)
+        self.combo_wordart_preset.currentIndexChanged.connect(self.on_wordart_preset_changed)
+
+        self.spin_wordart_size = QSpinBox(self)
+        self.spin_wordart_size.setRange(12, 120)
+        self.spin_wordart_size.setValue(int(wa_cfg.get("font_size", 24)))
+        self.spin_wordart_size.setSuffix(" pt")
+        self.spin_wordart_size.setFixedWidth(58)
+        self.spin_wordart_size.valueChanged.connect(self.on_wordart_size_changed)
+
+        self.spin_wordart_stroke = QSpinBox(self)
+        self.spin_wordart_stroke.setRange(0, 20)
+        self.spin_wordart_stroke.setValue(int(wa_cfg.get("stroke_width", 3)))
+        self.spin_wordart_stroke.setSuffix(" px")
+        self.spin_wordart_stroke.setFixedWidth(54)
+        self.spin_wordart_stroke.valueChanged.connect(self.on_wordart_stroke_changed)
+
+        self.chk_wordart_shadow = QCheckBox("그림자", self)
+        self.chk_wordart_shadow.setChecked(bool(wa_cfg.get("shadow_enabled", True)))
+        self.chk_wordart_shadow.toggled.connect(self.on_wordart_shadow_toggled)
+
+        wa_lay = QHBoxLayout()
+        wa_lay.setContentsMargins(0, 0, 0, 0)
+        wa_lay.setSpacing(4)
+        wa_lay.addWidget(self.create_stack_field("스타일", self.combo_wordart_preset))
+        wa_lay.addWidget(self.create_stack_field("크기", self.spin_wordart_size))
+        wa_lay.addWidget(self.create_stack_field("외곽선", self.spin_wordart_stroke))
+        wa_lay.addWidget(self.create_stack_field("효과", self.chk_wordart_shadow))
+        format_layout.addWidget(self.create_ribbon_group("워드아트", wa_lay))
 
         # 4) [보안·단축키] 서식 그룹
         self.spin_blur_block = QSpinBox(self)
@@ -3763,6 +4366,16 @@ class ManualStudioWindow(QMainWindow):
 
         qs_lay.addWidget(self.create_separator())
 
+        # 모니터 선택 드롭다운
+        qs_lay.addWidget(QLabel("화면:", self))
+        self.combo_monitor = QComboBox(self)
+        self.combo_monitor.setFixedWidth(130)
+        self.combo_monitor.setToolTip("캡처 대상 모니터 선택 (최대 4개 지원)")
+        self.combo_monitor.currentIndexChanged.connect(self.on_quick_monitor_changed)
+        qs_lay.addWidget(self.combo_monitor)
+
+        qs_lay.addWidget(self.create_separator())
+
         # 고정 영역 제어
         self.chk_fixed_rect = QCheckBox("고정 모드", self)
         self.chk_fixed_rect.setChecked(self.config.get("fixed_rect_enabled", True))
@@ -3858,13 +4471,15 @@ class ManualStudioWindow(QMainWindow):
             lbl_bot_ci.setPixmap(ci_pix.scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         status_layout.addWidget(lbl_bot_ci)
 
-        lbl_bottom_dev = QLabel("(주)드래곤알피에이 (DragonRPA Co.) | 평가판 (~2026.12.31) | 77.victor.lee@gmail.com", status_bar_widget)
-        lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500;")
-        status_layout.addWidget(lbl_bottom_dev)
+        self.lbl_bottom_dev = QLabel("(주)드래곤알피에이 (DragonRPA Co.) | 평가판 (~2026.12.31) | 77.victor.lee@gmail.com", status_bar_widget)
+        self.lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500;")
+        status_layout.addWidget(self.lbl_bottom_dev)
 
         main_layout.addWidget(status_bar_widget)
 
+        self.update_status_bar()
         self.sync_ui_from_config()
+        self.init_monitor_combos()
 
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -3980,6 +4595,14 @@ class ManualStudioWindow(QMainWindow):
         settings_menu = menubar.addMenu("설정(&S)")
         act_cfg = settings_menu.addAction("⚙ 환경 설정...")
         act_cfg.triggered.connect(self.open_settings_dialog)
+        act_lic = settings_menu.addAction("🔑 라이선스 등록(L)...")
+        act_lic.triggered.connect(self.show_license_dialog)
+
+        # 4.1 언어(Language) 메뉴
+        lang_menu = menubar.addMenu("🌐 언어(Language)")
+        for code, name in I18nManager.instance().get_supported_locales().items():
+            act_l = lang_menu.addAction(name)
+            act_l.triggered.connect(lambda checked=False, c=code: self.switch_language(c))
 
         # 5. 메뉴 오른쪽 끝 About 및 EULA 메뉴
         act_about = menubar.addAction("About(&A)")
@@ -4139,7 +4762,7 @@ class ManualStudioWindow(QMainWindow):
         self.last_capture_rect = None
 
         base_name = os.path.basename(file_path)
-        self.setWindowTitle(f"매뉴얼 스튜디오 - [{base_name}]")
+        self.update_window_title()
         self.status_label.setText(
             f"프로젝트 로드 완료: {base_name} (주석 {len(items)}개 복원됨) ➔ 수정 후 F10 누르면 슬라이드와 프로젝트가 갱신됩니다."
         )
@@ -4198,9 +4821,15 @@ class ManualStudioWindow(QMainWindow):
         if ok:
             self.current_project_path = file_path
             base_name = os.path.basename(file_path)
-            self.setWindowTitle(f"매뉴얼 스튜디오 - [{base_name}]")
+            self.update_window_title()
             self.status_label.setText(f"💾 프로젝트 저장 완료: {base_name}")
             self.show_toast(f"💾 프로젝트 저장 완료: {base_name}")
+            auto_p = self.get_autosave_path()
+            if os.path.exists(auto_p):
+                try:
+                    os.remove(auto_p)
+                except Exception:
+                    pass
             return True
         else:
             self.show_toast("프로젝트 저장 실패")
@@ -4234,7 +4863,8 @@ class ManualStudioWindow(QMainWindow):
             "BLUR": "🌫 모자이크 블러",
             "CALLOUT": "💬 설명 말풍선",
             "TEXT": "🔤 텍스트 라벨",
-            "HOTKEY": "⌨ 단축키 뱃지"
+            "HOTKEY": "⌨ 단축키 뱃지",
+            "WORDART": "🎨 워드아트"
         }
         cur_mode = mode_or_name or self.canvas.current_mode
         text = mode_names.get(cur_mode, cur_mode)
@@ -4268,6 +4898,8 @@ class ManualStudioWindow(QMainWindow):
         self.btn_mode_text.setChecked(mode == "TEXT")
         if hasattr(self, "btn_mode_hotkey"):
             self.btn_mode_hotkey.setChecked(mode == "HOTKEY")
+        if hasattr(self, "btn_mode_wordart"):
+            self.btn_mode_wordart.setChecked(mode == "WORDART")
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -4488,6 +5120,43 @@ class ManualStudioWindow(QMainWindow):
         self.current_title_color = ppt_l.get("title_font_color", "#000000")
         if hasattr(self, "btn_title_color"):
             self.update_title_color_button()
+
+        # 텍스트 글꼴
+        if hasattr(self, "combo_text_font"):
+            self.combo_text_font.blockSignals(True)
+            self.combo_text_font.setCurrentFont(QFont(tx_style.get("font_family", "Malgun Gothic")))
+            self.combo_text_font.blockSignals(False)
+
+        # 꺾임 축
+        if hasattr(self, "combo_elbow_route"):
+            self.combo_elbow_route.blockSignals(True)
+            cur_route = getattr(self.canvas, "current_elbow_route_mode", "HV")
+            self.combo_elbow_route.setCurrentIndex(0 if cur_route == "HV" else 1)
+            self.combo_elbow_route.blockSignals(False)
+
+        # 워드아트
+        wa_cfg = self.config.get("wordart_style", {})
+        if hasattr(self, "combo_wordart_preset"):
+            self.combo_wordart_preset.blockSignals(True)
+            idx_p = self.combo_wordart_preset.findData(wa_cfg.get("preset_id", "white_pop"))
+            if idx_p >= 0:
+                self.combo_wordart_preset.setCurrentIndex(idx_p)
+            self.combo_wordart_preset.blockSignals(False)
+
+        if hasattr(self, "spin_wordart_size"):
+            self.spin_wordart_size.blockSignals(True)
+            self.spin_wordart_size.setValue(int(wa_cfg.get("font_size", 24)))
+            self.spin_wordart_size.blockSignals(False)
+
+        if hasattr(self, "spin_wordart_stroke"):
+            self.spin_wordart_stroke.blockSignals(True)
+            self.spin_wordart_stroke.setValue(int(wa_cfg.get("stroke_width", 3)))
+            self.spin_wordart_stroke.blockSignals(False)
+
+        if hasattr(self, "chk_wordart_shadow"):
+            self.chk_wordart_shadow.blockSignals(True)
+            self.chk_wordart_shadow.setChecked(bool(wa_cfg.get("shadow_enabled", True)))
+            self.chk_wordart_shadow.blockSignals(False)
 
     def on_target_width_changed(self, val):
         self.config["target_width"] = val
@@ -4824,8 +5493,12 @@ class ManualStudioWindow(QMainWindow):
                 self.spin_arrow_head.setValue(head_s)
                 self.spin_arrow_head.blockSignals(False)
             self.canvas.current_arrow_color = arrow_col
+            if hasattr(self, "combo_elbow_route"):
+                self.combo_elbow_route.blockSignals(True)
+                self.combo_elbow_route.setCurrentIndex(0 if item.route_mode == "HV" else 1)
+                self.combo_elbow_route.blockSignals(False)
             if hasattr(self, "lbl_active_mode"):
-                self.lbl_active_mode.setText("선택: ↳ 직각 화살표")
+                self.lbl_active_mode.setText(f"선택: ↳ 직각 화살표 ({item.route_mode})")
         elif isinstance(item, ArrowItem):
             arrow_w = int(item.style.get("width", 3))
             head_s = int(item.style.get("head_size", 14))
@@ -4868,6 +5541,11 @@ class ManualStudioWindow(QMainWindow):
             text_col = item.style.get("text_color", "#FFFFFF")
             bg_col = item.style.get("bg_color", "#212121")
             tail_s = int(item.style.get("tail_base_width", 16))
+            fam = item.style.get("font_family", "Malgun Gothic")
+            if hasattr(self, "combo_text_font"):
+                self.combo_text_font.blockSignals(True)
+                self.combo_text_font.setCurrentFont(QFont(fam))
+                self.combo_text_font.blockSignals(False)
             if hasattr(self, "spin_callout_font_size"):
                 self.spin_callout_font_size.blockSignals(True)
                 self.spin_callout_font_size.setValue(font_s)
@@ -4892,6 +5570,11 @@ class ManualStudioWindow(QMainWindow):
             font_size = int(item.style.get("font_size", 14))
             text_col = item.style.get("text_color", "#FFFFFF")
             bg_col = item.style.get("bg_color", "#212121")
+            fam = item.style.get("font_family", "Malgun Gothic")
+            if hasattr(self, "combo_text_font"):
+                self.combo_text_font.blockSignals(True)
+                self.combo_text_font.setCurrentFont(QFont(fam))
+                self.combo_text_font.blockSignals(False)
             self.spin_text_font_size.blockSignals(True)
             self.spin_text_font_size.setValue(font_size)
             self.spin_text_font_size.blockSignals(False)
@@ -4901,6 +5584,37 @@ class ManualStudioWindow(QMainWindow):
             self.update_text_bg_color_button()
             if hasattr(self, "lbl_active_mode"):
                 self.lbl_active_mode.setText(f"선택: 🔤 텍스트 ('{item.text[:10]}...')")
+        elif isinstance(item, WordArtItem):
+            f_size = int(item.style.get("font_size", 24))
+            s_width = int(item.style.get("stroke_width", 3))
+            shadow = bool(item.style.get("shadow_enabled", True))
+            preset_id = item.style.get("preset_id", "white_pop")
+            fam = item.style.get("font_family", "Malgun Gothic")
+
+            if hasattr(self, "combo_text_font"):
+                self.combo_text_font.blockSignals(True)
+                self.combo_text_font.setCurrentFont(QFont(fam))
+                self.combo_text_font.blockSignals(False)
+            if hasattr(self, "combo_wordart_preset"):
+                self.combo_wordart_preset.blockSignals(True)
+                idx_p = self.combo_wordart_preset.findData(preset_id)
+                if idx_p >= 0:
+                    self.combo_wordart_preset.setCurrentIndex(idx_p)
+                self.combo_wordart_preset.blockSignals(False)
+            if hasattr(self, "spin_wordart_size"):
+                self.spin_wordart_size.blockSignals(True)
+                self.spin_wordart_size.setValue(f_size)
+                self.spin_wordart_size.blockSignals(False)
+            if hasattr(self, "spin_wordart_stroke"):
+                self.spin_wordart_stroke.blockSignals(True)
+                self.spin_wordart_stroke.setValue(s_width)
+                self.spin_wordart_stroke.blockSignals(False)
+            if hasattr(self, "chk_wordart_shadow"):
+                self.chk_wordart_shadow.blockSignals(True)
+                self.chk_wordart_shadow.setChecked(shadow)
+                self.chk_wordart_shadow.blockSignals(False)
+            if hasattr(self, "lbl_active_mode"):
+                self.lbl_active_mode.setText(f"선택: 🎨 워드아트 ('{item.text[:10]}...')")
         elif isinstance(item, HotkeyBadgeItem):
             font_s = int(item.style.get("font_size", 12))
             if hasattr(self, "spin_hotkey_font_size"):
@@ -4997,26 +5711,16 @@ class ManualStudioWindow(QMainWindow):
             time.sleep(0.05)
 
         try:
-            screens = QApplication.screens()
-            min_x = min(s.geometry().x() for s in screens)
-            min_y = min(s.geometry().y() for s in screens)
-            max_x = max(s.geometry().x() + s.geometry().width() for s in screens)
-            max_y = max(s.geometry().y() + s.geometry().height() for s in screens)
-
-            full_pixmap = QApplication.primaryScreen().grabWindow(
-                0, min_x, min_y, max_x - min_x, max_y - min_y
-            )
-
-            rel_x = x - min_x
-            rel_y = y - min_y
-            cropped = full_pixmap.copy(rel_x, rel_y, w, h)
+            target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
+            cropped = MultiMonitorManager.grab_target_area(target_mon, QRect(x, y, w, h))
 
             if cropped.isNull() or cropped.width() < 5 or cropped.height() < 5:
                 self.show_toast("화면 캡처 실패: 유효하지 않은 좌표입니다.")
                 return
 
             self.on_capture_completed(cropped, QRect(x, y, w, h), is_fixed_capture=True)
-            self.show_toast(f"고정 영역 ({x},{y} {w}×{h}px) 즉시 캡처 완료!")
+            mon_str = "전체 가상화면" if target_mon == -1 else f"모니터 {target_mon + 1}"
+            self.show_toast(f"고정 영역 ({mon_str} {x},{y} {w}×{h}px) 즉시 캡처 완료!")
         finally:
             if was_visible:
                 self.show()
@@ -5032,9 +5736,11 @@ class ManualStudioWindow(QMainWindow):
             time.sleep(0.06)
 
         try:
+            target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
             self.overlay_window = CaptureOverlayWidget(
                 last_rect=self.last_capture_rect,
-                config=self.config
+                config=self.config,
+                target_monitor=target_mon
             )
             self.overlay_window.sig_captured.connect(self.on_capture_completed)
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
@@ -5063,10 +5769,12 @@ class ManualStudioWindow(QMainWindow):
             time.sleep(0.06)
 
         try:
+            target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
             self.overlay_window = CaptureOverlayWidget(
                 last_rect=None,
                 config=self.config,
-                is_sub_capture=True
+                is_sub_capture=True,
+                target_monitor=target_mon
             )
             self.overlay_window.sig_captured.connect(self.on_sub_capture_completed)
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
@@ -5088,6 +5796,200 @@ class ManualStudioWindow(QMainWindow):
             w = pixmap.width()
             h = pixmap.height()
             self.show_toast(f"🪟 부분 이미지({w}×{h}px) 추가 완료! 마우스로 이동 및 크기를 조절하세요.")
+
+    # -------------------------------------------------------------
+    # 다중 모니터 & 폰트 & 꺾임선 & 워드아트 이벤트 핸들러
+    # -------------------------------------------------------------
+    def init_monitor_combos(self):
+        monitors = MultiMonitorManager.get_monitor_info_list()
+        combos = []
+        if hasattr(self, "combo_tab_monitor"):
+            combos.append(self.combo_tab_monitor)
+        if hasattr(self, "combo_monitor"):
+            combos.append(self.combo_monitor)
+
+        cur_target = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
+
+        for cb in combos:
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItem("🌐 전체 가상 화면 (모든 모니터)", -1)
+            for m in monitors:
+                cb.addItem(m["label"], m["index"])
+
+            idx = cb.findData(cur_target)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+            else:
+                cb.setCurrentIndex(0)
+            cb.blockSignals(False)
+
+    def on_tab_monitor_changed(self, idx):
+        if hasattr(self, "combo_tab_monitor"):
+            val = self.combo_tab_monitor.currentData()
+            self.set_active_monitor(val)
+
+    def on_quick_monitor_changed(self, idx):
+        if hasattr(self, "combo_monitor"):
+            val = self.combo_monitor.currentData()
+            self.set_active_monitor(val)
+
+    def set_active_monitor(self, monitor_index):
+        self.current_target_monitor = monitor_index
+        self.config["target_monitor"] = monitor_index
+        save_config(self.config)
+
+        if hasattr(self, "combo_tab_monitor"):
+            self.combo_tab_monitor.blockSignals(True)
+            idx = self.combo_tab_monitor.findData(monitor_index)
+            if idx >= 0:
+                self.combo_tab_monitor.setCurrentIndex(idx)
+            self.combo_tab_monitor.blockSignals(False)
+
+        if hasattr(self, "combo_monitor"):
+            self.combo_monitor.blockSignals(True)
+            idx = self.combo_monitor.findData(monitor_index)
+            if idx >= 0:
+                self.combo_monitor.setCurrentIndex(idx)
+            self.combo_monitor.blockSignals(False)
+
+        name = "전체 가상 화면" if monitor_index == -1 else f"모니터 {monitor_index + 1}"
+        self.show_toast(f"캡처 대상 화면: {name}")
+
+    def action_add_custom_font(self):
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "외부/유료/토너절약 폰트 파일 등록",
+            "",
+            "폰트 파일 (*.ttf *.otf *.ttc *.woff);;모든 파일 (*.*)"
+        )
+        if not file_paths:
+            return
+
+        all_added = []
+        for fp in file_paths:
+            families, dest = CustomFontManager.instance().import_font_file(fp)
+            if families:
+                all_added.extend(families)
+                if "custom_fonts" not in self.config:
+                    self.config["custom_fonts"] = []
+                if dest not in self.config["custom_fonts"]:
+                    self.config["custom_fonts"].append(dest)
+
+        if all_added:
+            save_config(self.config)
+            fam_str = ", ".join(all_added)
+            self.show_toast(f"폰트 등록 완료: {fam_str}")
+            if hasattr(self, "combo_text_font") and all_added:
+                self.combo_text_font.setCurrentFont(QFont(all_added[0]))
+        else:
+            self.show_toast("유효한 폰트 파일을 등록하지 못했습니다.")
+
+    def on_text_font_family_changed(self, font):
+        fam = font.family()
+        self.config.setdefault("text_style", {})["font_family"] = fam
+        save_config(self.config)
+        self.canvas.set_config(self.config)
+        if self.canvas.selected_item:
+            item = self.canvas.selected_item
+            if isinstance(item, TextLabelItem):
+                self.canvas.push_undo()
+                item.style["font_family"] = fam
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+            elif isinstance(item, CalloutItem):
+                self.canvas.push_undo()
+                item.style["font_family"] = fam
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+            elif isinstance(item, WordArtItem):
+                self.canvas.push_undo()
+                item.style["font_family"] = fam
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+
+    def on_elbow_route_combo_changed(self, idx):
+        if hasattr(self, "combo_elbow_route"):
+            mode = self.combo_elbow_route.currentData() or ("HV" if idx == 0 else "VH")
+            self.canvas.current_elbow_route_mode = mode
+            if self.canvas.selected_item and isinstance(self.canvas.selected_item, ElbowArrowItem):
+                self.canvas.push_undo()
+                self.canvas.selected_item.route_mode = mode
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+
+    def action_flip_elbow(self):
+        cur = getattr(self.canvas, "current_elbow_route_mode", "HV")
+        nxt = "VH" if cur == "HV" else "HV"
+        self.canvas.current_elbow_route_mode = nxt
+        if hasattr(self, "combo_elbow_route"):
+            self.combo_elbow_route.blockSignals(True)
+            self.combo_elbow_route.setCurrentIndex(0 if nxt == "HV" else 1)
+            self.combo_elbow_route.blockSignals(False)
+        if self.canvas.selected_item and isinstance(self.canvas.selected_item, ElbowArrowItem):
+            self.canvas.push_undo()
+            self.canvas.selected_item.toggle_route_mode()
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
+        self.show_toast(f"직각 꺾임 축 전환: {nxt}")
+
+    def on_wordart_preset_changed(self, idx):
+        if hasattr(self, "combo_wordart_preset"):
+            preset_key = self.combo_wordart_preset.currentData()
+            if preset_key and preset_key in WordArtItem.PRESETS:
+                p = WordArtItem.PRESETS[preset_key]
+                self.config.setdefault("wordart_style", {})["preset_id"] = preset_key
+                self.config["wordart_style"]["text_color"] = p["text_color"]
+                self.config["wordart_style"]["stroke_color"] = p["stroke_color"]
+                self.config["wordart_style"]["stroke_width"] = p["stroke_width"]
+                self.config["wordart_style"]["shadow_enabled"] = p["shadow_enabled"]
+                save_config(self.config)
+                self.canvas.set_config(self.config)
+
+                if hasattr(self, "spin_wordart_stroke"):
+                    self.spin_wordart_stroke.blockSignals(True)
+                    self.spin_wordart_stroke.setValue(int(p["stroke_width"]))
+                    self.spin_wordart_stroke.blockSignals(False)
+                if hasattr(self, "chk_wordart_shadow"):
+                    self.chk_wordart_shadow.blockSignals(True)
+                    self.chk_wordart_shadow.setChecked(p["shadow_enabled"])
+                    self.chk_wordart_shadow.blockSignals(False)
+
+                if self.canvas.selected_item and isinstance(self.canvas.selected_item, WordArtItem):
+                    self.canvas.push_undo()
+                    self.canvas.selected_item.apply_preset(preset_key)
+                    self.canvas.update()
+                    self.canvas.sig_content_changed.emit()
+
+    def on_wordart_size_changed(self, val):
+        self.config.setdefault("wordart_style", {})["font_size"] = val
+        save_config(self.config)
+        self.canvas.set_config(self.config)
+        if self.canvas.selected_item and isinstance(self.canvas.selected_item, WordArtItem):
+            self.canvas.push_undo()
+            self.canvas.selected_item.style["font_size"] = val
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
+
+    def on_wordart_stroke_changed(self, val):
+        self.config.setdefault("wordart_style", {})["stroke_width"] = val
+        save_config(self.config)
+        self.canvas.set_config(self.config)
+        if self.canvas.selected_item and isinstance(self.canvas.selected_item, WordArtItem):
+            self.canvas.push_undo()
+            self.canvas.selected_item.style["stroke_width"] = val
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
+
+    def on_wordart_shadow_toggled(self, checked):
+        self.config.setdefault("wordart_style", {})["shadow_enabled"] = checked
+        save_config(self.config)
+        self.canvas.set_config(self.config)
+        if self.canvas.selected_item and isinstance(self.canvas.selected_item, WordArtItem):
+            self.canvas.push_undo()
+            self.canvas.selected_item.style["shadow_enabled"] = checked
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
 
     def on_capture_completed(self, pixmap, global_rect=None, is_fixed_capture=False):
         if global_rect and not global_rect.isEmpty():
@@ -5172,7 +6074,9 @@ class ManualStudioWindow(QMainWindow):
         temp_dir = os.path.join(get_app_dir(), "temp")
         ppt_ok = False
         if self.config.get("ppt_auto_slide", True):
-            ppt_layout = self.config.get("ppt_layout", {})
+            ppt_layout = self.config.get("ppt_layout", {}).copy()
+            if "template_path" not in ppt_layout:
+                ppt_layout["template_path"] = self.config.get("ppt_template_path", "")
             ppt_ok = ExportEngine.send_to_powerpoint(pil_img, temp_dir, ppt_layout)
 
         # 5. 세션 자동 백업 (3종 세트 동시 저장: Bake PNG + 원본 PNG + .mcs.json)
@@ -5479,18 +6383,151 @@ class ManualStudioWindow(QMainWindow):
             2500
         )
 
+    def update_window_title(self):
+        status = LicenseEngine.check_license_status()
+        badge = status.get("badge_text", "평가판")
+        lic_suffix = f"[{badge}]" if status.get("is_licensed") else f"[{tr('badge_trial', '평가판')} • ~2026.12.31]"
+        proj = getattr(self, "current_project_path", None)
+        project_name = f" - [{os.path.basename(proj)}]" if proj else ""
+        self.setWindowTitle(f"Manual Studio v1.4.0 (DragonRPA Co.){project_name} {lic_suffix}")
+
+    def update_status_bar(self):
+        if not hasattr(self, "lbl_bottom_dev"):
+            return
+        status = LicenseEngine.check_license_status()
+        if status.get("is_licensed"):
+            issued_to = status.get("issued_to", "정식 사용자")
+            badge = status.get("badge_text", "정식 인증")
+            self.lbl_bottom_dev.setText(f"(주)드래곤알피에이 (DragonRPA Co.) | 🔑 {badge} ({issued_to}) | 77.victor.lee@gmail.com")
+            self.lbl_bottom_dev.setStyleSheet("color: #059669; font-size: 10.5px; font-weight: bold;")
+        else:
+            self.lbl_bottom_dev.setText("(주)드래곤알피에이 (DragonRPA Co.) | ⏳ 평가판 (~2026.12.31) | 77.victor.lee@gmail.com")
+            self.lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500;")
+
+    def show_license_dialog(self):
+        dlg = LicenseRegistrationDialog(self)
+        dlg.sig_license_activated.connect(self.on_license_activated)
+        dlg.exec_()
+
+    def on_license_activated(self):
+        self.update_window_title()
+        self.update_status_bar()
+        self.canvas.update()
+        self.show_toast(tr("msg_license_success", "라이선스가 정상적으로 활성화되었습니다."))
+
+    def switch_language(self, locale_code: str):
+        I18nManager.instance().set_locale(locale_code)
+        self.config["locale"] = locale_code
+        save_config(self.config)
+        self.update_window_title()
+        loc_name = I18nManager.instance().get_supported_locales().get(locale_code, locale_code)
+        self.show_toast(f"언어가 '{loc_name}'(으)로 변경되었습니다. (일부 메뉴는 재시작 시 전체 적용)")
+
+    def init_autosave(self):
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.timeout.connect(self.auto_save_current_work)
+        self.update_autosave_timer()
+
+    def update_autosave_timer(self):
+        if not hasattr(self, "autosave_timer"):
+            return
+        enabled = self.config.get("auto_save_enabled", True)
+        interval_min = max(1, self.config.get("auto_save_interval_min", 5))
+        if enabled:
+            self.autosave_timer.start(interval_min * 60 * 1000)
+        else:
+            self.autosave_timer.stop()
+
+    def get_autosave_path(self) -> str:
+        return os.path.join(get_app_dir(), ".autosave.mcs.json")
+
+    def auto_save_current_work(self):
+        if not self.config.get("auto_save_enabled", True):
+            return
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            return
+        try:
+            autosave_path = self.get_autosave_path()
+            metadata = {
+                "ppt_layout": self.config.get("ppt_layout", {}),
+                "is_autosave": True,
+                "saved_at": datetime.now().isoformat()
+            }
+            ProjectManager.save_project(
+                autosave_path,
+                self.canvas.pixmap,
+                self.canvas.items,
+                self.canvas.next_stamp_index,
+                metadata=metadata
+            )
+            self.status_label.setText(f"💾 자동 저장 완료 ({datetime.now().strftime('%H:%M:%S')})")
+        except Exception as e:
+            print(f"[AutoSave] 자동 저장 중 오류: {e}")
+
+    def check_and_prompt_recovery(self):
+        autosave_path = self.get_autosave_path()
+        if not os.path.exists(autosave_path):
+            return
+        try:
+            raw_pixmap, items, next_stamp_index, metadata = ProjectManager.load_project(autosave_path)
+            if raw_pixmap is None or raw_pixmap.isNull():
+                if os.path.exists(autosave_path):
+                    try:
+                        os.remove(autosave_path)
+                    except Exception:
+                        pass
+                return
+            saved_time = metadata.get("saved_at", "")
+            time_msg = f" (저장 시각: {saved_time[:19]})" if saved_time else ""
+            res = QMessageBox.question(
+                self,
+                tr("msg_autosave_recover", "자동 저장 작업 복구"),
+                f"{tr('msg_autosave_prompt', '이전 비정상 종료 시 자동 저장된 작업이 발견되었습니다.')}{time_msg}\n\n"
+                f"{tr('msg_autosave_confirm', '해당 작업을 복구하여 계속 작업하시겠습니까?')}",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if res == QMessageBox.Yes:
+                self.canvas.load_project_data(raw_pixmap, items, next_stamp_index)
+                self.update_window_title()
+                self.status_label.setText(f"📂 자동 저장 복구 완료 (주석 {len(items)}개 복원됨)")
+                self.show_toast(f"📂 자동 저장 파일이 복구되었습니다. (주석 {len(items)}개)")
+            else:
+                if os.path.exists(autosave_path):
+                    try:
+                        os.remove(autosave_path)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[AutoSave] 복구 확인 중 오류: {e}")
+
     def open_settings_dialog(self):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec_() == QDialog.Accepted:
             self.config = dlg.get_config()
             save_config(self.config)
+            loc = self.config.get("locale", "auto")
+            if loc != "auto":
+                I18nManager.instance().set_locale(loc)
             self.canvas.set_config(self.config)
             self.sync_ui_from_config()
+            self.update_window_title()
+            self.update_status_bar()
+            self.update_autosave_timer()
             self.show_toast("설정이 저장되었습니다.")
 
     def closeEvent(self, event):
         if hasattr(self, "hotkey_thread"):
             self.hotkey_thread.stop()
+        if hasattr(self, "autosave_timer"):
+            self.autosave_timer.stop()
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            p = self.get_autosave_path()
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
         event.accept()
 
 
@@ -5617,6 +6654,130 @@ class EulaDialog(QDialog):
 
 
 # ==============================================================================
+# 7.5 라이선스 등록 다이얼로그 (LicenseRegistrationDialog)
+# ==============================================================================
+class LicenseRegistrationDialog(QDialog):
+    sig_license_activated = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("license_dialog_title", "라이선스 등록"))
+        self.setFixedSize(520, 370)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QDialog { background-color: #FFFFFF; }
+            QLabel { font-family: 'Segoe UI', 'Malgun Gothic'; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
+
+        # 1. Header
+        header = QLabel(tr("license_dialog_title", "라이선스 등록 및 정식 인증"), self)
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0F172A;")
+        layout.addWidget(header)
+
+        # Status Badge
+        status = LicenseEngine.check_license_status()
+        is_lic = status.get("is_licensed", False)
+        badge_color = "#10B981" if is_lic else "#D97706"
+        badge_bg = "#ECFDF5" if is_lic else "#FFFBEB"
+        badge_border = "#A7F3D0" if is_lic else "#FDE68A"
+        badge_text = f"상태: {status.get('badge_text', '평가판')} ({status.get('issued_to', '사용자')})"
+
+        self.lbl_status = QLabel(badge_text, self)
+        self.lbl_status.setStyleSheet(f"""
+            background-color: {badge_bg};
+            color: {badge_color};
+            border: 1px solid {badge_border};
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: bold;
+        """)
+        layout.addWidget(self.lbl_status)
+
+        # 2. HWID Frame
+        hwid_frame = QFrame(self)
+        hwid_frame.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px;")
+        hw_layout = QVBoxLayout(hwid_frame)
+        hw_layout.setSpacing(6)
+
+        lbl_hw_title = QLabel(tr("lbl_hwid", "내 PC 고유 식별자 (HWID):"), self)
+        lbl_hw_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #475569;")
+        hw_layout.addWidget(lbl_hw_title)
+
+        hw_row = QHBoxLayout()
+        my_hwid = LicenseEngine.get_hwid()
+        self.edit_hwid = QLineEdit(my_hwid, self)
+        self.edit_hwid.setReadOnly(True)
+        self.edit_hwid.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 4px 8px; background-color: #FFFFFF;")
+        btn_copy = QPushButton(tr("btn_copy_hwid", "📋 복사"), self)
+        btn_copy.setCursor(Qt.PointingHandCursor)
+        btn_copy.clicked.connect(self.copy_hwid)
+        hw_row.addWidget(self.edit_hwid)
+        hw_row.addWidget(btn_copy)
+        hw_layout.addLayout(hw_row)
+        layout.addWidget(hwid_frame)
+
+        # 3. Serial Key Input
+        lbl_key_title = QLabel(tr("lbl_license_key", "라이선스 시리얼 키 입력:"), self)
+        lbl_key_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #0F172A;")
+        layout.addWidget(lbl_key_title)
+
+        self.edit_key = QLineEdit(self)
+        self.edit_key.setPlaceholderText("MS1P-XXXXXXXX-eyJ...")
+        self.edit_key.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 6px 10px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        layout.addWidget(self.edit_key)
+
+        # 4. Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+
+        self.btn_activate = QPushButton(tr("btn_activate", "인증하기"), self)
+        self.btn_activate.setCursor(Qt.PointingHandCursor)
+        self.btn_activate.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB; color: white; font-weight: bold;
+                padding: 7px 18px; border-radius: 5px; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #1D4ED8; }
+        """)
+        self.btn_activate.clicked.connect(self.activate_license)
+
+        self.btn_close = QPushButton(tr("btn_close", "닫기"), self)
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setStyleSheet("padding: 7px 16px; font-size: 12px;")
+        self.btn_close.clicked.connect(self.close)
+
+        btn_layout.addWidget(self.btn_activate)
+        btn_layout.addWidget(self.btn_close)
+        layout.addLayout(btn_layout)
+
+    def copy_hwid(self):
+        QApplication.clipboard().setText(self.edit_hwid.text().strip())
+        QToolTip.showText(QCursor.pos(), "HWID가 클립보드에 복사되었습니다.", self)
+
+    def activate_license(self):
+        key = self.edit_key.text().strip()
+        if not key:
+            QMessageBox.warning(self, "입력 오류", "라이선스 시리얼 키를 입력해 주세요.")
+            return
+
+        valid, payload, msg = LicenseEngine.verify_license_key(key)
+        if valid:
+            LicenseEngine.save_license(key)
+            QMessageBox.information(self, "인증 성공", tr("msg_license_success"))
+            self.sig_license_activated.emit()
+            self.accept()
+        else:
+            QMessageBox.warning(self, "인증 실패", f"라이선스 검증 실패:\n{msg}")
+
+
+# ==============================================================================
 # 8. 개발사 정보 및 About 다이얼로그 (AboutDialog - DragonRPA Co.)
 # ==============================================================================
 class AboutDialog(QDialog):
@@ -5665,9 +6826,14 @@ class AboutDialog(QDialog):
         lbl_sub.setStyleSheet("font-size: 11.5px; color: #64748B;")
         layout.addWidget(lbl_sub)
 
+        status = LicenseEngine.check_license_status()
+        is_lic = status.get("is_licensed", False)
+        badge_text = status.get("badge_text", "평가판")
+        issued_to = status.get("issued_to", "")
+
         ver_layout = QHBoxLayout()
         ver_layout.setAlignment(Qt.AlignCenter)
-        lbl_ver = QLabel("v1.2.0 (Build 2026.09) • 평가판", self)
+        lbl_ver = QLabel(f"v1.4.0 (Build 2026.09) • {badge_text}", self)
         lbl_ver.setStyleSheet("""
             background-color: #EFF6FF;
             color: #1D4ED8;
@@ -5680,22 +6846,38 @@ class AboutDialog(QDialog):
         ver_layout.addWidget(lbl_ver)
         layout.addLayout(ver_layout)
 
-        # 평가판 사용 기한 카드 (기간한정 평가판 명시)
+        # 평가판 / 정식 라이선스 상태 카드
         card_trial = QFrame(self)
-        card_trial.setStyleSheet("""
-            QFrame {
-                background-color: #FEF3C7;
-                border: 1px solid #FCD34D;
-                border-radius: 8px;
-            }
-        """)
         tr_l = QHBoxLayout(card_trial)
         tr_l.setContentsMargins(14, 9, 14, 9)
         tr_l.setSpacing(8)
-        lbl_tr_icon = QLabel("⏳", card_trial)
+        lbl_tr_icon = QLabel(card_trial)
         lbl_tr_icon.setStyleSheet("font-size: 15px; border: none; background: transparent;")
-        lbl_tr_text = QLabel("<b>[기간 한정 평가판]</b> 본 빌드의 사용 유효 기간은 <b>2026년 12월 31일</b>까지입니다.", card_trial)
-        lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #92400E; border: none; background: transparent;")
+        lbl_tr_text = QLabel(card_trial)
+
+        if is_lic:
+            card_trial.setStyleSheet("""
+                QFrame {
+                    background-color: #ECFDF5;
+                    border: 1px solid #A7F3D0;
+                    border-radius: 8px;
+                }
+            """)
+            lbl_tr_icon.setText("🔑")
+            lbl_tr_text.setText(f"<b>[정식 라이선스 활성화]</b> 등록 대상: <b>{issued_to}</b> ({badge_text})<br/>워터마크 없는 고해상도 PPT 슬라이드 생성이 활성화되었습니다.")
+            lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #065F46; border: none; background: transparent;")
+        else:
+            card_trial.setStyleSheet("""
+                QFrame {
+                    background-color: #FEF3C7;
+                    border: 1px solid #FCD34D;
+                    border-radius: 8px;
+                }
+            """)
+            lbl_tr_icon.setText("⏳")
+            lbl_tr_text.setText("<b>[기간 한정 평가판]</b> 사용 기한: <b>2026년 12월 31일</b>까지<br/>정식 라이선스 등록 시 모든 워터마크가 즉시 제거됩니다.")
+            lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #92400E; border: none; background: transparent;")
+
         tr_l.addWidget(lbl_tr_icon)
         tr_l.addWidget(lbl_tr_text, 1)
         layout.addWidget(card_trial)
@@ -5794,6 +6976,27 @@ class AboutDialog(QDialog):
         btn_box.setAlignment(Qt.AlignCenter)
         btn_box.setSpacing(10)
 
+        btn_lic = QPushButton("🔑 라이선스 등록", self)
+        btn_lic.setFixedHeight(34)
+        btn_lic.setCursor(Qt.PointingHandCursor)
+        btn_lic.setStyleSheet("""
+            QPushButton {
+                background-color: #FEF3C7;
+                color: #92400E;
+                border: 1px solid #FCD34D;
+                border-radius: 5px;
+                padding: 0 16px;
+                font-size: 11.5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #FDE68A;
+                color: #78350F;
+            }
+        """)
+        btn_lic.clicked.connect(self.open_license_dialog)
+        btn_box.addWidget(btn_lic)
+
         btn_eula = QPushButton("📜 사용권 계약 (EULA)", self)
         btn_eula.setFixedHeight(34)
         btn_eula.setCursor(Qt.PointingHandCursor)
@@ -5835,6 +7038,13 @@ class AboutDialog(QDialog):
         btn_ok.clicked.connect(self.accept)
         btn_box.addWidget(btn_ok)
         layout.addLayout(btn_box)
+
+    def open_license_dialog(self):
+        dlg = LicenseRegistrationDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            if self.parent() and hasattr(self.parent(), "on_license_activated"):
+                self.parent().on_license_activated()
+            self.accept()
 
     def show_eula(self):
         dlg = EulaDialog(self)
@@ -5880,6 +7090,60 @@ class SettingsDialog(QDialog):
         scroll.setWidget(container)
         root_layout.addWidget(scroll, 1)
 
+        # 00. 글로벌 다국어 언어 설정
+        box_lang = QFrame(self)
+        box_lang.setFrameShape(QFrame.StyledPanel)
+        bl_l = QVBoxLayout(box_lang)
+        bl_l.addWidget(QLabel("<b>[글로벌 다국어 언어 설정 (Global Language)]</b>", self))
+        hl = QHBoxLayout()
+        hl.addWidget(QLabel("시스템 언어 (Language):", self))
+        self.combo_settings_lang = QComboBox(self)
+        for code, name in I18nManager.instance().get_supported_locales().items():
+            self.combo_settings_lang.addItem(name, code)
+        cur_loc = self.config.get("locale", I18nManager.instance().current_locale)
+        idx_loc = self.combo_settings_lang.findData(cur_loc)
+        if idx_loc >= 0:
+            self.combo_settings_lang.setCurrentIndex(idx_loc)
+        hl.addWidget(self.combo_settings_lang)
+        bl_l.addLayout(hl)
+        layout.addWidget(box_lang)
+
+        # 01. 실수 방지 자동 저장 설정
+        box_as = QFrame(self)
+        box_as.setFrameShape(QFrame.StyledPanel)
+        bas_l = QVBoxLayout(box_as)
+        bas_l.addWidget(QLabel("<b>[실수 방지 자동 저장 설정 (Safety Auto-Save)]</b>", self))
+        self.chk_settings_autosave = QCheckBox("백그라운드 자동 안전 보관 활성화", self)
+        self.chk_settings_autosave.setChecked(bool(self.config.get("auto_save_enabled", True)))
+        bas_l.addWidget(self.chk_settings_autosave)
+        has = QHBoxLayout()
+        has.addWidget(QLabel("자동 저장 주기 (분):", self))
+        self.spin_settings_autosave_interval = QSpinBox(self)
+        self.spin_settings_autosave_interval.setRange(1, 60)
+        self.spin_settings_autosave_interval.setValue(int(self.config.get("auto_save_interval_min", 5)))
+        has.addWidget(self.spin_settings_autosave_interval)
+        bas_l.addLayout(has)
+        layout.addWidget(box_as)
+
+        # 0. 다중 모니터 캡처 대상 설정
+        box0 = QFrame(self)
+        box0.setFrameShape(QFrame.StyledPanel)
+        b0_l = QVBoxLayout(box0)
+        b0_l.addWidget(QLabel("<b>[다중 모니터 캡처 화면 설정]</b>", self))
+        h0 = QHBoxLayout()
+        h0.addWidget(QLabel("기본 캡처 화면:", self))
+        self.combo_settings_monitor = QComboBox(self)
+        self.combo_settings_monitor.addItem("🌐 전체 가상 화면 (모든 모니터)", -1)
+        for m in MultiMonitorManager.get_monitor_info_list():
+            self.combo_settings_monitor.addItem(m["label"], m["index"])
+        cur_m = self.config.get("target_monitor", -1)
+        idx_m = self.combo_settings_monitor.findData(cur_m)
+        if idx_m >= 0:
+            self.combo_settings_monitor.setCurrentIndex(idx_m)
+        h0.addWidget(self.combo_settings_monitor)
+        b0_l.addLayout(h0)
+        layout.addWidget(box0)
+
         # 1. PPT 규격화 가로폭 설정
         box1 = QFrame(self)
         box1.setFrameShape(QFrame.StyledPanel)
@@ -5923,6 +7187,19 @@ class SettingsDialog(QDialog):
         box3.setFrameShape(QFrame.StyledPanel)
         b3_l = QVBoxLayout(box3)
         b3_l.addWidget(QLabel("<b>[텍스트 라벨 스타일]</b>", self))
+
+        h3_font = QHBoxLayout()
+        h3_font.addWidget(QLabel("기본 서체:", self))
+        self.combo_text_font = QFontComboBox(self)
+        cur_tf = self.config.get("text_style", {}).get("font_family", "Malgun Gothic")
+        self.combo_text_font.setCurrentFont(QFont(cur_tf))
+        h3_font.addWidget(self.combo_text_font)
+
+        self.btn_add_font_text = QPushButton("➕ 폰트 등록", self)
+        self.btn_add_font_text.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
+        self.btn_add_font_text.clicked.connect(self.action_add_custom_font)
+        h3_font.addWidget(self.btn_add_font_text)
+        b3_l.addLayout(h3_font)
 
         h3_1 = QHBoxLayout()
         h3_1.addWidget(QLabel("글꼴 크기(pt):", self))
@@ -6108,9 +7385,16 @@ class SettingsDialog(QDialog):
 
         ht2 = QHBoxLayout()
         ht2.addWidget(QLabel("글꼴:", self))
-        self.edit_title_font = QLineEdit(str(ppt_l.get("title_font_family", "Malgun Gothic")), self)
-        self.edit_title_font.setFixedWidth(120)
-        ht2.addWidget(self.edit_title_font)
+        self.combo_title_font = QFontComboBox(self)
+        self.combo_title_font.setFixedWidth(130)
+        cur_tfont = str(ppt_l.get("title_font_family", "Malgun Gothic"))
+        self.combo_title_font.setCurrentFont(QFont(cur_tfont))
+        ht2.addWidget(self.combo_title_font)
+
+        self.btn_add_font_title = QPushButton("➕ 폰트 등록", self)
+        self.btn_add_font_title.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
+        self.btn_add_font_title.clicked.connect(self.action_add_custom_font)
+        ht2.addWidget(self.btn_add_font_title)
 
         ht2.addWidget(QLabel("크기(pt):", self))
         self.spin_title_font_size = QSpinBox(self)
@@ -6140,6 +7424,22 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(box_title)
 
+        # 사내 PPT 마스터 템플릿 연동
+        box_tpl = QFrame(self)
+        box_tpl.setFrameShape(QFrame.StyledPanel)
+        btpl_l = QVBoxLayout(box_tpl)
+        btpl_l.addWidget(QLabel("<b>[사내 PPT 마스터 템플릿 연동 (Master Template)]</b>", self))
+        htpl = QHBoxLayout()
+        htpl.addWidget(QLabel("마스터 파일(.pptx):", self))
+        self.edit_settings_ppt_template = QLineEdit(str(self.config.get("ppt_template_path", "")), self)
+        self.edit_settings_ppt_template.setPlaceholderText("기본 서식 (비어있을 시 기본 빈 슬라이드)")
+        btn_browse_tpl = QPushButton("찾아보기...", self)
+        btn_browse_tpl.clicked.connect(self.action_browse_ppt_template)
+        htpl.addWidget(self.edit_settings_ppt_template)
+        htpl.addWidget(btn_browse_tpl)
+        btpl_l.addLayout(htpl)
+        layout.addWidget(box_tpl)
+
         # 하단 확인/취소
         btn_layout = QHBoxLayout()
         btn_ok = QPushButton("저장", self)
@@ -6151,6 +7451,32 @@ class SettingsDialog(QDialog):
         btn_layout.addWidget(btn_ok)
         btn_layout.addWidget(btn_cancel)
         root_layout.addLayout(btn_layout)
+
+    def action_add_custom_font(self):
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "외부/유료/토너절약 폰트 파일 등록",
+            "",
+            "폰트 파일 (*.ttf *.otf *.ttc *.woff);;모든 파일 (*.*)"
+        )
+        if not file_paths:
+            return
+        all_added = []
+        for fp in file_paths:
+            families, dest = CustomFontManager.instance().import_font_file(fp)
+            if families:
+                all_added.extend(families)
+                if "custom_fonts" not in self.config:
+                    self.config["custom_fonts"] = []
+                if dest not in self.config["custom_fonts"]:
+                    self.config["custom_fonts"].append(dest)
+        if all_added:
+            fam_str = ", ".join(all_added)
+            QMessageBox.information(self, "폰트 등록 완료", f"새 글꼴이 등록되었습니다:\n{fam_str}")
+            if hasattr(self, "combo_title_font") and all_added:
+                self.combo_title_font.setCurrentFont(QFont(all_added[0]))
+            if hasattr(self, "combo_text_font") and all_added:
+                self.combo_text_font.setCurrentFont(QFont(all_added[0]))
 
     def choose_stamp_color(self):
         col = QColorDialog.getColor(QColor(self.current_stamp_color), self, "스탬프 배경 색상 선택")
@@ -6190,13 +7516,36 @@ class SettingsDialog(QDialog):
             text_fg = "#FFFFFF" if (qcol.red() * 0.299 + qcol.green() * 0.587 + qcol.blue() * 0.114) < 140 else "#000000"
             self.btn_title_color.setStyleSheet(f"background-color: {self.current_title_color}; color: {text_fg}; font-weight: bold;")
 
+    def action_browse_ppt_template(self):
+        fpath, _ = QFileDialog.getOpenFileName(
+            self,
+            "사내 PPT 마스터 템플릿 파일 선택",
+            "",
+            "파워포인트 템플릿 (*.pptx *.potx);;모든 파일 (*.*)"
+        )
+        if fpath:
+            self.edit_settings_ppt_template.setText(fpath)
+
     def save_and_close(self):
+        if hasattr(self, "combo_settings_lang"):
+            self.config["locale"] = self.combo_settings_lang.currentData()
+        if hasattr(self, "chk_settings_autosave"):
+            self.config["auto_save_enabled"] = self.chk_settings_autosave.isChecked()
+        if hasattr(self, "spin_settings_autosave_interval"):
+            self.config["auto_save_interval_min"] = self.spin_settings_autosave_interval.value()
+        if hasattr(self, "edit_settings_ppt_template"):
+            self.config["ppt_template_path"] = self.edit_settings_ppt_template.text().strip()
+
+        if hasattr(self, "combo_settings_monitor"):
+            self.config["target_monitor"] = self.combo_settings_monitor.currentData()
         self.config["target_width"] = self.spin_width.value()
         self.config.setdefault("stamp_style", {})["size"] = self.spin_stamp_size.value()
         self.config["stamp_style"]["bg_color"] = self.current_stamp_color
         self.config.setdefault("text_style", {})["font_size"] = self.spin_font_size.value()
         self.config["text_style"]["text_color"] = self.current_text_color
         self.config["text_style"]["bg_color"] = self.current_text_bg_color
+        if hasattr(self, "combo_text_font"):
+            self.config["text_style"]["font_family"] = self.combo_text_font.currentFont().family()
         self.config.setdefault("highlight_box_style", {})["border_width"] = self.spin_box_width.value()
         self.config["highlight_box_style"]["color"] = self.current_box_color
         self.config["highlight_box_style"]["fill"] = self.chk_box_fill.isChecked()
@@ -6215,7 +7564,7 @@ class SettingsDialog(QDialog):
         self.config["ppt_layout"]["title_top"] = self.spin_title_top.value()
         self.config["ppt_layout"]["title_width"] = self.spin_title_width.value()
         self.config["ppt_layout"]["title_height"] = self.spin_title_height.value()
-        self.config["ppt_layout"]["title_font_family"] = self.edit_title_font.text().strip() or "Malgun Gothic"
+        self.config["ppt_layout"]["title_font_family"] = self.combo_title_font.currentFont().family()
         self.config["ppt_layout"]["title_font_size"] = self.spin_title_font_size.value()
         self.config["ppt_layout"]["title_font_bold"] = self.chk_title_bold.isChecked()
         self.config["ppt_layout"]["title_font_color"] = self.current_title_color
@@ -6224,6 +7573,17 @@ class SettingsDialog(QDialog):
 
     def get_config(self):
         return self.config
+
+    @property
+    def edit_title_font(self):
+        class _FontProxy:
+            def __init__(self, combo):
+                self.combo = combo
+            def text(self):
+                return self.combo.currentFont().family()
+            def setText(self, val):
+                self.combo.setCurrentFont(QFont(val))
+        return _FontProxy(self.combo_title_font)
 
 
 def kill_other_instances():

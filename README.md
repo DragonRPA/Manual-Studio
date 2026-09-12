@@ -135,3 +135,37 @@
   - 상용 라이선스: 1PC-1License Node-Lock (단일 하드웨어 식별자 귀속).
 - **보호 및 제약 사항**: 리버스 엔지니어링, 역어셈블, 디컴파일, HWID/시계 변조, 무단 재배포 엄격 금지 (위약벌 및 손해배상 청구권 명시).
 - **전문 확인**: [EULA 전문 (EULA.md)](EULA.md) 및 프로그램 내 `EULA(&E)` 메뉴 / 공식 웹사이트 [Manual Studio EULA](https://www.dragonrpa.co.kr/manual-studio) 참조.
+
+---
+
+### 8. 🌐 글로벌 9개 국어 I18N 다국어 지원 & 가이드 문서
+- **전 세계 9개 핵심 언어권 완벽 지원**:
+  - 한국어(`ko`), English(`en`), 简体中文(`zh`), 日本語(`ja`), Deutsch(`de`), Español(`es`), Français(`fr`), Português(`pt`), Русский(`ru`).
+  - Windows OS 기본 언어 자동 감지 및 실시간 언어 전환(`🌐 언어(Language)` 메뉴).
+  - 한자, 히라가나/가타카나, 키릴 문자 깨짐 방지를 위한 글로벌 폴백 폰트 체인(`Segoe UI`, `Microsoft YaHei`, `Yu Gothic`, `Meiryo`, `Malgun Gothic`, `Arial`) 탑재.
+- **언어별 공식 사용자 가이드 번들 (`docs/`)**:
+  - [한국어 가이드](docs/User_Guide_KO.md) | [English Guide](docs/User_Guide_EN.md) | [简体中文指南](docs/User_Guide_ZH.md) | [日本語ガイド](docs/User_Guide_JA.md)
+  - [Deutsch Handbuch](docs/User_Guide_DE.md) | [Guía en Español](docs/User_Guide_ES.md) | [Guide en Français](docs/User_Guide_FR.md) | [Guia em Português](docs/User_Guide_PT.md) | [Руководство пользователя](docs/User_Guide_RU.md)
+
+---
+
+### 9. 🔑 엔터프라이즈 라이선스 엔진, 키젠(발급기) & 워터마크 정책
+- **6대 라이선스 에디션 구분**:
+  - 1카피 영구(`MS1P`), 1개월 구독(`MS1M`), 1년 연간 구독(`MS1Y`), 볼륨/엔터프라이즈(`MSENT`), 오프라인 폐쇄망 사이트(`MSSITE`), 14일 평가 연장(`MST14`).
+- **HMAC-SHA256 보안 & HWID 노드락 바인딩**:
+  - 클라이언트 고유 머신 식별자(`DRPA-XXXX-XXXX-XXXX`) 기반 위변조 불가능한 암호화 서명.
+- **워터마크 제어**:
+  - 미인증 평가판 상태에서는 PPT 생성 및 클립보드 복사 시 반투명 'Manual Studio' 워터마크 자동 삽입.
+  - 정식 라이선스 인증 시 워터마크 100% 영구 제거 및 무제한 고해상도 출력 허용.
+- **독립형 라이선스 발급기 (`tools/keygen_manual_studio.py`)**:
+  - 관리자/영업용 GUI 및 CLI 라이선스 발급 도구 제공.
+
+---
+
+### 10. 📊 사내 PPT 마스터 템플릿 연동 & 실수 방지 자동 저장
+- **사내 PPT 마스터 템플릿(`.pptx`, `.potx`) 지정**:
+  - 환경 설정에서 사내 공식 마스터 파일을 지정하면 회사 로고, 배경 디자인, 슬라이드 서식이 100% 자동 상속.
+- **실수 방지 주기적 자동 저장(Auto-save) & 재실행 복구**:
+  - 1~30분 주기 백그라운드 자동 저장 및 PC 비정상 종료 시 재실행 원클릭 100% 무손실 복구.
+- **엔터키 대기 없는 즉시 캡처**:
+  - `Shift+F9`(영역 지정) 및 `F8`(추가 캡처) 드래그 완료 즉시(마우스 릴리즈) 캔버스에 즉각 안착.

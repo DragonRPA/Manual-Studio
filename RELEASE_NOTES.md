@@ -1,5 +1,51 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.1] - 2026-09-12 17:40
+
+### 🌐 글로벌 9개 국어 I18N 다국어화 & 무깨짐 폰트 폴백 체인
+- **글로벌 9개 국어 카탈로그 및 시스템 로케일 자동 감지 (`i18n_manager.py`)**:
+  - 한국어(`ko`), English(`en`), 简体中文(`zh`), 日本語(`ja`), Deutsch(`de`), Español(`es`), Français(`fr`), Português(`pt`), Русский(`ru`) 전면 지원.
+  - 시스템 언어 자동 감지 및 메뉴바 `🌐 언어(Language)` / 환경 설정 콤보박스를 통한 실시간 언어 전환 지원.
+  - 단계명 슬라이드 템플릿 9개국어 표준화 (`Step {n}. [단계명 입력]`, `Step {n}. [Enter Step Title]`, `步骤 {n}. [输入步骤名称]`, `ステップ {n}. [手順名を入力]`, etc.).
+- **다국어 텍스트박스 무깨짐 글꼴 폴백 체인 (`QFont.setFamilies`)**:
+  - `TextLabelItem`, `CalloutItem`, `WordArtItem`에 전 세계 표준 글꼴 폴백 체인(`Segoe UI`, `Microsoft YaHei`, `Yu Gothic`, `Meiryo`, `Malgun Gothic`, `Arial`, `sans-serif`)을 영구 적용하여 한자, 히라가나/가타카나, 키릴 문자, 악센트 라틴 문자 렌더링 시 폰트 깨짐(Tofu 현상)을 원천 차단.
+
+### 🔑 엔터프라이즈 라이선스 엔진 & 독립형 키젠(발급기) 개발 (`license_engine.py`, `tools/keygen_manual_studio.py`)
+- **6대 라이선스 유형 체계 정립**:
+  - ① 1카피 영구 (`PERPETUAL` / `MS1P`)
+  - ② 1카피 1개월 (`SUB_1M` / `MS1M`)
+  - ③ 1카피 1년 연간 구독 (`SUB_1Y` / `MS1Y`)
+  - ④ 볼륨/엔터프라이즈 (`ENTERPRISE` / `MSENT`)
+  - ⑤ 오프라인 보안 폐쇄망 사이트 (`AIR_GAPPED` / `MSSITE`)
+  - ⑥ 14일 평가 연장 (`TRIAL_14D` / `MST14`)
+- **HMAC-SHA256 기반 위변조 불가능한 서명 및 HWID 노드락 바인딩**:
+  - 클라이언트 고유 식별자(`DRPA-XXXX-XXXX-XXXX`) 기반 기기 바인딩.
+  - 라이선스 검증 및 Windows 레지스트리(`HKCU\Software\DragonRPA\ManualStudio\License`) 및 로컬 백업(`license.key`) 동시 보존.
+- **인앱 라이선스 등록 창 (`LicenseRegistrationDialog`) & About 연동**:
+  - HWID 원클릭 복사, 시리얼 키 등록, 실시간 상태 배지 표시 및 인증 즉시 워터마크 해제.
+- **독립형 라이선스 발급기 (`tools/keygen_manual_studio.py`)**:
+  - GUI 및 CLI 동시 지원, 발급 이력 JSON(`tools/issued_licenses.json`) 자동 누적.
+
+### 🛡️ 평가판 "Manual Studio" 워터마크 자동 각인 & 정식 인증 시 완전 제거
+- 미인증 평가판 상태에서는 PPT 슬라이드 생성, 클립보드 복사, 이미지 내보내기 시 우하단 반투명 브랜드 배지 및 캔버스 중앙 대각선 반투명 워터마크 자동 합성.
+- 정식 라이선스 인증 즉시 모든 워터마크가 100% 제거된 깨끗한 원본 고해상도 슬라이드 출력.
+
+### ⚡ 캡처 영역 지정(Shift+F9) 및 추가 캡처(F8) 엔터 대기 제거
+- 마우스 드래그 후 손을 떼는 순간(Mouse Release) 엔터키 입력 대기 없이 즉시 확정되어 캔버스에 안착하도록 개선 (`CaptureOverlayWidget.mouseReleaseEvent`).
+- 10x10 미만 미세 조작 시 오발 방지 필터링 유지.
+
+### 📊 사내 PPT 마스터 템플릿(`.pptx`, `.potx`) 연동
+- 환경 설정(`SettingsDialog`)에서 사내 공식 PPT 템플릿 파일 지정 지원.
+- 슬라이드 생성 시 회사의 공식 로고, 배경 그래픽, 슬라이드 마스터 서식 자동 상속 지원 (`PowerPointAutomation.send_to_powerpoint`).
+
+### 💾 실수 방지 주기적 자동 저장(Auto-save) & 재실행 복구 시스템
+- 설정 가능한 주기(1~30분)로 백그라운드에서 원본 비트맵 및 주석 벡터 레이어를 자동 백업(`.autosave.mcs.json`).
+- 비정상 종료 시 재실행 시 팝업을 통해 직전 작업 내용을 100% 무손실 복구.
+
+### 📖 글로벌 9개 국어 공식 사용 설명서 번들 생성 (`docs/`)
+- 한국어, 영어, 중국어, 일본어, 독일어, 스페인어, 프랑스어, 포르투갈어, 러시아어 등 9개 언어별 가이드(`docs/User_Guide_XX.md`) 및 UI 스크린샷 4종 완비.
+- 핵심 비즈니스 로직 29개 단위 테스트 스위트 100% PASS 달성.
+
 ## [v1.2.0.Build.5] - 2026-09-12 12:22
 
 ### 📦 EULA 내장 Nuitka C-기계어 바이너리(`ManualStudio.exe`) 재컴파일 및 README 연동

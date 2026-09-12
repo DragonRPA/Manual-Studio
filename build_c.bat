@@ -13,18 +13,19 @@ REM 2. Run Nuitka C-Compilation
 python -m nuitka ^
   --standalone ^
   --onefile ^
-  --enable-plugin=pyqt5 ^
+  --enable-plugin=pyside6 ^
   --experimental=force-dependencies-pefile ^
   --lto=no ^
   --windows-console-mode=disable ^
   --include-windows-runtime-dlls=yes ^
   --include-data-dir="assets=assets" ^
+  --include-data-dir="fonts=fonts" ^
   --include-data-files="config.json=config.json" ^
   --windows-icon-from-ico="assets/dragon_rpa.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^
-  --windows-file-version=1.2.0.0 ^
-  --windows-product-version=1.2.0.0 ^
+  --windows-file-version=1.4.0.0 ^
+  --windows-product-version=1.4.0.0 ^
   --windows-file-description="DragonRPA Manual Studio" ^
   --assume-yes-for-downloads ^
   --output-dir="C:\ManualStudioBuild" ^

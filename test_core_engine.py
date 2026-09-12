@@ -85,8 +85,8 @@ def test_fixed_rect_config():
     print("[PASS] test_fixed_rect_config (Fixed rect schema and defaults valid)")
 
 def test_text_label_rendering():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QImage, QPainter
     from manual_capture_studio import TextLabelItem
     app = QApplication.instance() or QApplication(sys.argv)
     cfg = load_config()
@@ -101,9 +101,9 @@ def test_text_label_rendering():
     print("[PASS] test_text_label_rendering (Opacity type-safety and robust rendering valid)")
 
 def test_toolbar_settings_and_selection_sync():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QPoint, Qt
-    from PyQt5.QtGui import QPixmap
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QPixmap
     from manual_capture_studio import (
         ManualStudioWindow, StudioCanvasWidget, StampItem, TextLabelItem, HighlightBoxItem
     )
@@ -184,9 +184,9 @@ def test_toolbar_settings_and_selection_sync():
     print("[PASS] test_toolbar_settings_and_selection_sync (All toolbar controls and two-way sync valid)")
 
 def test_ppt_layout_and_fit():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap
-    from PyQt5.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtCore import Qt
     from manual_capture_studio import ManualStudioWindow, load_config
     
     app = QApplication.instance() or QApplication(sys.argv)
@@ -254,7 +254,7 @@ def test_ppt_layout_and_fit():
     assert win.config["ppt_layout"]["title_left"] == 105
 
     # 7. Office COM BGR 폰트 색상 변환 검증
-    from PyQt5.QtGui import QColor
+    from PySide6.QtGui import QColor
     qcol = QColor("#1E88E5")
     bgr_val = qcol.red() + (qcol.green() << 8) + (qcol.blue() << 16)
     assert bgr_val == 0x1E + (0x88 << 8) + (0xE5 << 16)
@@ -303,9 +303,9 @@ def test_ppt_layout_and_fit():
     print("[PASS] test_ppt_layout_and_fit (Left/Top, auto-fit, Step n-1, custom Title Box & Dialog sync valid)")
 
 def test_arrow_item_and_sync():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QPointF, Qt
-    from PyQt5.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QImage, QPainter
     from manual_capture_studio import ArrowItem, ManualStudioWindow, load_config
     
     app = QApplication.instance() or QApplication(sys.argv)
@@ -380,9 +380,9 @@ def test_arrow_item_and_sync():
     print("[PASS] test_arrow_item_and_sync (Arrow geometry, rendering, clone, undo, and toolbar sync valid)")
 
 def test_five_recommended_annotation_items():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QPointF, QRect, Qt
-    from PyQt5.QtGui import QImage, QPainter, QPixmap, QColor
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF, QRect, Qt
+    from PySide6.QtGui import QImage, QPainter, QPixmap, QColor
     from manual_capture_studio import (
         StepArrowItem, ElbowArrowItem, CalloutItem, BlurMosaicItem, HotkeyBadgeItem,
         load_config
@@ -458,8 +458,8 @@ def test_five_recommended_annotation_items():
     print("[PASS] test_five_recommended_annotation_items (StepArrow, Elbow, Callout, Blur, Hotkey geometry and rendering valid)")
 
 def test_ribbon_menu_and_quick_strip():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QPointF, Qt
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF, Qt
     from manual_capture_studio import (
         ManualStudioWindow, StepArrowItem, CalloutItem, BlurMosaicItem, HotkeyBadgeItem
     )
@@ -560,7 +560,7 @@ def test_ribbon_menu_and_quick_strip():
     print("[PASS] test_ribbon_menu_and_quick_strip (Ribbon tabs, quick strip, two-way sync, and item selection valid)")
 
 def test_annotation_serialization():
-    from PyQt5.QtCore import QPointF, QRect, QRectF
+    from PySide6.QtCore import QPointF, QRect, QRectF
     from manual_capture_studio import (
         StampItem, TextLabelItem, HighlightBoxItem, ArrowItem, StepArrowItem,
         ElbowArrowItem, CalloutItem, BlurMosaicItem, HotkeyBadgeItem,
@@ -644,9 +644,9 @@ def test_annotation_serialization():
 def test_project_manager_save_and_load():
     import os
     import shutil
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap, QColor
-    from PyQt5.QtCore import QPointF, QRect
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QPointF, QRect
     from manual_capture_studio import (
         ProjectManager, StampItem, HighlightBoxItem, TextLabelItem
     )
@@ -697,9 +697,9 @@ def test_auto_backup_step_bundle_and_delete():
     import os
     import shutil
     from PIL import Image
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap, QColor
-    from PyQt5.QtCore import QPointF
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QPointF
     from manual_capture_studio import (
         ExportEngine, ManualStudioWindow, StampItem, StepArrowItem
     )
@@ -762,9 +762,9 @@ def test_auto_backup_step_bundle_and_delete():
     print("[PASS] test_auto_backup_step_bundle_and_delete (3-file bundle, smart stamp re-indexing, and item deletion valid)")
 
 def test_image_overlay_item_and_sub_capture():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter
-    from PyQt5.QtCore import QPointF, QRectF
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QColor, QImage, QPainter
+    from PySide6.QtCore import QPointF, QRectF
     from manual_capture_studio import (
         ImageOverlayItem, item_from_dict, ManualStudioWindow, StampItem, ArrowItem
     )
@@ -863,9 +863,9 @@ def test_image_overlay_item_and_sub_capture():
     print("[PASS] test_image_overlay_item_and_sub_capture (F8 modal sub-capture, resize handles, border/shadow, and canvas bake valid)")
 
 def test_draft_stamp_item():
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter
-    from PyQt5.QtCore import QPointF
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QColor, QImage, QPainter
+    from PySide6.QtCore import QPointF
     from manual_capture_studio import (
         DraftStampItem, item_from_dict, ManualStudioWindow
     )
@@ -953,7 +953,7 @@ def test_draft_stamp_item():
     print("[PASS] test_draft_stamp_item (Rectangle 60-deg tilt Draft stamp, inverse transform hit test, and canvas bake valid)")
 
 def test_powerpoint_step_renumbering():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     from manual_capture_studio import ManualStudioWindow, ExportEngine
     import win32com.client
 
@@ -1050,7 +1050,7 @@ def test_powerpoint_step_renumbering():
     print("[PASS] test_powerpoint_step_renumbering (Sequential Step Renumbering, Font & Text preservation, Non-step skip valid)")
 
 def test_dragon_rpa_branding_and_about_dialog():
-    from PyQt5.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from manual_capture_studio import ManualStudioWindow, AboutDialog, get_dragon_rpa_ci_pixmap
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -1122,6 +1122,336 @@ def test_license_validator():
 
     print("[PASS] test_license_validator (2026-12-31 Time-Bomb, Obfuscation, Anti-Rollback valid)")
 
+def test_custom_font_manager():
+    from manual_capture_studio import CustomFontManager
+    mgr = CustomFontManager.instance()
+    assert mgr is not None
+    assert os.path.exists(mgr.fonts_dir)
+    families = mgr.load_all_fonts()
+    assert isinstance(families, list)
+    print(f"[PASS] test_custom_font_manager (fonts_dir={mgr.fonts_dir}, loaded={len(families)})")
+
+def test_multi_monitor_manager():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QRect
+    from manual_capture_studio import MultiMonitorManager
+    app = QApplication.instance() or QApplication(sys.argv)
+    screens = MultiMonitorManager.get_screens()
+    assert len(screens) >= 1
+    monitors = MultiMonitorManager.get_monitor_info_list()
+    assert len(monitors) == len(screens)
+    v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+    assert v_rect.width() >= 800 and v_rect.height() >= 600
+
+    # 상대 좌표 <-> 글로벌 좌표 변환 가역성(Invertibility) 검증
+    for m in range(len(screens)):
+        rel = QRect(50, 60, 400, 300)
+        glob = MultiMonitorManager.to_global_rect(m, rel)
+        back_rel = MultiMonitorManager.to_relative_rect(m, glob)
+        assert back_rel == rel, f"Coordinate bijection failed for monitor {m}: {rel} != {back_rel}"
+
+    # 전체 가상 화면(-1) 변환 가역성 검증
+    glob_v = MultiMonitorManager.to_global_rect(-1, rel)
+    back_v = MultiMonitorManager.to_relative_rect(-1, glob_v)
+    assert back_v == rel
+
+    print(f"[PASS] test_multi_monitor_manager (Screens={len(screens)}, VirtualDesktop={v_rect}, Coord Bijection valid)")
+
+def test_elbow_arrow_four_directions_and_toggle():
+    from PySide6.QtCore import QPointF, QRect
+    from PySide6.QtGui import QImage, QPainter
+    from manual_capture_studio import ElbowArrowItem, item_from_dict
+    
+    # 1. HV (가로 먼저 -> 세로) vs VH (세로 먼저 -> 가로)
+    p_start = QPointF(100, 100)
+    # 4분면: 우하(200, 200), 우상(200, 50), 좌하(50, 200), 좌상(50, 50)
+    quadrants = [
+        (QPointF(200, 200), "우하 ㄱ/ㄴ"),
+        (QPointF(200, 50),  "우상 ┘/┌"),
+        (QPointF(50, 200),  "좌하 ┌/┘"),
+        (QPointF(50, 50),   "좌상 ㄴ/ㄱ")
+    ]
+    for p_end, name in quadrants:
+        item_hv = ElbowArrowItem(p_start, p_end, {"color": "#E53935", "width": 3, "head_size": 14}, route_mode="HV")
+        c_hv = item_hv.get_corner_point()
+        assert c_hv.x() == p_end.x() and c_hv.y() == p_start.y()
+
+        item_vh = ElbowArrowItem(p_start, p_end, {"color": "#E53935", "width": 3, "head_size": 14}, route_mode="VH")
+        c_vh = item_vh.get_corner_point()
+        assert c_vh.x() == p_start.x() and c_vh.y() == p_end.y()
+
+    # 2. 토글 기능 검증 (Tab/Space)
+    test_item = ElbowArrowItem(p_start, QPointF(300, 300), route_mode="HV")
+    assert test_item.route_mode == "HV"
+    test_item.toggle_route_mode()
+    assert test_item.route_mode == "VH"
+    test_item.toggle_route_mode()
+    assert test_item.route_mode == "HV"
+
+    # 3. 렌더링 검증
+    img = QImage(400, 400, QImage.Format_ARGB32)
+    img.fill(0)
+    painter = QPainter(img)
+    test_item.render(painter)
+    painter.end()
+
+    # 4. 직렬화 / 역직렬화 라운드트립
+    d = test_item.to_dict()
+    assert d["type"] == "ElbowArrowItem"
+    assert d["route_mode"] == "HV"
+    restored = item_from_dict(d)
+    assert isinstance(restored, ElbowArrowItem)
+    assert restored.route_mode == "HV"
+    assert restored.start_pos == test_item.start_pos
+    assert restored.end_pos == test_item.end_pos
+
+    print("[PASS] test_elbow_arrow_four_directions_and_toggle (4 Quadrants, HV/VH, Tab toggle, Serialization valid)")
+
+def test_wordart_item_and_presets():
+    from PySide6.QtGui import QImage, QPainter
+    from manual_capture_studio import WordArtItem, item_from_dict
+    
+    # 1. 5대 프리셋 정의 검증
+    expected_presets = ["white_pop", "gold_title", "neon_cyan", "red_warning", "slate_modern"]
+    for pid in expected_presets:
+        assert pid in WordArtItem.PRESETS
+        p = WordArtItem.PRESETS[pid]
+        assert "name" in p and "text_color" in p and "stroke_color" in p and "stroke_width" in p
+
+    # 2. 아이템 생성 및 프리셋 적용
+    wa = WordArtItem("매뉴얼스튜디오 워드아트", 50, 60)
+    assert wa.text == "매뉴얼스튜디오 워드아트"
+    
+    for pid in expected_presets:
+        wa.apply_preset(pid)
+        assert wa.style.get("preset_id") == pid
+        assert wa.style.get("text_color") == WordArtItem.PRESETS[pid]["text_color"]
+
+    # 3. QPainterPath 외곽선/그림자 렌더링 검증
+    img = QImage(500, 200, QImage.Format_ARGB32)
+    img.fill(0)
+    painter = QPainter(img)
+    wa.render(painter)
+    painter.end()
+
+    # 4. 직렬화 / 역직렬화 라운드트립
+    d = wa.to_dict()
+    assert d["type"] == "WordArtItem"
+    assert d["text"] == "매뉴얼스튜디오 워드아트"
+    restored = item_from_dict(d)
+    assert isinstance(restored, WordArtItem)
+    assert restored.text == wa.text
+    assert restored.pos == wa.pos
+    assert restored.style["preset_id"] == wa.style["preset_id"]
+
+    print("[PASS] test_wordart_item_and_presets (5 Presets, QPainterPath stroke/shadow, Serialization valid)")
+
+def test_global_i18n_manager():
+    from i18n_manager import I18nManager, t, tr
+    mgr = I18nManager.instance()
+    locales = mgr.get_supported_locales()
+    assert len(locales) == 9
+    for code in ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]:
+        assert code in locales
+        val = t("btn_fixed_capture", locale=code)
+        assert val and len(val) > 0
+
+    fonts = mgr.get_font_families()
+    assert "Malgun Gothic" in fonts
+    assert "Segoe UI" in fonts
+
+    for code in locales:
+        tmpl = mgr.get_step_template(code)
+        assert "{n}" in tmpl
+
+    mgr.set_locale("en")
+    assert mgr.get_locale() == "en"
+    assert "Capture" in tr("btn_fixed_capture")
+
+    mgr.set_locale("ko")
+    assert mgr.get_locale() == "ko"
+    print("[PASS] test_global_i18n_manager (9 Global Locales, Font Fallback, Dynamic Switch valid)")
+
+def test_license_engine_and_verification():
+    from license_engine import LicenseEngine, LicenseType
+    
+    hwid = LicenseEngine.get_hwid()
+    assert hwid.startswith("DRPA-")
+    parts = hwid.split("-")
+    assert len(parts) == 4
+    for p in parts[1:]:
+        assert len(p) == 4
+
+    test_types = [
+        LicenseType.PERPETUAL,
+        LicenseType.SUB_1M,
+        LicenseType.SUB_1Y,
+        LicenseType.ENTERPRISE,
+        LicenseType.AIR_GAPPED,
+        LicenseType.TRIAL_14D
+    ]
+
+    for ltype in test_types:
+        key = LicenseEngine.generate_license_key(
+            license_type=ltype,
+            issued_to="Global Corp Test",
+            hwid=hwid,
+            max_seats=10 if ltype == LicenseType.ENTERPRISE else 1
+        )
+        expected_prefix = LicenseEngine.PREFIX_MAP[ltype]
+        assert key.startswith(expected_prefix + "-")
+        valid, verified_payload, msg = LicenseEngine.verify_license_key(key, current_hwid=hwid)
+        assert valid is True, f"Failed for {ltype}: {msg}"
+        assert verified_payload["type"] == ltype
+        assert verified_payload["issued_to"] == "Global Corp Test"
+
+    tampered_key = key[:-2] + ("X" if key[-2] != "X" else "Y") + key[-1]
+    val_tamper, _, msg_tamper = LicenseEngine.verify_license_key(tampered_key, current_hwid=hwid)
+    assert val_tamper is False
+
+    other_hwid = "DRPA-9999-8888-7777"
+    key_locked = LicenseEngine.generate_license_key(
+        license_type=LicenseType.PERPETUAL,
+        hwid=hwid,
+        issued_to="NodeLock User"
+    )
+    val_diff_hwid, _, msg_diff = LicenseEngine.verify_license_key(key_locked, current_hwid=other_hwid)
+    assert val_diff_hwid is False
+
+    print("[PASS] test_license_engine_and_verification (HWID, 6 License Types, HMAC-SHA256, Anti-Tamper valid)")
+
+def test_watermark_in_composed_image():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QImage, QPainter
+    from PySide6.QtCore import Qt
+    from manual_capture_studio import StudioCanvasWidget
+    from license_engine import LicenseEngine
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    canvas = StudioCanvasWidget()
+    pix = QPixmap(400, 300)
+    pix.fill(Qt.white)
+    canvas.set_pixmap(pix)
+
+    target_img = QImage(400, 300, QImage.Format_ARGB32)
+    target_img.fill(Qt.white)
+    painter = QPainter(target_img)
+    canvas._render_watermark(painter, 400, 300)
+    painter.end()
+
+    composed = canvas.get_composed_image()
+    assert composed is not None
+    assert composed.width() == 400
+    assert composed.height() == 300
+
+    print("[PASS] test_watermark_in_composed_image (Watermark badge & diagonal stamp rendering valid)")
+
+def test_instant_capture_mouse_release():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPoint, QRect, Qt
+    from PySide6.QtGui import QPixmap
+    from manual_capture_studio import CaptureOverlayWidget
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    overlay = CaptureOverlayWidget()
+    overlay.full_screen_pixmap = QPixmap(500, 500)
+    overlay.full_screen_pixmap.fill(Qt.white)
+    
+    received_caps = []
+    overlay.sig_captured.connect(lambda pix, r: received_caps.append((pix, r)))
+
+    class FakeMouseEvent:
+        def __init__(self, pt, btn=Qt.LeftButton):
+            self._pos = pt
+            self._btn = btn
+        def pos(self):
+            return self._pos
+        def globalPos(self):
+            return self._pos
+        def button(self):
+            return self._btn
+        def buttons(self):
+            return Qt.LeftButton
+
+    # 마우스 누름 -> 100x100 영역 드래그
+    overlay.mousePressEvent(FakeMouseEvent(QPoint(50, 50)))
+    assert overlay.selecting is True
+    overlay.mouseMoveEvent(FakeMouseEvent(QPoint(150, 150)))
+    assert overlay.selected_rect.width() >= 100
+    assert overlay.selected_rect.height() >= 100
+
+    # 마우스 릴리즈 -> 엔터 대기 없이 즉시 시그널 방출
+    overlay.mouseReleaseEvent(FakeMouseEvent(QPoint(150, 150)))
+    assert len(received_caps) == 1
+    assert received_caps[0][1].width() >= 100
+    assert received_caps[0][1].height() >= 100
+
+    # 10x10 이하 오발 방지 확인
+    overlay.magnet_rect = QRect()
+    overlay.mousePressEvent(FakeMouseEvent(QPoint(20, 20)))
+    overlay.mouseMoveEvent(FakeMouseEvent(QPoint(24, 24)))
+    overlay.mouseReleaseEvent(FakeMouseEvent(QPoint(24, 24)))
+    assert len(received_caps) == 1
+
+    print("[PASS] test_instant_capture_mouse_release (Enter-free instant release capture valid)")
+
+def test_autosave_and_recovery():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtCore import Qt
+    from manual_capture_studio import ManualStudioWindow, StampItem, ProjectManager
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+
+    pix = QPixmap(300, 200)
+    pix.fill(Qt.white)
+    win.canvas.set_pixmap(pix)
+    stamp = StampItem(1, 50, 50, {"size": 32, "bg_color": "#FF0000"})
+    win.canvas.items.append(stamp)
+
+    auto_path = win.get_autosave_path()
+    auto_raw = auto_path.replace(".mcs.json", "_raw.png")
+    if os.path.exists(auto_path):
+        os.remove(auto_path)
+    if os.path.exists(auto_raw):
+        os.remove(auto_raw)
+
+    win.auto_save_current_work()
+    assert os.path.exists(auto_path), "Autosave file should be created"
+
+    raw_pix, items, next_idx, meta = ProjectManager.load_project(auto_path)
+    assert raw_pix is not None
+    assert raw_pix.width() == 300 and raw_pix.height() == 200
+    assert len(items) == 1
+    assert items[0].index == 1
+    assert meta.get("is_autosave") is True
+
+    win.config["auto_save_enabled"] = False
+    win.update_autosave_timer()
+    assert not win.autosave_timer.isActive()
+
+    win.config["auto_save_enabled"] = True
+    win.config["auto_save_interval_min"] = 10
+    win.update_autosave_timer()
+    assert win.autosave_timer.isActive()
+    assert win.autosave_timer.interval() == 10 * 60 * 1000
+
+    test_save_path = os.path.join(os.path.dirname(auto_path), "test_manual_save.mcs.json")
+    win.save_project_to_path(test_save_path)
+    assert not os.path.exists(auto_path), "Autosave file should be cleared on manual save"
+
+    if os.path.exists(test_save_path):
+        os.remove(test_save_path)
+    raw_companion = test_save_path.replace(".mcs.json", "_raw.png")
+    if os.path.exists(raw_companion):
+        os.remove(raw_companion)
+    if os.path.exists(auto_raw):
+        os.remove(auto_raw)
+    win.close()
+
+    print("[PASS] test_autosave_and_recovery (Auto-save periodic trigger, ProjectManager recovery, and Cleanup valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -1143,6 +1473,15 @@ if __name__ == "__main__":
     test_powerpoint_step_renumbering()
     test_dragon_rpa_branding_and_about_dialog()
     test_license_validator()
-    print("\nALL 20 CORE ENGINE, STEP RENUMBERING, DRAFT STAMP, RIBBON UI, DRAGONRPA BRANDING & LICENSE VALIDATION TESTS PASSED 100%!")
+    test_custom_font_manager()
+    test_multi_monitor_manager()
+    test_elbow_arrow_four_directions_and_toggle()
+    test_wordart_item_and_presets()
+    test_global_i18n_manager()
+    test_license_engine_and_verification()
+    test_watermark_in_composed_image()
+    test_instant_capture_mouse_release()
+    test_autosave_and_recovery()
+    print("\nALL 29 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE & WATERMARK TESTS PASSED 100%!")
 
 
