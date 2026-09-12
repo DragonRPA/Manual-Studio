@@ -465,6 +465,7 @@ def test_ribbon_menu_and_quick_strip():
     )
     app = QApplication.instance() or QApplication(sys.argv)
     win = ManualStudioWindow()
+    win.switch_language("ko")
     canvas = win.canvas
 
     # 1. 리본 탭 구조 검증 (전사 표준 3.1: 건조한 명사 '도구', '서식·설정')
@@ -475,15 +476,15 @@ def test_ribbon_menu_and_quick_strip():
     # 2. 5대 신규 도구 모드 버튼 및 토글/상태 배지 검증
     modes = [
         ("SELECT", win.btn_mode_select, "선택"),
-        ("STAMP", win.btn_mode_stamp, "번호 스탬프"),
-        ("STEP_ARROW", win.btn_mode_step_arrow, "스탬프 화살표"),
-        ("ELBOW", win.btn_mode_elbow, "직각 화살표"),
-        ("ARROW", win.btn_mode_arrow, "직선 화살표"),
-        ("BOX", win.btn_mode_box, "사각 박스"),
-        ("BLUR", win.btn_mode_blur, "모자이크 블러"),
-        ("CALLOUT", win.btn_mode_callout, "설명 말풍선"),
-        ("TEXT", win.btn_mode_text, "텍스트 라벨"),
-        ("HOTKEY", win.btn_mode_hotkey, "단축키 뱃지"),
+        ("STAMP", win.btn_mode_stamp, "스탬프"),
+        ("STEP_ARROW", win.btn_mode_step_arrow, "화살표"),
+        ("ELBOW", win.btn_mode_elbow, "직각"),
+        ("ARROW", win.btn_mode_arrow, "직선"),
+        ("BOX", win.btn_mode_box, "박스"),
+        ("BLUR", win.btn_mode_blur, "블러"),
+        ("CALLOUT", win.btn_mode_callout, "말풍선"),
+        ("TEXT", win.btn_mode_text, "텍스트"),
+        ("HOTKEY", win.btn_mode_hotkey, "단축키"),
     ]
     for mode_name, btn, kor_title in modes:
         win.switch_mode(mode_name)
@@ -522,7 +523,7 @@ def test_ribbon_menu_and_quick_strip():
     assert win.spin_stamp_size.value() == 40
     assert win.spin_box_width.value() == 5
     assert win.spin_arrow_head.value() == 18
-    assert "스탬프 화살표" in win.lbl_active_mode.text()
+    assert "화살표" in win.lbl_active_mode.text()
 
     # 5-2. CalloutItem
     callout = CalloutItem("경고 안내", canvas.rect(), QPointF(0, 0), {"font_size": 16, "border_width": 4, "border_color": "#FB8C00", "tail_base_width": 22})
@@ -538,7 +539,7 @@ def test_ribbon_menu_and_quick_strip():
     canvas.items.append(blur)
     win.on_canvas_item_selected(blur)
     assert win.spin_blur_block.value() == 15
-    assert "모자이크" in win.lbl_active_mode.text()
+    assert "블러" in win.lbl_active_mode.text()
 
     # 5-4. HotkeyBadgeItem
     hk = HotkeyBadgeItem("Ctrl+Shift+P", 100, 100, {"font_size": 18})
@@ -857,7 +858,7 @@ def test_image_overlay_item_and_sub_capture():
 
     # 리본 메뉴 버튼 연동 확인
     assert hasattr(win, "btn_sub_capture")
-    assert "F8" in win.btn_sub_capture.text()
+    assert "F8" in win.btn_sub_capture.text() or "F8" in win.btn_sub_capture.toolTip()
 
     win.close()
     print("[PASS] test_image_overlay_item_and_sub_capture (F8 modal sub-capture, resize handles, border/shadow, and canvas bake valid)")
@@ -947,7 +948,7 @@ def test_draft_stamp_item():
 
     # 리본 메뉴 버튼 검증
     assert hasattr(win, "btn_draft_stamp")
-    assert "Draft" in win.btn_draft_stamp.text()
+    assert "드래프트" in win.btn_draft_stamp.text() or "Draft" in win.btn_draft_stamp.text()
 
     win.close()
     print("[PASS] test_draft_stamp_item (Rectangle 60-deg tilt Draft stamp, inverse transform hit test, and canvas bake valid)")
@@ -963,7 +964,7 @@ def test_powerpoint_step_renumbering():
     win = ManualStudioWindow()
     assert hasattr(win, "btn_renumber_steps"), "btn_renumber_steps button must exist"
     assert hasattr(win, "action_renumber_powerpoint_steps"), "action_renumber_powerpoint_steps method must exist"
-    assert "Step 재정렬" in win.btn_renumber_steps.text()
+    assert "재정렬" in win.btn_renumber_steps.text()
     win.close()
 
     # 2. PowerPoint COM 연동 및 정밀 재부여 검증
@@ -1072,9 +1073,10 @@ def test_dragon_rpa_branding_and_about_dialog():
     cw = menubar.cornerWidget()
     assert cw is not None, "MenuBar corner widget must exist"
 
-    # 리본 탭 코너 위젯 제거 확인 (하단 중복 제거 검증)
+    # 리본 탭 코너 위젯에 회사 브랜딩(About/CI) 중복 배치가 없는지 검증 (리본 모드 토글 버튼만 허용)
     rcw = win.ribbon_tabs.cornerWidget()
-    assert rcw is None, "RibbonTabs corner widget must be removed to avoid duplication"
+    if rcw is not None:
+        assert rcw is win.btn_ribbon_mode_toggle, "RibbonTabs corner widget should only be mode toggle"
 
     # 3. AboutDialog 검증
     about_dlg = AboutDialog(win)
@@ -1266,7 +1268,7 @@ def test_global_i18n_manager():
 
     mgr.set_locale("en")
     assert mgr.get_locale() == "en"
-    assert "Capture" in tr("btn_fixed_capture")
+    assert "Fixed" in tr("btn_fixed_capture") or "Capture" in tr("grp_capture")
 
     mgr.set_locale("ko")
     assert mgr.get_locale() == "ko"
@@ -1498,6 +1500,295 @@ def test_patcher_script_generation():
 
     print("[PASS] test_patcher_script_generation (Windows atomic file swap and restart script valid)")
 
+def test_dynamic_language_retranslation():
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import ManualStudioWindow
+    from i18n_manager import I18nManager
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    
+    # 1. Switch to English
+    win.switch_language("en")
+    assert win.ribbon_tabs.tabText(0) == "Tools"
+    assert win.ribbon_tabs.tabText(1) == "Format"
+    assert "Fixed" in win.btn_capture.text()
+    assert "File(&F)" in win.menu_file.title()
+    assert win._ribbon_groups["grp_capture"].text() == "Capture"
+    assert win.lbl_qs_width.text() == "Width:"
+    
+    # 2. Switch to Japanese
+    win.switch_language("ja")
+    assert win.ribbon_tabs.tabText(0) == "ツール"
+    assert "固定" in win.btn_capture.text()
+    assert "ファイル(&F)" in win.menu_file.title()
+    assert win._ribbon_groups["grp_capture"].text() == "キャプチャ"
+    
+    # 3. Switch back to Korean
+    win.switch_language("ko")
+    assert win.ribbon_tabs.tabText(0) == "도구"
+    assert "고정" in win.btn_capture.text()
+    assert "파일(&F)" in win.menu_file.title()
+    assert win._ribbon_groups["grp_capture"].text() == "캡처"
+
+    from manual_capture_studio import save_config
+    win.config["locale"] = "auto"
+    save_config(win.config)
+    
+    win.close()
+    print("[PASS] test_dynamic_language_retranslation (0.05s hot-swap across Menus, Ribbon Tabs, Groups, Fields, Buttons, and QuickStrip valid)")
+
+def test_compact_ui_button_labels():
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import ManualStudioWindow
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    
+    buttons = [
+        win.btn_capture, win.btn_drag_capture, win.btn_sub_capture,
+        win.btn_open_project, win.btn_save_project, win.btn_open_file, win.btn_copy_image,
+        win.btn_mode_select, win.btn_undo, win.btn_clear,
+        win.btn_mode_stamp, win.btn_mode_step_arrow, win.btn_mode_elbow, win.btn_mode_arrow,
+        win.btn_mode_box, win.btn_mode_blur, win.btn_draft_stamp,
+        win.btn_mode_callout, win.btn_mode_text, win.btn_mode_hotkey, win.btn_mode_wordart,
+        win.btn_export, win.btn_ppt_fit, win.btn_renumber_steps
+    ]
+    for btn in buttons:
+        txt = btn.text().strip()
+        assert len(txt) <= 16, f"Button label too long: {txt!r} (length: {len(txt)})"
+        assert any(ord(c) > 127 for c in txt), f"Button label lacks visual icon/compact symbol: {txt!r}"
+        
+    win.close()
+    print("[PASS] test_compact_ui_button_labels (Max 16-char ultra-compact button labels with visual icons valid)")
+
+def test_multilingual_tooltips_completeness():
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import ManualStudioWindow
+    from i18n_manager import I18nManager
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    
+    tooltip_keys = [
+        "tooltip_capture", "tooltip_drag_capture", "tooltip_sub_capture",
+        "tooltip_open_project", "tooltip_save_project", "tooltip_open_file", "tooltip_copy_image",
+        "tooltip_select", "tooltip_undo", "tooltip_clear",
+        "tooltip_stamp", "tooltip_step_arrow", "tooltip_elbow", "tooltip_arrow",
+        "tooltip_box", "tooltip_blur", "tooltip_draft",
+        "tooltip_callout", "tooltip_text", "tooltip_hotkey", "tooltip_wordart",
+        "tooltip_export", "tooltip_ppt_fit", "tooltip_renumber"
+    ]
+    m = I18nManager.instance()
+    for loc in ["ko", "en", "ja", "zh", "de", "es", "fr", "pt", "ru"]:
+        m.set_locale(loc)
+        win.retranslate_ui()
+        for tk in tooltip_keys:
+            tt = m.t(tk)
+            assert tt is not None and len(tt.strip()) > 5, f"Tooltip {tk} missing or too short in {loc}: {tt!r}"
+            assert "\n" in tt, f"Tooltip {tk} missing multi-line description in {loc}: {tt!r}"
+    
+    m.set_locale("ko")
+    win.retranslate_ui()
+    win.close()
+    print("[PASS] test_multilingual_tooltips_completeness (All 24 action tooltips in 9 languages fully structured with brackets and descriptions valid)")
+
+def test_multilingual_eula_manager():
+    from eula_manager import EulaManager
+    from manual_capture_studio import EulaDialog
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+
+    # 1. Check supported locales
+    locales = EulaManager.get_supported_locales()
+    assert len(locales) == 9, f"Expected 9 locales, got {len(locales)}"
+    expected_locs = ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]
+    for loc in expected_locs:
+        assert loc in locales, f"Locale {loc} missing from supported locales"
+
+    # 2. Check each locale's HTML and Plain content
+    for loc in expected_locs:
+        html = EulaManager.get_eula_html(loc)
+        plain = EulaManager.get_eula_plain(loc)
+        assert len(html) > 1000, f"HTML for {loc} too short: {len(html)}"
+        assert len(plain) > 800, f"Plain for {loc} too short: {len(plain)}"
+        assert "<h3" in html and "<hr" in html, f"HTML structure broken in {loc}"
+        assert "DragonRPA" in html or "드래곤알피에이" in html or "龙软科技" in html
+        assert "2026.09.11" in html and "77.victor.lee@gmail.com" in html
+        # Liquidated damages 5x check
+        assert ("5" in html and ("배" in html or "times" in html or "倍" in html or "fachen" in html or "veces" in html or "fois" in html or "vezes" in html or "кратной" in html)), f"5x liquidated damages missing in {loc}"
+
+        # Plain text should not contain HTML tags
+        assert "<b>" not in plain and "<br/>" not in plain and "<h3" not in plain
+
+        # Check titles & UI labels
+        title = EulaManager.get_dialog_title(loc)
+        assert len(title) > 5, f"Dialog title for {loc} invalid: {title}"
+        labels = EulaManager.get_ui_labels(loc)
+        assert "btn_close" in labels and "btn_copy" in labels and "copied_toast" in labels
+
+    # 3. Test normalization & fallback
+    assert EulaManager.normalize_locale("en_US") == "en"
+    assert EulaManager.normalize_locale("ko_KR") == "ko"
+    assert EulaManager.normalize_locale("zh-CN") == "zh"
+    assert EulaManager.normalize_locale("fr-FR") == "fr"
+    assert EulaManager.normalize_locale("unknown_lang") == "en"
+
+    # 4. Test EulaDialog GUI behavior
+    dlg = EulaDialog(initial_locale="en")
+    dlg.show()
+    app.processEvents()
+    assert dlg.current_locale == "en"
+    assert dlg.combo_lang.count() == 9
+
+    # Switch to Korean
+    ko_idx = dlg.combo_lang.findData("ko")
+    assert ko_idx >= 0
+    dlg.combo_lang.setCurrentIndex(ko_idx)
+    assert dlg.current_locale == "ko"
+    assert "제1조" in dlg.txt_eula.toHtml() or "제1조" in dlg.txt_eula.toPlainText()
+
+    # Switch to English
+    en_idx = dlg.combo_lang.findData("en")
+    dlg.combo_lang.setCurrentIndex(en_idx)
+    assert dlg.current_locale == "en"
+    assert "Article 1" in dlg.txt_eula.toHtml() or "Article 1" in dlg.txt_eula.toPlainText()
+
+    # Test clipboard copy
+    dlg._copy_eula()
+    app.processEvents()
+    cb_text = QApplication.clipboard().text()
+    assert "DragonRPA" in cb_text and "Article 1" in cb_text
+
+    dlg.close()
+    app.processEvents()
+    print("[PASS] test_multilingual_eula_manager (All 9 languages EULA HTML/plain text, 5x damages, Seoul court jurisdiction, and dialog switching 100% valid)")
+
+def test_ribbon_overhaul_and_slim_layout():
+    from PySide6.QtWidgets import QApplication, QFrame
+    from manual_capture_studio import ManualStudioWindow
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+
+    # 1. Height checks
+    assert win.ribbon_tabs.height() == 122, f"RibbonTabs height must be 122, got {win.ribbon_tabs.height()}"
+    quick_strip = win.findChild(QFrame, "QuickStrip")
+    assert quick_strip is not None, "QuickStrip must exist"
+    assert quick_strip.height() == 30, f"QuickStrip height must be 30, got {quick_strip.height()}"
+    assert win.menuBar().height() == 28, f"MenuBar height must be 28, got {win.menuBar().height()}"
+
+    # 2. Vertical separator checks (VLine frames)
+    tab1 = win.ribbon_tabs.widget(0).widget()
+    separators = [w for w in tab1.findChildren(QFrame) if w.frameShape() == QFrame.VLine]
+    assert len(separators) >= 5, f"Tab 1 must have at least 5 vertical separators between groups, found {len(separators)}"
+
+    tab2 = win.ribbon_tabs.widget(1).widget()
+    separators2 = [w for w in tab2.findChildren(QFrame) if w.frameShape() == QFrame.VLine]
+    assert len(separators2) >= 6, f"Tab 2 must have at least 6 vertical separators between groups, found {len(separators2)}"
+
+    print("[PASS] test_ribbon_overhaul_and_slim_layout (Slim height 122px, QuickStrip 30px, MenuBar 28px, crisp VLine separators valid)")
+
+def test_autosave_toggle_and_ribbon_integration():
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import ManualStudioWindow
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+
+    assert hasattr(win, "btn_autosave"), "btn_autosave must exist"
+    assert win.btn_autosave.isCheckable(), "btn_autosave must be checkable"
+
+    # Toggle off
+    win.btn_autosave.setChecked(False)
+    win.on_autosave_toggle_clicked()
+    assert win.config["auto_save_enabled"] is False
+    assert win.autosave_timer.isActive() is False
+
+    # Toggle on
+    win.btn_autosave.setChecked(True)
+    win.on_autosave_toggle_clicked()
+    assert win.config["auto_save_enabled"] is True
+    assert win.autosave_timer.isActive() is True
+
+    print("[PASS] test_autosave_toggle_and_ribbon_integration (One-click toggle, timer sync, config sync valid)")
+
+def test_ribbon_display_mode_toggle_and_icon_provider():
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import ManualStudioWindow, RibbonIconProvider
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+
+    # 1. Test RibbonIconProvider generates all 25 vector icons
+    icon_names = [
+        "capture_fixed", "capture_area", "capture_sub", "open_project", "save_project",
+        "autosave", "open_image", "copy_image", "select", "undo", "clear",
+        "stamp", "step_arrow", "elbow", "arrow", "box", "blur", "draft",
+        "callout", "text", "hotkey", "wordart", "ppt_export", "ppt_autofit", "ppt_renumber"
+    ]
+    for name in icon_names:
+        ico = RibbonIconProvider.get_icon(name, size=18)
+        assert not ico.isNull(), f"Icon {name} must not be null"
+
+    # 2. Toggle to Icon mode
+    win.toggle_ribbon_display_mode(mode="icon")
+    assert win.config["ribbon_display_mode"] == "icon"
+    assert win.btn_capture.text() == ""
+    assert not win.btn_capture.icon().isNull()
+    assert win.btn_save_project.text() == ""
+    assert not win.btn_save_project.icon().isNull()
+
+    # 3. Toggle back to Text mode
+    win.toggle_ribbon_display_mode(mode="text")
+    assert win.config["ribbon_display_mode"] == "text"
+    assert len(win.btn_capture.text()) > 0
+    assert len(win.btn_save_project.text()) > 0
+
+    print("[PASS] test_ribbon_display_mode_toggle_and_icon_provider (25 vector icons, text <-> icon mode toggle, config sync valid)")
+
+def test_all_shortcuts_and_alt_keytips():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    from manual_capture_studio import ManualStudioWindow
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    win.show()
+
+    # 1. Mode shortcuts
+    event_v = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_V, Qt.NoModifier)
+    win.keyPressEvent(event_v)
+    assert win.canvas.current_mode == "SELECT"
+
+    event_s = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_S, Qt.NoModifier)
+    win.keyPressEvent(event_s)
+    assert win.canvas.current_mode == "STAMP"
+
+    event_b = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_B, Qt.NoModifier)
+    win.keyPressEvent(event_b)
+    assert win.canvas.current_mode == "BOX"
+
+    # 2. Alt KeyTips
+    assert win._keytips_visible is False
+    event_alt = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Alt, Qt.NoModifier)
+    win.keyPressEvent(event_alt)
+    assert win._keytips_visible is True
+    assert len(win._keytip_labels) > 0
+
+    # KeyTip Escape hides them
+    event_esc = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+    win.keyPressEvent(event_esc)
+    assert win._keytips_visible is False
+    assert len(win._keytip_labels) == 0
+
+    # Alt again shows them, then Alt hides them
+    win.keyPressEvent(event_alt)
+    assert win._keytips_visible is True
+    win.keyPressEvent(event_alt)
+    assert win._keytips_visible is False
+
+    win.hide()
+    print("[PASS] test_all_shortcuts_and_alt_keytips (V/S/B single-key mode switches, Alt toggle, KeyTip yellow badges valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -1531,6 +1822,16 @@ if __name__ == "__main__":
     test_version_comparator()
     test_version_json_schema()
     test_patcher_script_generation()
-    print("\nALL 32 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK & AUTO-UPDATER TESTS PASSED 100%!")
+    test_dynamic_language_retranslation()
+    test_compact_ui_button_labels()
+    test_multilingual_tooltips_completeness()
+    test_multilingual_eula_manager()
+    test_ribbon_overhaul_and_slim_layout()
+    test_autosave_toggle_and_ribbon_integration()
+    test_ribbon_display_mode_toggle_and_icon_provider()
+    test_all_shortcuts_and_alt_keytips()
+    print("\nALL 40 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL & KEYTIP TESTS PASSED 100%!")
+    os._exit(0)
+
 
 

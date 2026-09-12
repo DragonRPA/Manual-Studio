@@ -85,8 +85,8 @@
   },
   "ppt_auto_slide": true,
   "ppt_layout": {
-    "left": 105,
-    "top": 80,
+    "left": 85,
+    "top": 60,
     "scale": 79,
     "include_title": false,
     "title_left": 105,
@@ -102,6 +102,7 @@
   "locale": "auto",
   "auto_save_enabled": true,
   "auto_save_interval_min": 5,
+  "ribbon_display_mode": "icon",
   "ppt_template_path": "",
   "auto_check_update": true
 }
