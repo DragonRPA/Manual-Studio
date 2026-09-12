@@ -1,0 +1,68 @@
+{
+  "id": "scenario_1_overtime",
+  "title": "칼퇴 공감 편",
+  "target_product": "드래곤RPA 매뉴얼 스튜디오",
+  "voice": "ko-KR-SunHiNeural",
+  "rate": "+12%",
+  "theme": {
+    "primary_color": "#3B82F6",
+    "accent_color": "#FACC15",
+    "bg_gradient": [
+      "#090D16",
+      "#1E293B"
+    ]
+  },
+  "scenes": [
+    {
+      "id": "scene_1",
+      "visual_type": "problem",
+      "badge": "😱 직장인 긴급 상황",
+      "title_main": "팀장님의 긴급 지시?!",
+      "subtitle_lines": [
+        "김 대리, 내일까지",
+        "업무 매뉴얼 50장 만들어 놔!"
+      ],
+      "highlight_words": [
+        "매뉴얼 50장",
+        "내일까지"
+      ],
+      "image_asset": null,
+      "narration": "김 대리, 내일까지 업무 매뉴얼 50페이지 만들어 놔! 갑작스러운 매뉴얼 지시, 오늘 야근 각일까요?",
+      "motion": "pulse"
+    },
+    {
+      "id": "scene_2",
+      "visual_type": "ui_demo",
+      "badge": "🚀 AI 스마트 캡처",
+      "title_main": "클릭만 하면 끝!",
+      "subtitle_lines": [
+        "일하면서 클릭만 했는데",
+        "번호 태그와 설명문 1분 완성?!"
+      ],
+      "highlight_words": [
+        "클릭만 했는데",
+        "1분 완성?!"
+      ],
+      "image_asset": "preview_studio.png",
+      "narration": "하지만 나에겐 매뉴얼 스튜디오가 있죠! 평소처럼 일하면서 클릭만 했을 뿐인데, 번호 태그와 설명문까지 1분 만에 완성!",
+      "motion": "zoom_in"
+    },
+    {
+      "id": "scene_3",
+      "visual_type": "cta",
+      "badge": "✨ 100% 무료 다운로드",
+      "title_main": "정시 칼퇴 가보자고!",
+      "subtitle_lines": [
+        "개인정보 블러하고 정시 칼퇴!",
+        "프로필 링크에서 무료 다운로드"
+      ],
+      "highlight_words": [
+        "정시 칼퇴!",
+        "무료 다운로드"
+      ],
+      "image_asset": "preview_about.png",
+      "narration": "원클릭 개인정보 블러로 안전하게 마감하고 정시 칼퇴! 프로필 링크에서 매뉴얼 스튜디오를 무료로 다운로드하세요!",
+      "motion": "float"
+    }
+  ]
+}

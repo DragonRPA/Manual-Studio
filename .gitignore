@@ -23,3 +23,5 @@ Desktop.ini
 .DS_Store
 nuitka-crash-report.xml
 *.zip
+shorts_generator/temp/
+shorts_generator/output/

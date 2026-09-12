@@ -1452,6 +1452,52 @@ def test_autosave_and_recovery():
 
     print("[PASS] test_autosave_and_recovery (Auto-save periodic trigger, ProjectManager recovery, and Cleanup valid)")
 
+def test_version_comparator():
+    from updater_engine import VersionComparator
+    # 1. 시맨틱 파싱 검증
+    assert VersionComparator.parse_version("v1.4.0") == (1, 4, 0, 0)
+    assert VersionComparator.parse_version("1.4.0.Build.1") == (1, 4, 0, 1)
+    assert VersionComparator.parse_version("v2.1.0") == (2, 1, 0, 0)
+
+    # 2. 크기 비교 (is_newer) 검증
+    assert VersionComparator.is_newer("1.4.1", "1.4.0") is True
+    assert VersionComparator.is_newer("v1.5.0", "1.4.9") is True
+    assert VersionComparator.is_newer("1.4.0.Build.2", "1.4.0.Build.1") is True
+    assert VersionComparator.is_newer("1.4.0", "1.4.0") is False
+    assert VersionComparator.is_newer("1.3.9", "1.4.0") is False
+    assert VersionComparator.is_newer("1.4.0.Build.1", "1.4.0.Build.2") is False
+
+    print("[PASS] test_version_comparator (Semantic 4-stage version parsing and comparison valid)")
+
+def test_version_json_schema():
+    version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json")
+    assert os.path.exists(version_file), "version.json file must exist in repository root"
+    with open(version_file, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    required_fields = ["version", "version_code", "release_date", "release_title", "release_notes", "download_url"]
+    for field in required_fields:
+        assert field in meta, f"Field '{field}' missing from version.json"
+        assert meta[field] is not None and len(str(meta[field])) > 0
+
+    assert meta["version"] == "1.4.0"
+    print("[PASS] test_version_json_schema (Root version.json metadata schema and SSOT valid)")
+
+def test_patcher_script_generation():
+    from updater_engine import WindowsPatcher
+    script = WindowsPatcher.get_patcher_script_content(
+        target_exe="C:\\ManualStudio\\ManualStudio.exe",
+        new_exe="C:\\Users\\Temp\\ManualStudio_Update.exe",
+        pid=9999
+    )
+    assert "@echo off" in script
+    assert 'tasklist /fi "PID eq 9999"' in script
+    assert "copy /y" in script
+    assert "C:\\ManualStudio\\ManualStudio.exe" in script
+    assert "del \"%~f0\"" in script
+
+    print("[PASS] test_patcher_script_generation (Windows atomic file swap and restart script valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -1482,6 +1528,9 @@ if __name__ == "__main__":
     test_watermark_in_composed_image()
     test_instant_capture_mouse_release()
     test_autosave_and_recovery()
-    print("\nALL 29 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE & WATERMARK TESTS PASSED 100%!")
+    test_version_comparator()
+    test_version_json_schema()
+    test_patcher_script_generation()
+    print("\nALL 32 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK & AUTO-UPDATER TESTS PASSED 100%!")
 
 

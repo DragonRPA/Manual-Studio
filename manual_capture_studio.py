@@ -62,6 +62,9 @@ import win32com.client
 
 from i18n_manager import I18nManager, tr
 from license_engine import LicenseEngine, LicenseType
+from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
+
+APP_VERSION = "v1.4.0"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -214,7 +217,8 @@ DEFAULT_CONFIG = {
     "locale": "auto",
     "auto_save_enabled": True,
     "auto_save_interval_min": 5,
-    "ppt_template_path": ""
+    "ppt_template_path": "",
+    "auto_check_update": True
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -3673,6 +3677,8 @@ class ManualStudioWindow(QMainWindow):
         self.init_hotkey()
         self.init_autosave()
         QTimer.singleShot(1000, self.check_and_prompt_recovery)
+        if self.config.get("auto_check_update", True):
+            QTimer.singleShot(3500, lambda: self.check_for_updates(silent=True))
 
     def init_ui(self):
         # 0. 상단 메뉴바 초기화 (우측 끝에 CI + 회사명 + About 버튼 탑재)
@@ -4604,12 +4610,15 @@ class ManualStudioWindow(QMainWindow):
             act_l = lang_menu.addAction(name)
             act_l.triggered.connect(lambda checked=False, c=code: self.switch_language(c))
 
-        # 5. 메뉴 오른쪽 끝 About 및 EULA 메뉴
-        act_about = menubar.addAction("About(&A)")
-        act_about.triggered.connect(self.show_about_dialog)
-
-        act_eula = menubar.addAction("EULA(&E)")
-        act_eula.triggered.connect(self.show_eula_dialog)
+        # 5. 도움말(H) 메뉴
+        help_menu = menubar.addMenu("도움말(&H)")
+        act_update = help_menu.addAction("🚀 최신 업데이트 확인(&U)...")
+        act_update.triggered.connect(lambda: self.check_for_updates(silent=False))
+        help_menu.addSeparator()
+        act_eula_m = help_menu.addAction("📜 사용권 계약서 (EULA)")
+        act_eula_m.triggered.connect(self.show_eula_dialog)
+        act_about_m = help_menu.addAction("ℹ️ 프로그램 정보 (About)")
+        act_about_m.triggered.connect(self.show_about_dialog)
 
         # 6. 메뉴바 오른쪽 코너 위젯: CI 아이콘 + 회사명 + EULA 버튼 + About 버튼
         corner_widget = QWidget(self)
@@ -6423,6 +6432,33 @@ class ManualStudioWindow(QMainWindow):
         loc_name = I18nManager.instance().get_supported_locales().get(locale_code, locale_code)
         self.show_toast(f"언어가 '{loc_name}'(으)로 변경되었습니다. (일부 메뉴는 재시작 시 전체 적용)")
 
+    def check_for_updates(self, silent=False):
+        self.update_checker_thread = UpdateCheckerThread(APP_VERSION, self)
+        self.update_checker_thread.sig_update_available.connect(self._on_update_available)
+        if not silent:
+            self.update_checker_thread.sig_up_to_date.connect(self._on_up_to_date)
+            self.update_checker_thread.sig_check_failed.connect(self._on_update_check_failed)
+        self.update_checker_thread.start()
+
+    def _on_update_available(self, meta: dict):
+        target_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(get_app_dir(), 'ManualStudio.exe')
+        dlg = UpdateDialog(meta, APP_VERSION, target_exe_path=target_exe, parent=self)
+        dlg.exec_()
+
+    def _on_up_to_date(self, current_ver: str):
+        QMessageBox.information(
+            self,
+            "최신 버전 확인",
+            f"현재 최신 버전({current_ver})을 사용하고 있습니다.\n새로운 업데이트가 없습니다."
+        )
+
+    def _on_update_check_failed(self, err_msg: str):
+        QMessageBox.warning(
+            self,
+            "업데이트 확인 실패",
+            f"최신 버전을 확인하는 중 오류가 발생했습니다:\n{err_msg}"
+        )
+
     def init_autosave(self):
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self.auto_save_current_work)
@@ -7125,6 +7161,16 @@ class SettingsDialog(QDialog):
         bas_l.addLayout(has)
         layout.addWidget(box_as)
 
+        # 02. 스마트 자동 업데이트 설정
+        box_upd = QFrame(self)
+        box_upd.setFrameShape(QFrame.StyledPanel)
+        bupd_l = QVBoxLayout(box_upd)
+        bupd_l.addWidget(QLabel("<b>[스마트 자동 업데이트 설정 (Smart Auto-Update)]</b>", self))
+        self.chk_settings_autoupdate = QCheckBox("프로그램 시작 시 최신 버전 자동 확인", self)
+        self.chk_settings_autoupdate.setChecked(bool(self.config.get("auto_check_update", True)))
+        bupd_l.addWidget(self.chk_settings_autoupdate)
+        layout.addWidget(box_upd)
+
         # 0. 다중 모니터 캡처 대상 설정
         box0 = QFrame(self)
         box0.setFrameShape(QFrame.StyledPanel)
@@ -7535,6 +7581,8 @@ class SettingsDialog(QDialog):
             self.config["auto_save_interval_min"] = self.spin_settings_autosave_interval.value()
         if hasattr(self, "edit_settings_ppt_template"):
             self.config["ppt_template_path"] = self.edit_settings_ppt_template.text().strip()
+        if hasattr(self, "chk_settings_autoupdate"):
+            self.config["auto_check_update"] = self.chk_settings_autoupdate.isChecked()
 
         if hasattr(self, "combo_settings_monitor"):
             self.config["target_monitor"] = self.combo_settings_monitor.currentData()

@@ -1,5 +1,22 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.2] - 2026-09-12 18:05
+
+### 🚀 스마트 자동 업데이트(Smart Auto-Updater) 클라이언트 & 원격 버전 검증 엔진
+- **버전 메타데이터 단일 원천(SSOT) 체계 구축 (`version.json`)**:
+  - 원격 버전, 릴리즈 날짜, 릴리즈 타이틀, 릴리즈 노트, 다운로드 URL 및 강제 업데이트 플래그 표준 규격 수립.
+- **고성능 비동기 업데이트 검증 엔진 (`updater_engine.py`)**:
+  - `VersionComparator`: 시맨틱 4단계 버전(`vX.Y.Z.Build.N`) 정밀 대소 비교기.
+  - `UpdateCheckerThread`: GitHub CDN `version.json` 1순위(Rate-limit 없음) + GitHub Releases API 2순위 비동기 폴백 조회.
+  - `UpdateDownloadThread`: 최신 바이너리 청크 스트림 백그라운드 다운로드 및 실시간 진행률(바이트/총용량/%) 전송.
+  - `WindowsPatcher`: Windows 프로세스 파일 잠금(Lock) 우회 원자적 파일 교체 배치 스크립트(`update_patcher.bat`) 자동 생성, PID 대기 종료 후 바이너리 교체 및 새 버전 자동 재실행.
+  - `UpdateDialog`: 전사 표준 헌장(카테고리 III: 건조한 명사·동사, 줄바꿈 방지) 준수 전용 UI (신규 버전 비교, 릴리즈 노트 프리뷰, 진행률 게이지).
+- **인앱 메뉴 & 환경설정 연동 (`manual_capture_studio.py`)**:
+  - 상단 메뉴바 `도움말(&H) -> 🚀 최신 업데이트 확인(&U)...` 수동 확인 지원.
+  - 환경 설정(`SettingsDialog`) 내 `[☑] 프로그램 시작 시 최신 버전 자동 확인` 토글 연동 (앱 시작 3.5초 후 백그라운드 비동기 점검).
+  - 업데이트 후에도 기존 레지스트리 영구 라이선스 및 사용자 환경설정(`config.json`) 100% 무손실 자동 상속.
+- **핵심 엔진 32개 단위 테스트 스위트 100% PASS 달성 (`test_core_engine.py`)**.
+
 ## [v1.4.0.Build.1] - 2026-09-12 17:40
 
 ### 🌐 글로벌 9개 국어 I18N 다국어화 & 무깨짐 폰트 폴백 체인

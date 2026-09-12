@@ -1,0 +1,69 @@
+{
+  "id": "scenario_2_before_after",
+  "title": "비포 & 애프터 편",
+  "target_product": "드래곤RPA 매뉴얼 스튜디오",
+  "voice": "ko-KR-InJoonNeural",
+  "rate": "+12%",
+  "theme": {
+    "primary_color": "#10B981",
+    "accent_color": "#FACC15",
+    "bg_gradient": [
+      "#061A14",
+      "#0F2E24"
+    ]
+  },
+  "scenes": [
+    {
+      "id": "scene_1",
+      "visual_type": "problem",
+      "badge": "😫 복붙 지옥의 고통",
+      "title_main": "캡처 복붙 지옥...",
+      "subtitle_lines": [
+        "캡처하고, 그림판 붙이고,",
+        "빨간 상자 그리고... 야근 확정?"
+      ],
+      "highlight_words": [
+        "캡처하고,",
+        "그림판 붙이고,",
+        "야근 확정?"
+      ],
+      "image_asset": null,
+      "narration": "아직도 화면 캡처하고, 그림판에 붙여넣고, 빨간 상자 그리고 계신가요? 그러다 오늘 밤도 야근입니다!",
+      "motion": "pulse"
+    },
+    {
+      "id": "scene_2",
+      "visual_type": "ui_demo",
+      "badge": "⚡ 압도적 속도 혁신",
+      "title_main": "클릭 한 번에 스텝 기록",
+      "subtitle_lines": [
+        "그냥 마우스 클릭만 하세요!",
+        "스텝별 자동 정리 완성"
+      ],
+      "highlight_words": [
+        "마우스 클릭만",
+        "자동 정리 완성"
+      ],
+      "image_asset": "preview_studio.png",
+      "narration": "매뉴얼 스튜디오는 그냥 클릭만 하세요. AI 스마트 캡처가 클릭한 위치와 화면을 순서대로 완벽하게 기록합니다.",
+      "motion": "zoom_in"
+    },
+    {
+      "id": "scene_3",
+      "visual_type": "cta",
+      "badge": "🎉 업무 시간 90% 단축",
+      "title_main": "지금 바로 무료 체험!",
+      "subtitle_lines": [
+        "업무 시간 90% 단축의 기적!",
+        "www.dragonrpa.co.kr"
+      ],
+      "highlight_words": [
+        "90% 단축의 기적!",
+        "www.dragonrpa.co.kr"
+      ],
+      "image_asset": "preview_about.png",
+      "narration": "매뉴얼 제작 시간 90% 단축의 기적! 드래곤RPA 매뉴얼 스튜디오를 지금 바로 경험해보세요!",
+      "motion": "float"
+    }
+  ]
+}

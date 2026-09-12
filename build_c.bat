@@ -21,6 +21,7 @@ python -m nuitka ^
   --include-data-dir="assets=assets" ^
   --include-data-dir="fonts=fonts" ^
   --include-data-files="config.json=config.json" ^
+  --include-data-files="version.json=version.json" ^
   --windows-icon-from-ico="assets/dragon_rpa.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^

@@ -102,5 +102,6 @@
   "locale": "auto",
   "auto_save_enabled": true,
   "auto_save_interval_min": 5,
-  "ppt_template_path": ""
+  "ppt_template_path": "",
+  "auto_check_update": true
 }
