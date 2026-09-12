@@ -48,7 +48,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QDialog, QSpinBox, QColorDialog,
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea, QAction,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
-    QTabWidget, QTabBar, QGridLayout, QMenuBar
+    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit
 )
 
 from PIL import Image
@@ -3981,15 +3981,18 @@ class ManualStudioWindow(QMainWindow):
         act_cfg = settings_menu.addAction("⚙ 환경 설정...")
         act_cfg.triggered.connect(self.open_settings_dialog)
 
-        # 5. 메뉴 오른쪽 끝 About 메뉴
+        # 5. 메뉴 오른쪽 끝 About 및 EULA 메뉴
         act_about = menubar.addAction("About(&A)")
         act_about.triggered.connect(self.show_about_dialog)
 
-        # 6. 메뉴바 오른쪽 코너 위젯: CI 아이콘 + 회사명 + About 버튼
+        act_eula = menubar.addAction("EULA(&E)")
+        act_eula.triggered.connect(self.show_eula_dialog)
+
+        # 6. 메뉴바 오른쪽 코너 위젯: CI 아이콘 + 회사명 + EULA 버튼 + About 버튼
         corner_widget = QWidget(self)
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 8, 0)
-        corner_layout.setSpacing(8)
+        corner_layout.setSpacing(6)
 
         ci_pix = get_dragon_rpa_ci_pixmap()
         lbl_ci = QLabel(corner_widget)
@@ -4007,6 +4010,27 @@ class ManualStudioWindow(QMainWindow):
                 padding-right: 2px;
             }
         """)
+
+        btn_eula_corner = QPushButton("📜 EULA", corner_widget)
+        btn_eula_corner.setCursor(Qt.PointingHandCursor)
+        btn_eula_corner.setStyleSheet("""
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #475569;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-family: 'Malgun Gothic';
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                border-color: #94A3B8;
+                color: #0F172A;
+            }
+        """)
+        btn_eula_corner.clicked.connect(self.show_eula_dialog)
 
         btn_about_corner = QPushButton("ℹ️ About", corner_widget)
         btn_about_corner.setCursor(Qt.PointingHandCursor)
@@ -4031,12 +4055,17 @@ class ManualStudioWindow(QMainWindow):
 
         corner_layout.addWidget(lbl_ci)
         corner_layout.addWidget(lbl_company)
+        corner_layout.addWidget(btn_eula_corner)
         corner_layout.addWidget(btn_about_corner)
 
         menubar.setCornerWidget(corner_widget, Qt.TopRightCorner)
 
     def show_about_dialog(self):
         dlg = AboutDialog(self)
+        dlg.exec_()
+
+    def show_eula_dialog(self):
+        dlg = EulaDialog(self)
         dlg.exec_()
 
 
@@ -5466,6 +5495,128 @@ class ManualStudioWindow(QMainWindow):
 
 
 # ==============================================================================
+# 7.5. 최종 사용자 라이선스 계약서 (EULA) 및 다이얼로그 (DragonRPA Co.)
+# ==============================================================================
+EULA_HTML_TEXT = """
+<h3 style="color:#0F172A; margin-bottom:4px;">(주)드래곤알피에이 소프트웨어 최종 사용자 라이선스 계약서 (EULA)</h3>
+<p style="color:#64748B; font-size:11px; margin-top:0;">End User License Agreement for Manual Studio | (주)드래곤알피에이 (DragonRPA Co., Ltd.)</p>
+<hr style="border:0; border-top:1px solid #CBD5E1;"/>
+<p>본 계약은 <b>(주)드래곤알피에이</b>(이하 "회사")와 본 소프트웨어 <b>'매뉴얼 스튜디오(Manual Studio)'</b>(이하 "소프트웨어")를 다운로드, 복사, 설치 또는 사용하는 개인 또는 법인(이하 "사용자") 간에 체결되는 법적 구속력을 가진 사용권 계약입니다. 사용자가 본 "소프트웨어"를 다운로드, 설치 또는 사용하는 것은 본 계약 조건에 동의한 것으로 간주됩니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제1조 (목적)</h4>
+<p>본 계약은 "회사"가 개발한 "소프트웨어"에 대한 비독점적이고 양도 불가능한 사용 권한을 "사용자"에게 허여하고, 당사자 간의 권리 및 의무를 규정함을 목적으로 합니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제2조 (지식재산권의 귀속)</h4>
+<p>1. 본 "소프트웨어", 관련 설명 문서, 소스코드, 바이너리, 그래픽, UI/UX 디자인에 대한 저작권, 특허권, 상표권, 영업비밀 등 일체의 지식재산권은 대한민국 저작권법 및 국제 협약에 따라 <b>(주)드래곤알피에이</b>에 배타적으로 귀속됩니다.<br/>
+2. 본 계약에 따른 제공은 소유권의 이전이 아니며, 명시된 조건 범위 내에서의 <b>'제한적 사용권(License)'</b>만을 허여합니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제3조 (사용권의 범위 및 조건)</h4>
+<p>1. <b>[평가판 (Trial License)]</b>: "회사"가 공지한 평가판은 명시된 사용 유효 기간(2026년 12월 31일까지) 동안 비상업적 검토, 기능 테스트 및 평가 목적으로만 무상 사용할 수 있습니다. 기간 만료 후에는 정규 라이선스 없이 계속 사용할 수 없습니다.<br/>
+2. <b>[정규 라이선스 (Commercial License)]</b>: 정식 라이선스는 1개의 라이선스 키당 지정된 단일 하드웨어 머신(1PC-1Key 노드락)에서만 설치 및 실행이 허용됩니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제4조 (금지 행위 - 역공학 및 무단 배포 금지)</h4>
+<p>사용자는 다음 각 호의 행위를 하여서는 아니 되며, 위반 시 저작권법 등에 따른 민·형사상 책임을 집니다.<br/>
+1. <b>역공학 및 디컴파일 금지</b>: 소스코드나 내부 알고리즘을 추출하기 위한 리버스 엔지니어링, 역컴파일(Decompile), 디스어셈블(Disassemble) 또는 코드 수정 행위<br/>
+2. <b>보안 메커니즘 조작 금지</b>: 하드웨어 식별값(HWID), 시계 변조 방지, 암호화 키 등 라이선스 검증 장치를 우회, 변조, 크랙하는 행위<br/>
+3. <b>무단 재배포 및 상업적 재판매 금지</b>: "회사"의 사전 서면 승인 없이 제3자에게 유상 판매, 대여, 양도하거나 온라인 자료실/공중망에 무단 배포하는 행위<br/>
+4. <b>저작권 표시 삭제 금지</b>: "소프트웨어" 내에 표시된 "회사"의 상표, 로고, 저작권 안내문, 평가판 기한 등의 법적 고지 사항을 임의로 변경, 제거하는 행위</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제5조 (보증의 한계 및 면책)</h4>
+<p>1. 본 "소프트웨어"는 <b>"있는 그대로(AS-IS)"</b> 제공되며, 회사는 특정 목적에의 적합성, 무결성 등에 대해 명시적 또는 묵시적 보증을 하지 않습니다.<br/>
+2. 회사는 "소프트웨어"의 사용 또는 사용 불능으로 인하여 발생하는 간접적, 부수적 손해(영업손실, 데이터 손실 등)에 대해 책임을 지지 않습니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제6조 (위약벌 및 손해배상)</h4>
+<p>사용자가 제4조(금지 행위)를 고의 또는 중과실로 위반한 경우, <b>정규 라이선스 정가의 5배에 해당하는 금액을 위약벌로 회사에 즉시 지급</b>하여야 하며, 이와 별도로 회사가 입은 실제 손해를 전액 배상하여야 합니다.</p>
+
+<h4 style="color:#1E40AF; margin-top:14px; margin-bottom:4px;">제7조 (준거법 및 전속 관할)</h4>
+<p>본 계약은 대한민국 법률에 따라 규율되며, 본 계약과 관련하여 발생하는 모든 분쟁은 <b>(주)드래곤알피에이 본점 소재지를 관할하는 법원을 제1심 전속 관할 법원</b>으로 합니다.</p>
+<hr style="border:0; border-top:1px solid #CBD5E1;"/>
+<p style="font-size:10.5px; color:#64748B;">공고일자: 2026.09.11 | 시행일자: 2026.09.11<br/>
+(주)드래곤알피에이 (DragonRPA Co., Ltd.) | 대표이사: 이정용 | 문의: 77.victor.lee@gmail.com</p>
+"""
+
+
+class EulaDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("최종 사용자 라이선스 계약서 (EULA) - (주)드래곤알피에이")
+        self.resize(620, 560)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        ci_pix = get_dragon_rpa_ci_pixmap()
+        if not ci_pix.isNull():
+            self.setWindowIcon(QIcon(ci_pix))
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+            }
+            QLabel {
+                font-family: 'Malgun Gothic';
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+
+        # 헤더
+        header_l = QHBoxLayout()
+        lbl_h = QLabel("📜 최종 사용자 라이선스 계약서 (EULA)", self)
+        lbl_h.setStyleSheet("font-size: 14.5px; font-weight: bold; color: #0F172A;")
+        header_l.addWidget(lbl_h)
+        header_l.addStretch(1)
+
+        lbl_comp = QLabel("(주)드래곤알피에이 | DragonRPA Co.", self)
+        lbl_comp.setStyleSheet("font-size: 11px; color: #64748B; font-weight: bold;")
+        header_l.addWidget(lbl_comp)
+        layout.addLayout(header_l)
+
+        # 텍스트 에리어
+        txt_eula = QTextEdit(self)
+        txt_eula.setReadOnly(True)
+        txt_eula.setStyleSheet("""
+            QTextEdit {
+                background-color: #F8FAFC;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 12px;
+                font-family: 'Malgun Gothic';
+                font-size: 11px;
+                color: #1E293B;
+                line-height: 1.5;
+            }
+        """)
+        txt_eula.setHtml(EULA_HTML_TEXT)
+        layout.addWidget(txt_eula, 1)
+
+        # 하단 닫기 버튼
+        btn_l = QHBoxLayout()
+        btn_l.addStretch(1)
+        btn_close = QPushButton("닫기", self)
+        btn_close.setFixedSize(90, 32)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_l.addWidget(btn_close)
+        layout.addLayout(btn_l)
+
+
+# ==============================================================================
 # 8. 개발사 정보 및 About 다이얼로그 (AboutDialog - DragonRPA Co.)
 # ==============================================================================
 class AboutDialog(QDialog):
@@ -5638,11 +5789,35 @@ class AboutDialog(QDialog):
 
         layout.addStretch(1)
 
-        # 6. 확인 닫기 버튼
+        # 6. 확인 및 EULA 버튼
         btn_box = QHBoxLayout()
         btn_box.setAlignment(Qt.AlignCenter)
+        btn_box.setSpacing(10)
+
+        btn_eula = QPushButton("📜 사용권 계약 (EULA)", self)
+        btn_eula.setFixedHeight(34)
+        btn_eula.setCursor(Qt.PointingHandCursor)
+        btn_eula.setStyleSheet("""
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                border-radius: 5px;
+                padding: 0 16px;
+                font-size: 11.5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                color: #0F172A;
+                border-color: #94A3B8;
+            }
+        """)
+        btn_eula.clicked.connect(self.show_eula)
+        btn_box.addWidget(btn_eula)
+
         btn_ok = QPushButton("확인", self)
-        btn_ok.setFixedSize(110, 34)
+        btn_ok.setFixedSize(90, 34)
         btn_ok.setCursor(Qt.PointingHandCursor)
         btn_ok.setStyleSheet("""
             QPushButton {
@@ -5660,6 +5835,10 @@ class AboutDialog(QDialog):
         btn_ok.clicked.connect(self.accept)
         btn_box.addWidget(btn_ok)
         layout.addLayout(btn_box)
+
+    def show_eula(self):
+        dlg = EulaDialog(self)
+        dlg.exec_()
 
     def copy_email(self):
         cb = QApplication.clipboard()
