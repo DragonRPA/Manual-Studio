@@ -126,4 +126,12 @@
   <img src="assets/screenshots/preview_about.png" alt="About 다이얼로그" width="480">
 </p>
 
+---
 
+### 7. 📜 소프트웨어 최종 사용자 사용권 계약서 (EULA)
+- **저작권 및 지식재산권**: (주)드래곤알피에이 (DragonRPA Co., Ltd.) 배타적 소유.
+- **사용권 범위**:
+  - 기간 한정 평가판: 2026년 12월 31일까지 비상업적/평가 목적 무상 사용.
+  - 상용 라이선스: 1PC-1License Node-Lock (단일 하드웨어 식별자 귀속).
+- **보호 및 제약 사항**: 리버스 엔지니어링, 역어셈블, 디컴파일, HWID/시계 변조, 무단 재배포 엄격 금지 (위약벌 및 손해배상 청구권 명시).
+- **전문 확인**: [EULA 전문 (EULA.md)](EULA.md) 및 프로그램 내 `EULA(&E)` 메뉴 / 공식 웹사이트 [Manual Studio EULA](https://www.dragonrpa.co.kr/manual-studio) 참조.

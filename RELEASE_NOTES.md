@@ -1,5 +1,13 @@
 # Manual Studio Release Notes
 
+## [v1.2.0.Build.5] - 2026-09-12 12:22
+
+### 📦 EULA 내장 Nuitka C-기계어 바이너리(`ManualStudio.exe`) 재컴파일 및 README 연동
+- **C-컴파일 바이너리 재생성 및 검증 완료**:
+  - `EulaDialog` 및 메뉴바 액션이 완전 통합된 27.97MB 순수 기계어 단일 실행파일 `ManualStudio.exe` 빌드 및 배포 패키지 동기화.
+- **저장소 문서(`README.md`) EULA 섹션 7 신설**:
+  - 저작권 귀속, 사용권 범위, 금지 사항 및 [EULA 전문](EULA.md) 하이퍼링크 탑재.
+
 ## [v1.2.0.Build.4] - 2026-09-12 12:20
 
 ### 📜 공식 최종 사용자 라이선스 계약서(EULA) 탑재 및 지식재산권 방어선 구축
