@@ -102,7 +102,7 @@
   "locale": "auto",
   "auto_save_enabled": true,
   "auto_save_interval_min": 5,
-  "ribbon_display_mode": "icon",
+  "ribbon_display_mode": "text",
   "ppt_template_path": "",
   "auto_check_update": true
 }

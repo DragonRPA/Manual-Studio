@@ -3784,10 +3784,13 @@ class RibbonIconProvider:
             p.setPen(QPen(QColor("#2563EB"), 1.5))
             p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "A")
         elif name == "ppt_export":
-            p.setPen(QPen(QColor("#DC2626"), 1.8))
-            p.drawRect(QRectF(2, 3, s - 4, s - 6))
-            p.drawLine(QPointF(s / 2, 6), QPointF(s / 2, s - 6))
-            p.drawLine(QPointF(5, s / 2), QPointF(s - 5, s / 2))
+            ppt_color = QColor(color if color != "#334155" else "#C2410C")
+            p.setPen(QPen(ppt_color, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(1.5, 2.0, s - 3.0, s - 4.5), 2.0, 2.0)
+            p.drawLine(QPointF(2.5, 6.0), QPointF(s - 2.5, 6.0))
+            p.setFont(QFont("Arial", int(s * 0.46), QFont.Bold))
+            p.drawText(QRectF(0, 5.0, s, s - 4.0), Qt.AlignCenter, "P")
         elif name == "ppt_autofit":
             p.drawRect(QRectF(2, 3, s - 4, s - 6))
             p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
@@ -4165,18 +4168,22 @@ class ManualStudioWindow(QMainWindow):
 
         # 7) [PPT 출력] 그룹
         self.btn_export = QPushButton(tr("btn_export", "슬라이드 삽입"), self)
+        self.btn_export.setObjectName("btn_export")
         self.btn_export.setToolTip(tr("tooltip_export", "현재 화면을 파워포인트 새 슬라이드로 즉시 삽입하고 클립보드에도 복사합니다."))
         self.btn_export.setStyleSheet("""
             QPushButton {
-                background-color: #DC2626;
-                color: #FFFFFF;
-                border: 1px solid #B91C1C;
+                background-color: #FFF7ED;
+                color: #C2410C;
+                border: 1px solid #FDBA74;
                 font-size: 11px;
                 font-weight: bold;
+                border-radius: 4px;
                 padding: 2px 6px;
             }
             QPushButton:hover {
-                background-color: #B91C1C;
+                background-color: #FFEDD5;
+                border-color: #EA580C;
+                color: #9A3412;
             }
         """)
         self.btn_export.clicked.connect(self.export_to_ppt_and_clipboard)
@@ -4214,7 +4221,7 @@ class ManualStudioWindow(QMainWindow):
         scroll_tools.setFrameShape(QFrame.NoFrame)
         scroll_tools.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll_tools.setWidget(tab_tools)
-        scroll_tools.setFixedHeight(82)
+        scroll_tools.setFixedHeight(96)
         self.ribbon_tabs.addTab(scroll_tools, tr("tab_tools", "도구"))
 
         # -------------------------------------------------------------
@@ -4548,9 +4555,9 @@ class ManualStudioWindow(QMainWindow):
         scroll_format.setFrameShape(QFrame.NoFrame)
         scroll_format.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll_format.setWidget(tab_format)
-        scroll_format.setFixedHeight(94)
+        scroll_format.setFixedHeight(112)
         self.ribbon_tabs.addTab(scroll_format, tr("tab_format", "서식·설정"))
-        self.ribbon_tabs.setFixedHeight(122)
+        self.ribbon_tabs.setFixedHeight(144)
 
         # 리본 표시 방식 (텍스트 ⇄ 아이콘) 토글 버튼
         cur_mode = self.config.get("ribbon_display_mode", "text")
@@ -4583,12 +4590,15 @@ class ManualStudioWindow(QMainWindow):
         # -------------------------------------------------------------
         quick_strip = QFrame(self)
         quick_strip.setObjectName("QuickStrip")
-        quick_strip.setFixedHeight(30)
+        quick_strip.setFixedHeight(34)
         quick_strip.setStyleSheet("""
             QFrame#QuickStrip {
                 background-color: #F1F5F9;
                 border: 1px solid #CBD5E1;
                 border-radius: 4px;
+            }
+            QFrame#QuickStrip QSpinBox {
+                padding: 1px 16px 1px 4px;
             }
         """)
         qs_lay = QHBoxLayout(quick_strip)
@@ -4665,7 +4675,7 @@ class ManualStudioWindow(QMainWindow):
         self.lbl_qs_screen = QLabel(tr("lbl_qs_screen", "화면:"), self)
         qs_lay.addWidget(self.lbl_qs_screen)
         self.combo_monitor = QComboBox(self)
-        self.combo_monitor.setFixedWidth(145)
+        self.combo_monitor.setFixedWidth(175)
         self.combo_monitor.setToolTip(tr("tooltip_monitor", "캡처 대상 모니터 선택 (최대 4개 지원)"))
         self.combo_monitor.currentIndexChanged.connect(self.on_quick_monitor_changed)
         qs_lay.addWidget(self.combo_monitor)
@@ -4683,7 +4693,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_fx = QSpinBox(self)
         self.spin_fx.setRange(-9999, 9999)
         self.spin_fx.setValue(fr.get("x", 100))
-        self.spin_fx.setFixedWidth(56)
+        self.spin_fx.setFixedWidth(70)
         self.spin_fx.valueChanged.connect(self.on_fixed_rect_changed)
         qs_lay.addWidget(self.spin_fx)
 
@@ -4691,7 +4701,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_fy = QSpinBox(self)
         self.spin_fy.setRange(-9999, 9999)
         self.spin_fy.setValue(fr.get("y", 100))
-        self.spin_fy.setFixedWidth(56)
+        self.spin_fy.setFixedWidth(70)
         self.spin_fy.valueChanged.connect(self.on_fixed_rect_changed)
         qs_lay.addWidget(self.spin_fy)
 
@@ -4699,7 +4709,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_fw = QSpinBox(self)
         self.spin_fw.setRange(10, 7680)
         self.spin_fw.setValue(fr.get("width", 960))
-        self.spin_fw.setFixedWidth(62)
+        self.spin_fw.setFixedWidth(70)
         self.spin_fw.valueChanged.connect(self.on_fixed_rect_changed)
         qs_lay.addWidget(self.spin_fw)
 
@@ -4707,7 +4717,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_fh = QSpinBox(self)
         self.spin_fh.setRange(10, 4320)
         self.spin_fh.setValue(fr.get("height", 540))
-        self.spin_fh.setFixedWidth(62)
+        self.spin_fh.setFixedWidth(70)
         self.spin_fh.valueChanged.connect(self.on_fixed_rect_changed)
         qs_lay.addWidget(self.spin_fh)
 
@@ -5369,7 +5379,8 @@ class ManualStudioWindow(QMainWindow):
             if hasattr(self, attr):
                 btn = getattr(self, attr)
                 if new_mode == "icon":
-                    icon = RibbonIconProvider.get_icon(icon_name, size=18)
+                    icon_color = "#C2410C" if attr == "btn_export" else "#334155"
+                    icon = RibbonIconProvider.get_icon(icon_name, size=18, color=icon_color)
                     btn.setIcon(icon)
                     btn.setIconSize(QSize(18, 18))
                     btn.setText("")

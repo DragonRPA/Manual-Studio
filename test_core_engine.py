@@ -1672,11 +1672,13 @@ def test_ribbon_overhaul_and_slim_layout():
     win = ManualStudioWindow()
 
     # 1. Height checks
-    assert win.ribbon_tabs.height() == 122, f"RibbonTabs height must be 122, got {win.ribbon_tabs.height()}"
+    assert win.ribbon_tabs.height() == 144, f"RibbonTabs height must be 144, got {win.ribbon_tabs.height()}"
     quick_strip = win.findChild(QFrame, "QuickStrip")
     assert quick_strip is not None, "QuickStrip must exist"
-    assert quick_strip.height() == 30, f"QuickStrip height must be 30, got {quick_strip.height()}"
+    assert quick_strip.height() == 34, f"QuickStrip height must be 34, got {quick_strip.height()}"
     assert win.menuBar().height() == 28, f"MenuBar height must be 28, got {win.menuBar().height()}"
+    assert win.spin_fx.width() == 70, f"Fixed rect spinbox width must be 70, got {win.spin_fx.width()}"
+    assert win.combo_monitor.width() == 175, f"Combo monitor width must be 175, got {win.combo_monitor.width()}"
 
     # 2. Vertical separator checks (VLine frames)
     tab1 = win.ribbon_tabs.widget(0).widget()
@@ -1687,7 +1689,7 @@ def test_ribbon_overhaul_and_slim_layout():
     separators2 = [w for w in tab2.findChildren(QFrame) if w.frameShape() == QFrame.VLine]
     assert len(separators2) >= 6, f"Tab 2 must have at least 6 vertical separators between groups, found {len(separators2)}"
 
-    print("[PASS] test_ribbon_overhaul_and_slim_layout (Slim height 122px, QuickStrip 30px, MenuBar 28px, crisp VLine separators valid)")
+    print("[PASS] test_ribbon_overhaul_and_slim_layout (Height 144px, QuickStrip 34px, MenuBar 28px, crisp VLine separators valid)")
 
 def test_autosave_toggle_and_ribbon_integration():
     from PySide6.QtWidgets import QApplication
