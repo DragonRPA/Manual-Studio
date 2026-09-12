@@ -104,5 +104,9 @@
   "auto_save_interval_min": 5,
   "ribbon_display_mode": "text",
   "ppt_template_path": "",
-  "auto_check_update": true
+  "auto_check_update": true,
+  "export_target": "powerpoint",
+  "slides_auto_slide": true,
+  "slides_return_focus": true,
+  "ui_style": "windows"
 }

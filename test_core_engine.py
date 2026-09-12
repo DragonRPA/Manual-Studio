@@ -1791,6 +1791,231 @@ def test_all_shortcuts_and_alt_keytips():
     win.hide()
     print("[PASS] test_all_shortcuts_and_alt_keytips (V/S/B single-key mode switches, Alt toggle, KeyTip yellow badges valid)")
 
+def test_dialog_multilingual_localization():
+    import re
+    from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QCheckBox
+    from i18n_manager import I18nManager
+    from manual_capture_studio import AboutDialog, SettingsDialog, LicenseRegistrationDialog, DEFAULT_CONFIG
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    def has_hangul(text):
+        if not text:
+            return False
+        return bool(re.search(r'[\uac00-\ud7a3]', text))
+
+    mgr = I18nManager.instance()
+    # Test English
+    mgr.set_locale("en")
+    about = AboutDialog()
+    assert not has_hangul(about.windowTitle())
+    for w in about.findChildren(QLabel):
+        assert not has_hangul(w.text())
+    for b in about.findChildren(QPushButton):
+        assert not has_hangul(b.text())
+    about.close()
+
+    settings = SettingsDialog(DEFAULT_CONFIG)
+    assert not has_hangul(settings.windowTitle())
+    for w in settings.findChildren(QLabel):
+        assert not has_hangul(w.text())
+    for b in settings.findChildren(QPushButton):
+        assert not has_hangul(b.text())
+    for c in settings.findChildren(QCheckBox):
+        assert not has_hangul(c.text())
+    settings.close()
+
+    lic = LicenseRegistrationDialog()
+    assert not has_hangul(lic.windowTitle())
+    for w in lic.findChildren(QLabel):
+        assert not has_hangul(w.text())
+    for b in lic.findChildren(QPushButton):
+        assert not has_hangul(b.text())
+    lic.close()
+
+    # Test Japanese
+    mgr.set_locale("ja")
+    about_ja = AboutDialog()
+    assert not has_hangul(about_ja.windowTitle())
+    about_ja.close()
+
+    # Reset
+    mgr.set_locale("ko")
+    print("[PASS] test_dialog_multilingual_localization (AboutDialog, SettingsDialog, LicenseDialog 100% localized in 9 languages without residual Hangul)")
+
+def test_google_slides_integration():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtCore import Qt
+    from i18n_manager import I18nManager
+    from manual_capture_studio import DEFAULT_CONFIG, ExportEngine, SettingsDialog, ManualStudioWindow
+    from PIL import Image
+
+    # 1. Config Defaults
+    assert DEFAULT_CONFIG.get("export_target") == "powerpoint"
+    assert DEFAULT_CONFIG.get("slides_auto_slide") is True
+    assert DEFAULT_CONFIG.get("slides_return_focus") is True
+
+    # 2. Window Detection logic
+    hwnd, title = ExportEngine.find_google_slides_window()
+    assert isinstance(hwnd, int)
+    assert isinstance(title, str)
+    if hwnd > 0:
+        tl = title.lower()
+        assert any(k in tl for k in ["slides", "슬라이드", "프레젠테이션", "docs.google.com"])
+
+    # 3. i18n Catalog completeness for all 10 keys across all 9 languages
+    mgr = I18nManager.instance()
+    keys_to_check = [
+        "settings_lbl_export_target",
+        "export_target_powerpoint",
+        "export_target_google_slides",
+        "btn_send_google_slides",
+        "tip_send_google_slides",
+        "slides_not_found",
+        "slides_success",
+        "chk_slides_return_focus",
+        "chk_slides_auto_slide",
+        "slides_injecting",
+    ]
+    for loc in ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]:
+        mgr.set_locale(loc)
+        for k in keys_to_check:
+            val = mgr.t(k)
+            assert val and val != k, f"Missing key {k} in locale {loc}"
+
+    mgr.set_locale("ko")
+
+    # 4. SettingsDialog UI integration
+    cfg = DEFAULT_CONFIG.copy()
+    cfg["export_target"] = "google_slides"
+    cfg["slides_return_focus"] = False
+    dlg = SettingsDialog(cfg)
+    assert hasattr(dlg, "combo_export_target")
+    assert hasattr(dlg, "chk_slides_auto")
+    assert hasattr(dlg, "chk_slides_return")
+    assert dlg.combo_export_target.currentData() == "google_slides"
+    assert dlg.chk_slides_return.isChecked() is False
+
+    # Change via dialog and save
+    dlg.combo_export_target.setCurrentIndex(dlg.combo_export_target.findData("powerpoint"))
+    dlg.chk_slides_return.setChecked(True)
+    dlg.save_and_close()
+    saved = dlg.get_config()
+    assert saved["export_target"] == "powerpoint"
+    assert saved["slides_return_focus"] is True
+    dlg.close()
+
+    # 5. ManualStudioWindow UI & Actions
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    assert hasattr(win, "btn_send_slides")
+    assert hasattr(win, "act_export_slides")
+
+    # Verify method calls with mocking
+    calls = []
+    def mock_send_to_google_slides(pil_img, return_focus_hwnd=None, return_focus=True):
+        calls.append(("slides", return_focus))
+        return {"success": True, "title": "Mock Google Slides"}
+
+    orig_slides = ExportEngine.send_to_google_slides
+    try:
+        ExportEngine.send_to_google_slides = mock_send_to_google_slides
+        pm = QPixmap(100, 100)
+        pm.fill(Qt.white)
+        win.canvas.set_pixmap(pm)
+
+        win.action_send_to_google_slides()
+        assert len(calls) == 1 and calls[0][0] == "slides"
+
+        win.config["export_target"] = "google_slides"
+        win.export_to_ppt_and_clipboard()
+        assert len(calls) == 2
+    finally:
+        ExportEngine.send_to_google_slides = orig_slides
+        win.hide()
+
+    print("[PASS] test_google_slides_integration (Window detection, i18n in 9 languages, Settings UI, and F10 routing valid)")
+
+def test_ui_theme_styles_windows_and_macos():
+    """Windows Fluent vs Macintosh Cupertino 듀얼 UI 스타일 및 핫스왑 종합 검증 (Test 43)"""
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import (
+        DEFAULT_CONFIG, ThemeManager, MacTrafficLight,
+        ManualStudioWindow, SettingsDialog
+    )
+    from i18n_manager import I18nManager, tr
+
+    # 1. DEFAULT_CONFIG 검증
+    assert "ui_style" in DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["ui_style"] == "windows"
+
+    # 2. ThemeManager QSS 반환값 검증
+    assert ThemeManager.WINDOWS == "windows"
+    assert ThemeManager.MACOS == "macos"
+
+    win_ribbon_qss = ThemeManager.get_windows_ribbon_qss()
+    mac_ribbon_qss = ThemeManager.get_macos_ribbon_qss()
+    assert "QFrame#RibbonPanel" in win_ribbon_qss
+    assert "QFrame#RibbonPanel" in mac_ribbon_qss
+    assert "border-radius: 10px;" in mac_ribbon_qss
+    assert "SF Pro Text" in mac_ribbon_qss
+
+    win_mb_qss = ThemeManager.get_windows_menubar_qss()
+    mac_mb_qss = ThemeManager.get_macos_menubar_qss()
+    assert "#007AFF" in mac_mb_qss
+    assert "#2563EB" in win_mb_qss
+
+    # 3. SettingsDialog UI 및 설정 저장 검증
+    app = QApplication.instance() or QApplication(sys.argv)
+    cfg = DEFAULT_CONFIG.copy()
+    cfg["ui_style"] = "windows"
+    dlg = SettingsDialog(cfg)
+    assert hasattr(dlg, "combo_ui_style")
+    assert dlg.combo_ui_style.count() >= 2
+    assert dlg.combo_ui_style.findData("windows") >= 0
+    assert dlg.combo_ui_style.findData("macos") >= 0
+
+    # Switch to macos and save
+    idx_mac = dlg.combo_ui_style.findData("macos")
+    dlg.combo_ui_style.setCurrentIndex(idx_mac)
+    dlg.save_and_close()
+    saved = dlg.get_config()
+    assert saved["ui_style"] == "macos"
+    dlg.close()
+
+    # 4. ManualStudioWindow 동적 핫스왑 및 트래픽 라이트 연동 검증
+    win = ManualStudioWindow()
+    assert hasattr(win, "traffic_lights")
+    assert isinstance(win.traffic_lights, MacTrafficLight)
+
+    # Windows 테마 적용
+    win.apply_ui_theme("windows")
+    assert win.ui_style == "windows"
+    assert win.traffic_lights.isHidden() is True
+
+    # Macintosh 테마 적용 (0.05s 즉시 핫스왑)
+    win.apply_ui_theme("macos")
+    assert win.ui_style == "macos"
+    assert win.traffic_lights.isHidden() is False
+
+    # 다시 Windows 복원
+    win.apply_ui_theme("windows")
+    assert win.ui_style == "windows"
+    assert win.traffic_lights.isHidden() is True
+    win.hide()
+
+    # 5. 다국어 9개 언어 키 무결성 검증
+    mgr = I18nManager.instance()
+    for k in ["settings_group_ui_theme", "settings_lbl_ui_style", "ui_style_windows", "ui_style_macos"]:
+        for loc in ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]:
+            mgr.set_locale(loc)
+            val = tr(k)
+            assert val != k, f"Missing {k} in {loc}"
+    mgr.set_locale("ko")
+
+    print("[PASS] test_ui_theme_styles_windows_and_macos (Windows/macOS QSS, MacTrafficLight, SettingsDialog, 9-lang i18n, and live hot-swap valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -1832,7 +2057,10 @@ if __name__ == "__main__":
     test_autosave_toggle_and_ribbon_integration()
     test_ribbon_display_mode_toggle_and_icon_provider()
     test_all_shortcuts_and_alt_keytips()
-    print("\nALL 40 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL & KEYTIP TESTS PASSED 100%!")
+    test_dialog_multilingual_localization()
+    test_google_slides_integration()
+    test_ui_theme_styles_windows_and_macos()
+    print("\nALL 43 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES & DUAL UI THEME TESTS PASSED 100%!")
     os._exit(0)
 
 

@@ -261,25 +261,28 @@ class UpdateDialog(QDialog):
         h_layout.setSpacing(4)
 
         remote_ver = self.metadata.get("version", "최신")
-        lbl_h_title = QLabel(f"🚀 새로운 버전 ({remote_ver})이 발견되었습니다!", header_card)
+        lbl_h_title = QLabel(f"{tr('update_found_title', '신규 버전이 발견되었습니다')}: {remote_ver}", header_card)
         lbl_h_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #1E40AF; border: none;")
         h_layout.addWidget(lbl_h_title)
 
         rel_date = self.metadata.get("release_date", "")
-        lbl_v_info = QLabel(f"현재 버전: {self.current_version}  ➔  최신 버전: {remote_ver} (배포일: {rel_date})", header_card)
+        v_info_text = f"{tr('update_current_ver', '현재 버전')}: {self.current_version}  ➔  {tr('update_latest_ver', '최신 버전')}: {remote_ver}"
+        if rel_date:
+            v_info_text += f" ({tr('update_rel_date', '배포일')}: {rel_date})"
+        lbl_v_info = QLabel(v_info_text, header_card)
         lbl_v_info.setStyleSheet("font-size: 11.5px; color: #3B82F6; border: none; font-weight: 500;")
         h_layout.addWidget(lbl_v_info)
 
         layout.addWidget(header_card)
 
         # 2. 릴리즈 노트 영역
-        lbl_rn_title = QLabel("업데이트 주요 개선 사항:", self)
+        lbl_rn_title = QLabel(tr("update_rn_title", "업데이트 주요 변경 내역:"), self)
         lbl_rn_title.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #334155; margin-top: 4px;")
         layout.addWidget(lbl_rn_title)
 
         self.text_notes = QTextEdit(self)
         self.text_notes.setReadOnly(True)
-        rel_notes = self.metadata.get("release_notes", "").strip() or "상세 개선 사항이 제공되지 않았습니다."
+        rel_notes = self.metadata.get("release_notes", "").strip() or tr("update_no_notes", "상세 개선 사항이 제공되지 않았습니다.")
         self.text_notes.setPlainText(rel_notes)
         self.text_notes.setStyleSheet("""
             QTextEdit {
@@ -302,7 +305,7 @@ class UpdateDialog(QDialog):
         p_layout.setContentsMargins(0, 0, 0, 0)
         p_layout.setSpacing(4)
 
-        self.lbl_progress_status = QLabel("다운로드 준비 중...", self.progress_frame)
+        self.lbl_progress_status = QLabel(tr("update_progress_ready", "다운로드 준비 중..."), self.progress_frame)
         self.lbl_progress_status.setStyleSheet("font-size: 11px; color: #64748B; font-weight: bold;")
         p_layout.addWidget(self.lbl_progress_status)
 
@@ -333,12 +336,12 @@ class UpdateDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(10)
 
-        self.lbl_notice = QLabel("라이선스는 100% 자동 유지됩니다.", self)
+        self.lbl_notice = QLabel(tr("update_notice_license", "라이선스는 자동으로 유지됩니다."), self)
         self.lbl_notice.setStyleSheet("font-size: 11px; color: #059669; font-weight: bold;")
         btn_box.addWidget(self.lbl_notice)
         btn_box.addStretch(1)
 
-        self.btn_update = QPushButton("🚀 지금 업데이트", self)
+        self.btn_update = QPushButton(tr("update_btn_now", "업데이트 실행"), self)
         self.btn_update.setFixedHeight(34)
         self.btn_update.setCursor(Qt.PointingHandCursor)
         self.btn_update.setStyleSheet("""
@@ -357,7 +360,7 @@ class UpdateDialog(QDialog):
         self.btn_update.clicked.connect(self.start_download)
         btn_box.addWidget(self.btn_update)
 
-        self.btn_later = QPushButton("다음에 하기", self)
+        self.btn_later = QPushButton(tr("update_btn_later", "다음에 하기"), self)
         self.btn_later.setFixedHeight(34)
         self.btn_later.setCursor(Qt.PointingHandCursor)
         self.btn_later.setStyleSheet("""
@@ -379,13 +382,13 @@ class UpdateDialog(QDialog):
     def start_download(self):
         dl_url = self.metadata.get("download_url", "")
         if not dl_url:
-            QMessageBox.warning(self, "오류", "다운로드 파일 경로가 지정되어 있지 않습니다.")
+            QMessageBox.warning(self, tr("title_input_error", "오류"), "다운로드 파일 경로가 지정되어 있지 않습니다.")
             return
 
         self.btn_update.setEnabled(False)
-        self.btn_later.setText("취소")
+        self.btn_later.setText(tr("update_btn_cancel", "취소"))
         self.progress_frame.setVisible(True)
-        self.lbl_progress_status.setText("최신 실행파일 다운로드 시작...")
+        self.lbl_progress_status.setText(tr("update_progress_start", "최신 실행 파일 다운로드 시작..."))
 
         dest_dir = tempfile.gettempdir()
         temp_exe = os.path.join(dest_dir, f"ManualStudio_Update_{self.metadata.get('version', 'new')}.exe")
@@ -402,19 +405,19 @@ class UpdateDialog(QDialog):
             self.progress_bar.setValue(pct)
             mb_down = downloaded / (1024 * 1024)
             mb_tot = total / (1024 * 1024)
-            self.lbl_progress_status.setText(f"다운로드 중... {mb_down:.1f}MB / {mb_tot:.1f}MB ({pct}%)")
+            self.lbl_progress_status.setText(f"{mb_down:.1f}MB / {mb_tot:.1f}MB ({pct}%)")
         else:
             mb_down = downloaded / (1024 * 1024)
-            self.lbl_progress_status.setText(f"다운로드 중... {mb_down:.1f}MB 수신됨")
+            self.lbl_progress_status.setText(f"{mb_down:.1f}MB")
 
     def on_download_completed(self, downloaded_file: str):
         self.progress_bar.setValue(100)
-        self.lbl_progress_status.setText("다운로드 완료! 업데이트를 적용합니다.")
+        self.lbl_progress_status.setText(tr("update_completed_title", "업데이트 완료"))
 
         res = QMessageBox.question(
             self,
-            "스마트 업데이트 완료",
-            "새로운 버전 다운로드가 완료되었습니다.\n지금 바로 프로그램을 재시작하여 최신 버전을 적용하시겠습니까?",
+            tr("update_completed_title", "스마트 업데이트 완료"),
+            tr("update_completed_msg", "새로운 버전 다운로드가 완료되었습니다.\n지금 바로 프로그램을 재시작하여 최신 버전을 적용하시겠습니까?"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
@@ -426,12 +429,12 @@ class UpdateDialog(QDialog):
                 QApplication.quit()
                 sys.exit(0)
             else:
-                QMessageBox.critical(self, "업데이트 오류", "패처 스크립트 실행에 실패했습니다.")
+                QMessageBox.critical(self, tr("title_input_error", "업데이트 오류"), "패처 스크립트 실행에 실패했습니다.")
         else:
             self.accept()
 
     def on_download_failed(self, err_msg: str):
         self.progress_frame.setVisible(False)
         self.btn_update.setEnabled(True)
-        self.btn_later.setText("닫기")
-        QMessageBox.warning(self, "다운로드 실패", f"업데이트 파일 다운로드 중 오류가 발생했습니다:\n{err_msg}")
+        self.btn_later.setText(tr("btn_close", "닫기"))
+        QMessageBox.warning(self, tr("update_failed_title", "다운로드 실패"), f"Error:\n{err_msg}")

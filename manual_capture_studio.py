@@ -21,6 +21,32 @@ import base64
 from datetime import datetime
 import ctypes
 from ctypes import wintypes
+import warnings
+
+# Qt 6 / PySide6 관련 구형 경고(DeprecationWarning) 콘솔 출력 전면 차단
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+def hide_console_window():
+    """Windows 환경에서 python.exe(콘솔)로 실행되더라도 불필요한 검은 콘솔창을 즉시 숨김"""
+    if sys.platform == "win32" and not os.environ.get("MANUAL_STUDIO_DEBUG"):
+        try:
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        except Exception:
+            pass
+
+def get_mouse_pos(event):
+    """Qt 6 / Qt 5 호환 마우스 이벤트 좌표 반환 (DeprecationWarning 방지)"""
+    if hasattr(event, "position"):
+        return event.position().toPoint()
+    return event.pos()
+
+def get_mouse_global_pos(event):
+    """Qt 6 / Qt 5 호환 마우스 글로벌 좌표 반환 (DeprecationWarning 방지)"""
+    if hasattr(event, "globalPosition"):
+        return event.globalPosition().toPoint()
+    return event.globalPos()
 
 # Windows 환경에서 Qt 플랫폼 플러그인(qwindows.dll) 탐색 실패 원천 방지
 try:
@@ -55,10 +81,20 @@ from PySide6.QtWidgets import (
 )
 
 from PIL import Image
-import win32gui
-import win32con
-import win32clipboard
-import win32com.client
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
+
+try:
+    import win32gui
+    import win32con
+    import win32clipboard
+    import win32com.client
+except ImportError:
+    win32gui = None
+    win32con = None
+    win32clipboard = None
+    win32com = None
 
 from i18n_manager import I18nManager, tr
 from eula_manager import EulaManager
@@ -220,7 +256,11 @@ DEFAULT_CONFIG = {
     "auto_save_interval_min": 5,
     "ribbon_display_mode": "text",
     "ppt_template_path": "",
-    "auto_check_update": True
+    "auto_check_update": True,
+    "export_target": "powerpoint",
+    "slides_auto_slide": True,
+    "slides_return_focus": True,
+    "ui_style": "windows"
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -253,6 +293,381 @@ def save_config(cfg):
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[Config] 설정 저장 실패: {e}")
+
+
+# ==============================================================================
+# 1-0. 맥킨토시 트래픽 라이트 (MacTrafficLight) & 듀얼 UI 테마 엔진 (ThemeManager)
+# ==============================================================================
+class MacTrafficLight(QWidget):
+    """macOS Cupertino 고유 3구 트래픽 라이트 버튼 (Close, Minimize, Maximize)"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 4, 12, 4)
+        layout.setSpacing(8)
+
+        self.btn_close = QPushButton(self)
+        self.btn_minimize = QPushButton(self)
+        self.btn_maximize = QPushButton(self)
+
+        for btn in (self.btn_close, self.btn_minimize, self.btn_maximize):
+            btn.setFixedSize(12, 12)
+            btn.setCursor(Qt.PointingHandCursor)
+
+        self.btn_close.setToolTip(tr("btn_close", "닫기"))
+        self.btn_minimize.setToolTip(tr("btn_minimize", "최소화"))
+        self.btn_maximize.setToolTip(tr("btn_maximize", "최대화"))
+
+        self.btn_close.clicked.connect(self._on_close)
+        self.btn_minimize.clicked.connect(self._on_minimize)
+        self.btn_maximize.clicked.connect(self._on_maximize)
+
+        layout.addWidget(self.btn_close)
+        layout.addWidget(self.btn_minimize)
+        layout.addWidget(self.btn_maximize)
+
+        self.btn_close.setStyleSheet("background-color: #FF5F56; border-radius: 6px; border: 1px solid #E0443E;")
+        self.btn_minimize.setStyleSheet("background-color: #FFBD2E; border-radius: 6px; border: 1px solid #DEA123;")
+        self.btn_maximize.setStyleSheet("background-color: #27C93F; border-radius: 6px; border: 1px solid #1AAB29;")
+
+    def _on_close(self):
+        w = self.window()
+        if w:
+            w.close()
+
+    def _on_minimize(self):
+        w = self.window()
+        if w:
+            w.showMinimized()
+
+    def _on_maximize(self):
+        w = self.window()
+        if w:
+            if w.isMaximized():
+                w.showNormal()
+            else:
+                w.showMaximized()
+
+
+class ThemeManager:
+    """Windows Fluent vs Macintosh Cupertino 듀얼 UI 스타일 엔진"""
+    WINDOWS = "windows"
+    MACOS = "macos"
+
+    @classmethod
+    def get_windows_ribbon_qss(cls) -> str:
+        return """
+            QFrame#RibbonPanel {
+                background-color: #F8FAFC;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #E2E8F0;
+                background: #FFFFFF;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }
+            QTabBar::tab {
+                background: #F1F5F9;
+                border: 1px solid #CBD5E1;
+                border-bottom: none;
+                padding: 5px 18px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                color: #475569;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+                white-space: nowrap;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                color: #1E40AF;
+                border-bottom: 2px solid #2563EB;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #E2E8F0;
+                color: #1E293B;
+            }
+            QPushButton {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 4px 10px;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                color: #1E293B;
+                white-space: nowrap;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                border-color: #94A3B8;
+            }
+            QPushButton:pressed {
+                background-color: #E2E8F0;
+            }
+            QComboBox {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 2px 20px 2px 6px;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                white-space: nowrap;
+            }
+            QCheckBox {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                color: #1E293B;
+                white-space: nowrap;
+            }
+        """
+
+    @classmethod
+    def get_macos_ribbon_qss(cls) -> str:
+        return """
+            QFrame#RibbonPanel {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E5EA;
+                border-radius: 10px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #E5E5EA;
+                background: #FAFAFC;
+                border-radius: 8px;
+                margin-top: 2px;
+            }
+            QTabBar {
+                background: #E5E5EA;
+                border-radius: 8px;
+                padding: 2px;
+            }
+            QTabBar::tab {
+                background: transparent;
+                border: none;
+                padding: 5px 16px;
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: 600;
+                color: #636366;
+                border-radius: 6px;
+                margin: 2px 2px;
+                white-space: nowrap;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                color: #1C1C1E;
+                border: 1px solid rgba(0, 0, 0, 0.08);
+            }
+            QTabBar::tab:hover:!selected {
+                background: rgba(255, 255, 255, 0.5);
+                color: #1C1C1E;
+            }
+            QPushButton {
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 4px 12px;
+                border: 1px solid #D1D1D6;
+                border-radius: 6px;
+                background-color: #FFFFFF;
+                color: #1C1C1E;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+            QPushButton:hover {
+                background-color: #F2F2F7;
+                border-color: #AEAEB2;
+            }
+            QPushButton:pressed {
+                background-color: #E5E5EA;
+            }
+            QComboBox {
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 2px 20px 2px 8px;
+                border: 1px solid #D1D1D6;
+                border-radius: 6px;
+                background-color: #FFFFFF;
+                white-space: nowrap;
+            }
+            QCheckBox {
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                color: #1C1C1E;
+                white-space: nowrap;
+            }
+        """
+
+    @classmethod
+    def get_windows_menubar_qss(cls) -> str:
+        return """
+            QMenuBar {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border-bottom: 1px solid #E2E8F0;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 1px 4px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 4px 10px;
+                border-radius: 4px;
+                color: #334155;
+                font-weight: 500;
+            }
+            QMenuBar::item:selected {
+                background-color: #F1F5F9;
+                color: #0F172A;
+            }
+            QMenuBar::item:pressed {
+                background-color: #E2E8F0;
+            }
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """
+
+    @classmethod
+    def get_macos_menubar_qss(cls) -> str:
+        return """
+            QMenuBar {
+                background-color: #F5F5F7;
+                color: #1C1C1E;
+                border-bottom: 1px solid #D1D1D6;
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                padding: 2px 4px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 4px 10px;
+                border-radius: 5px;
+                color: #1C1C1E;
+                font-weight: 500;
+            }
+            QMenuBar::item:selected {
+                background-color: #E5E5EA;
+                color: #000000;
+            }
+            QMenuBar::item:pressed {
+                background-color: #D1D1D6;
+            }
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1C1C1E;
+                border: 1px solid #D1D1D6;
+                border-radius: 8px;
+                padding: 5px;
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 5px 22px 5px 12px;
+                border-radius: 5px;
+            }
+            QMenu::item:selected {
+                background-color: #007AFF;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E5E5EA;
+                margin: 4px 8px;
+            }
+        """
+
+    @classmethod
+    def get_windows_app_qss(cls) -> str:
+        return """
+            QMainWindow {
+                background-color: #F8FAFC;
+            }
+            QToolTip {
+                background-color: #1E293B;
+                color: #FFFFFF;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+        """
+
+    @classmethod
+    def get_macos_app_qss(cls) -> str:
+        return """
+            QMainWindow {
+                background-color: #F5F5F7;
+            }
+            QToolTip {
+                background-color: #1C1C1E;
+                color: #FFFFFF;
+                border: 1px solid #3A3A3C;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 11px;
+            }
+        """
+
+    @classmethod
+    def apply_theme(cls, app: QApplication, theme_name: str, window=None):
+        theme = theme_name.lower() if theme_name else cls.WINDOWS
+        if theme == cls.MACOS:
+            font = QFont("SF Pro Text", 9)
+            font.setFamilies(["SF Pro Text", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", "sans-serif"])
+            if app:
+                app.setFont(font)
+                app.setStyleSheet(cls.get_macos_app_qss())
+            if window:
+                if hasattr(window, "ribbon_frame") and window.ribbon_frame:
+                    window.ribbon_frame.setStyleSheet(cls.get_macos_ribbon_qss())
+                if hasattr(window, "menubar") and window.menubar:
+                    window.menubar.setStyleSheet(cls.get_macos_menubar_qss())
+                elif hasattr(window, "menuBar") and window.menuBar():
+                    window.menuBar().setStyleSheet(cls.get_macos_menubar_qss())
+                if hasattr(window, "traffic_lights") and window.traffic_lights:
+                    window.traffic_lights.show()
+                window.setStyleSheet(cls.get_macos_app_qss())
+        else:
+            font = QFont("Segoe UI", 9)
+            font.setFamilies(["Segoe UI", "Malgun Gothic", "sans-serif"])
+            if app:
+                app.setFont(font)
+                app.setStyleSheet(cls.get_windows_app_qss())
+            if window:
+                if hasattr(window, "ribbon_frame") and window.ribbon_frame:
+                    window.ribbon_frame.setStyleSheet(cls.get_windows_ribbon_qss())
+                if hasattr(window, "menubar") and window.menubar:
+                    window.menubar.setStyleSheet(cls.get_windows_menubar_qss())
+                elif hasattr(window, "menuBar") and window.menuBar():
+                    window.menuBar().setStyleSheet(cls.get_windows_menubar_qss())
+                if hasattr(window, "traffic_lights") and window.traffic_lights:
+                    window.traffic_lights.hide()
+                window.setStyleSheet(cls.get_windows_app_qss())
+
 
 
 # ==============================================================================
@@ -344,8 +759,8 @@ class MultiMonitorManager:
         for i, s in enumerate(screens):
             geo = s.geometry()
             is_prim = (s == primary)
-            prim_tag = " ★주화면" if is_prim else ""
-            label = f"모니터 {i+1}: {s.name()} ({geo.width()}×{geo.height()}){prim_tag}"
+            prim_tag = f" ★{tr('monitor_primary', '주화면')}" if is_prim else ""
+            label = f"{tr('lbl_monitor_single', '모니터')} {i+1}: {s.name()} ({geo.width()}×{geo.height()}){prim_tag}"
             info_list.append({
                 "index": i,
                 "label": label,
@@ -1934,7 +2349,7 @@ class CaptureOverlayWidget(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            pt = event.pos()
+            pt = get_mouse_pos(event)
             # 1. 기존 선택 사각형 핸들 체크
             if not self.selected_rect.isEmpty():
                 handle = self.get_handle_at(pt)
@@ -1962,20 +2377,20 @@ class CaptureOverlayWidget(QWidget):
                 self.close()
 
     def mouseMoveEvent(self, event):
-        self.mouse_pos = event.pos()
-        global_pt = event.globalPos()
+        self.mouse_pos = get_mouse_pos(event)
+        global_pt = get_mouse_global_pos(event)
 
         if self.selecting:
-            self.end_pos = event.pos()
+            self.end_pos = get_mouse_pos(event)
             self.selected_rect = QRect(self.start_pos, self.end_pos).normalized()
             self.update()
         elif self.resizing_handle:
-            self.handle_resize(event.pos())
+            self.handle_resize(get_mouse_pos(event))
             self.update()
         elif self.moving_rect:
-            diff = event.pos() - self.start_pos
+            diff = get_mouse_pos(event) - self.start_pos
             self.selected_rect.translate(diff)
-            self.start_pos = event.pos()
+            self.start_pos = get_mouse_pos(event)
             self.update()
         else:
             # 마우스만 움직일 때 자석 스냅 탐색
@@ -1987,7 +2402,7 @@ class CaptureOverlayWidget(QWidget):
         if event.button() == Qt.LeftButton:
             if self.selecting:
                 self.selecting = False
-                self.end_pos = event.pos()
+                self.end_pos = get_mouse_pos(event)
                 r = QRect(self.start_pos, self.end_pos).normalized()
                 if r.width() < 10 and r.height() < 10 and not self.magnet_rect.isEmpty():
                     # 단순 클릭 시 자석 스냅 창 자동 채택
@@ -2006,7 +2421,7 @@ class CaptureOverlayWidget(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
-            if not self.selected_rect.isEmpty() and self.selected_rect.contains(event.pos()):
+            if not self.selected_rect.isEmpty() and self.selected_rect.contains(get_mouse_pos(event)):
                 self.confirm_capture()
 
     def confirm_capture(self):
@@ -2493,7 +2908,7 @@ class StudioCanvasWidget(QWidget):
             win.hide_keytips()
         if self.pixmap is None:
             return
-        pt = event.pos()
+        pt = get_mouse_pos(event)
 
         if event.button() == Qt.LeftButton:
             if self.current_mode == "STAMP":
@@ -2621,7 +3036,7 @@ class StudioCanvasWidget(QWidget):
                 self.sig_request_toast.emit("주석 객체가 삭제되었습니다.")
 
     def mouseMoveEvent(self, event):
-        pt = event.pos()
+        pt = get_mouse_pos(event)
         if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle and isinstance(self.selected_item, ImageOverlayItem):
             self.selected_item.handle_resize(self.resizing_overlay_handle, QPointF(pt), keep_aspect_ratio=True)
             self.update()
@@ -2773,7 +3188,7 @@ class StudioCanvasWidget(QWidget):
                 self.set_mode("SELECT")
 
     def mouseDoubleClickEvent(self, event):
-        pt = event.pos()
+        pt = get_mouse_pos(event)
         for it in reversed(self.items):
             if isinstance(it, TextLabelItem) and it.contains(pt):
                 new_text, ok = self.prompt_text_dialog(it.text)
@@ -2845,7 +3260,7 @@ class StudioCanvasWidget(QWidget):
 
             line_edit.setFocus()
             line_edit.selectAll()
-            if dlg.exec_() == QDialog.Accepted:
+            if dlg.exec() == QDialog.Accepted:
                 return line_edit.text(), True
         except Exception as e:
             print(f"[텍스트 입력 오류]: {e}")
@@ -2903,7 +3318,7 @@ class StudioCanvasWidget(QWidget):
 
             line_edit.setFocus()
             line_edit.selectAll()
-            if dlg.exec_() == QDialog.Accepted:
+            if dlg.exec() == QDialog.Accepted:
                 return line_edit.text(), True
         except Exception as e:
             print(f"[단축키 입력 오류]: {e}")
@@ -2960,7 +3375,7 @@ class StudioCanvasWidget(QWidget):
 
             line_edit.setFocus()
             line_edit.selectAll()
-            if dlg.exec_() == QDialog.Accepted:
+            if dlg.exec() == QDialog.Accepted:
                 return line_edit.text(), True
         except Exception as e:
             print(f"[Draft 텍스트 입력 오류]: {e}")
@@ -3180,7 +3595,8 @@ class ExportEngine:
         width = qimg.width()
         height = qimg.height()
         ptr = qimg.bits()
-        ptr.setsize(height * width * 4)
+        if hasattr(ptr, "setsize"):
+            ptr.setsize(height * width * 4)
         arr = bytes(ptr)
         return Image.frombytes("RGBA", (width, height), arr)
 
@@ -3334,6 +3750,156 @@ class ExportEngine:
         except Exception as e:
             print(f"[PowerPoint COM 오류]: {e}")
             return False
+
+    @staticmethod
+    def find_google_slides_window() -> tuple:
+        """
+        열려 있는 웹 브라우저(Chrome, Edge, Whale, Firefox 등)에서
+        구글 슬라이드 편집 창을 탐색하여 (hwnd, title) 튜플 반환.
+        """
+        import ctypes
+        import win32con
+        user32 = ctypes.windll.user32
+
+        # 1. Default 데스크톱 전환 시도 (서비스나 백그라운드 환경 대응)
+        try:
+            hDesk = user32.OpenDesktopW("Default", 0, False, win32con.GENERIC_ALL)
+            if hDesk:
+                user32.SetThreadDesktop(hDesk)
+        except Exception:
+            pass
+
+        SLIDES_KEYWORDS = [
+            "google slides",
+            "google 프레젠테이션",
+            "구글 슬라이드",
+            "google スライド",
+            "google 幻灯片",
+            "google präsentationen",
+            "presentaciones de google",
+            "apresentações google",
+            "google презентации",
+            "docs.google.com/presentation"
+        ]
+
+        found_windows = []
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+
+        def enum_cb(hwnd, _extra):
+            if user32.IsWindowVisible(hwnd):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                    title = buf.value
+                    title_lower = title.lower()
+                    for kw in SLIDES_KEYWORDS:
+                        if kw in title_lower:
+                            found_windows.append((hwnd, title))
+                            break
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+
+        if not found_windows:
+            return (0, "")
+        return found_windows[0]
+
+    @staticmethod
+    def activate_window(hwnd: int) -> bool:
+        """지정된 HWND 창을 전면(Foreground)으로 복원 및 활성화"""
+        import ctypes
+        import win32process
+        import win32api
+        import win32gui
+        import win32con
+        import time
+
+        user32 = ctypes.windll.user32
+        if not hwnd or not user32.IsWindow(hwnd):
+            return False
+
+        try:
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            else:
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+            cur_thread = win32api.GetCurrentThreadId()
+            fore_hwnd = win32gui.GetForegroundWindow()
+            fore_thread, _ = win32process.GetWindowThreadProcessId(fore_hwnd)
+
+            if cur_thread != fore_thread and fore_thread != 0:
+                win32process.AttachThreadInput(cur_thread, fore_thread, True)
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
+                win32process.AttachThreadInput(cur_thread, fore_thread, False)
+            else:
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
+
+            time.sleep(0.15)
+            return True
+        except Exception as e:
+            print(f"[창 활성화 오류]: {e}")
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+                return True
+            except Exception:
+                return False
+
+    @staticmethod
+    def send_to_google_slides(pil_img: Image.Image, return_focus_hwnd: int = None, return_focus: bool = True) -> dict:
+        """
+        웹 브라우저의 구글 슬라이드 창을 감지하여:
+        1. 클립보드에 이미지 주입 (CF_DIB)
+        2. 구글 슬라이드 창 활성화
+        3. Ctrl + M (새 슬라이드 생성)
+        4. Ctrl + V (이미지 붙여넣기)
+        5. (선택) 원래 스튜디오 창으로 포커스 복귀
+        """
+        import time
+        import win32api
+        import win32con
+
+        hwnd, title = ExportEngine.find_google_slides_window()
+        if not hwnd:
+            return {"success": False, "error": "NOT_FOUND"}
+
+        # 1. 클립보드 복사
+        ExportEngine.copy_to_clipboard(pil_img)
+
+        # 2. 브라우저 창 활성화
+        if not ExportEngine.activate_window(hwnd):
+            return {"success": False, "error": "ACTIVATE_FAILED"}
+
+        time.sleep(0.2)
+
+        # 3. Ctrl + M 송출 (구글 슬라이드 새 슬라이드 생성 단축키)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(ord('M'), 0, 0, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(ord('M'), 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+        # 구글 슬라이드 캔버스 생성 대기
+        time.sleep(0.35)
+
+        # 4. Ctrl + V 송출 (클립보드 이미지 붙여넣기)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(ord('V'), 0, 0, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(ord('V'), 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+        time.sleep(0.25)
+
+        # 5. 스튜디오로 포커스 복귀
+        if return_focus and return_focus_hwnd:
+            time.sleep(0.1)
+            ExportEngine.activate_window(return_focus_hwnd)
+
+        return {"success": True, "title": title}
 
     @staticmethod
     def auto_backup_step_bundle(
@@ -3848,9 +4414,15 @@ class ManualStudioWindow(QMainWindow):
         self.current_text_bg_color = self.config.get("text_style", {}).get("bg_color", "#212121")
         self.current_title_color = self.config.get("ppt_layout", {}).get("title_font_color", "#000000")
 
+        self.ui_style = self.config.get("ui_style", "windows")
+        self.ribbon_frame = None
+        self.traffic_lights = None
+
         self.init_ui()
         self.init_hotkey()
         self.init_autosave()
+
+        self.apply_ui_theme(self.ui_style)
 
         # 화면 크기 감지 및 최적 기본 창크기 설정 (표준 1080p 및 노트북 해상도 최적화)
         screen = QGuiApplication.primaryScreen()
@@ -3883,6 +4455,7 @@ class ManualStudioWindow(QMainWindow):
 
         # 1. 리본 바 컨테이너 (Office / Snagit 스타일)
         ribbon_frame = QFrame(self)
+        self.ribbon_frame = ribbon_frame
         ribbon_frame.setObjectName("RibbonPanel")
         ribbon_frame.setStyleSheet("""
             QFrame#RibbonPanel {
@@ -4203,14 +4776,35 @@ class ManualStudioWindow(QMainWindow):
         self.btn_renumber_steps.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; font-weight: 500;")
         self.btn_renumber_steps.clicked.connect(self.action_renumber_powerpoint_steps)
 
+        self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"), self)
+        self.btn_send_slides.setToolTip(tr("tip_send_google_slides", "열려 있는 구글 슬라이드 웹 브라우저 창에 새 슬라이드를 추가하고 이미지를 자동 주입합니다."))
+        self.btn_send_slides.setStyleSheet("""
+            QPushButton {
+                background-color: #FEF3C7;
+                color: #92400E;
+                border: 1px solid #FCD34D;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QPushButton:hover {
+                background-color: #FDE68A;
+                border-color: #F59E0B;
+                color: #78350F;
+            }
+        """)
+        self.btn_send_slides.clicked.connect(self.action_send_to_google_slides)
+
         ppt_grid = QGridLayout()
         ppt_grid.setContentsMargins(0, 0, 0, 0)
         ppt_grid.setSpacing(2)
         ppt_grid.addWidget(self.btn_export, 0, 0)
-        ppt_grid.addWidget(self.btn_ppt_fit, 0, 1)
+        ppt_grid.addWidget(self.btn_send_slides, 0, 1)
+        ppt_grid.addWidget(self.btn_ppt_fit, 0, 2)
         ppt_grid.addWidget(self.chk_ppt_title, 1, 0)
         ppt_grid.addWidget(self.btn_renumber_steps, 1, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_export", "PPT 출력"), ppt_grid, "grp_ppt_export"))
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_export", "프레젠테이션 출력"), ppt_grid, "grp_ppt_export"))
 
         tools_layout.addStretch(1)
 
@@ -4791,7 +5385,13 @@ class ManualStudioWindow(QMainWindow):
 
     def init_menu_bar(self):
         menubar = self.menuBar()
+        self.menubar = menubar
         menubar.setFixedHeight(28)
+
+        self.traffic_lights = MacTrafficLight(self)
+        menubar.setCornerWidget(self.traffic_lights, Qt.TopLeftCorner)
+        if getattr(self, "ui_style", "windows") != "macos":
+            self.traffic_lights.hide()
         menubar.setStyleSheet("""
             QMenuBar {
                 background-color: #FFFFFF;
@@ -4857,6 +5457,8 @@ class ManualStudioWindow(QMainWindow):
         self.menu_file.addSeparator()
         self.act_export_ppt = self.menu_file.addAction("PPT 슬라이드 생성 (F10)")
         self.act_export_ppt.triggered.connect(self.export_to_ppt_and_clipboard)
+        self.act_export_slides = self.menu_file.addAction(tr("btn_send_google_slides", "구글 슬라이드 전송"))
+        self.act_export_slides.triggered.connect(self.action_send_to_google_slides)
         self.menu_file.addSeparator()
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
         self.act_exit.triggered.connect(self.close)
@@ -4998,11 +5600,11 @@ class ManualStudioWindow(QMainWindow):
 
     def show_about_dialog(self):
         dlg = AboutDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
     def show_eula_dialog(self):
         dlg = EulaDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
 
     def create_ribbon_group(self, title_text, layout_content, group_id=None):
@@ -5240,6 +5842,7 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_hotkey", "btn_mode_hotkey", "단축키 배지", "tooltip_hotkey"),
             ("btn_mode_wordart", "btn_mode_wordart", "워드아트", "tooltip_wordart"),
             ("btn_export", "btn_export", "슬라이드 삽입", "tooltip_export"),
+            ("btn_send_slides", "btn_send_google_slides", "구글 슬라이드 전송", "tip_send_google_slides"),
             ("btn_ppt_fit", "btn_ppt_fit", "배율 맞춤", "tooltip_ppt_fit"),
             ("btn_renumber_steps", "btn_renumber_steps", "순번 재정렬", "tooltip_renumber"),
             ("btn_reset_stamp_index", "btn_reset_stamp", "1번 초기화", None),
@@ -5252,6 +5855,8 @@ class ManualStudioWindow(QMainWindow):
                 if tt_key:
                     btn.setToolTip(tr(tt_key, ""))
 
+        if hasattr(self, "act_export_slides"):
+            self.act_export_slides.setText(tr("btn_send_google_slides", "구글 슬라이드 전송"))
         if hasattr(self, "chk_ppt_title"):
             self.chk_ppt_title.setText(tr("chk_ppt_title", "제목 상자"))
             self.chk_ppt_title.setToolTip(tr("tooltip_title_box", ""))
@@ -6854,14 +7459,38 @@ class ManualStudioWindow(QMainWindow):
             print(f"[클립보드 복사 오류]: {e}")
             clipboard_ok = False
 
-        # 4. 파워포인트 새 슬라이드 자동 생성
-        temp_dir = os.path.join(get_app_dir(), "temp")
+        # 4. 파워포인트 또는 구글 슬라이드 새 슬라이드 자동 생성
+        export_target = self.config.get("export_target", "powerpoint")
         ppt_ok = False
-        if self.config.get("ppt_auto_slide", True):
-            ppt_layout = self.config.get("ppt_layout", {}).copy()
-            if "template_path" not in ppt_layout:
-                ppt_layout["template_path"] = self.config.get("ppt_template_path", "")
-            ppt_ok = ExportEngine.send_to_powerpoint(pil_img, temp_dir, ppt_layout)
+        slides_ok = False
+        slides_title = ""
+
+        if export_target == "google_slides":
+            if self.config.get("slides_auto_slide", True):
+                self.status_label.setText(tr("slides_injecting", "구글 슬라이드 주입 중..."))
+                QApplication.processEvents()
+                return_focus = self.config.get("slides_return_focus", True)
+                res = ExportEngine.send_to_google_slides(
+                    pil_img,
+                    return_focus_hwnd=int(self.winId()),
+                    return_focus=return_focus
+                )
+                if res.get("success"):
+                    slides_ok = True
+                    slides_title = res.get("title", "")
+                else:
+                    err = res.get("error")
+                    if err == "NOT_FOUND":
+                        self.show_toast(tr("slides_not_found", "구글 슬라이드 웹 브라우저 창을 찾을 수 없습니다.\n크롬 또는 엣지에서 구글 슬라이드를 열어주세요."))
+                    else:
+                        self.show_toast(f"Google Slides Error: {err}")
+        else:
+            temp_dir = os.path.join(get_app_dir(), "temp")
+            if self.config.get("ppt_auto_slide", True):
+                ppt_layout = self.config.get("ppt_layout", {}).copy()
+                if "template_path" not in ppt_layout:
+                    ppt_layout["template_path"] = self.config.get("ppt_template_path", "")
+                ppt_ok = ExportEngine.send_to_powerpoint(pil_img, temp_dir, ppt_layout)
 
         # 5. 세션 자동 백업 (3종 세트 동시 저장: Bake PNG + 원본 PNG + .mcs.json)
         bundle_res = None
@@ -6886,7 +7515,9 @@ class ManualStudioWindow(QMainWindow):
 
         # 결과 알림 (세션은 절대 초기화하지 않고 그대로 보존!)
         msg_parts = []
-        if ppt_ok:
+        if slides_ok:
+            msg_parts.append(tr("slides_success", "구글 슬라이드 새 슬라이드 생성 및 이미지 주입 완료"))
+        elif ppt_ok:
             msg_parts.append("PPT 새 슬라이드 자동 생성")
         if clipboard_ok:
             msg_parts.append("클립보드 복사(Ctrl+V)")
@@ -6897,6 +7528,42 @@ class ManualStudioWindow(QMainWindow):
         full_msg = " + ".join(msg_parts) + " 완료! (현재 작업내용 유지됨)"
         self.status_label.setText(full_msg)
         self.show_toast(full_msg)
+
+    def action_send_to_google_slides(self):
+        """열려 있는 웹 브라우저 구글 슬라이드로 즉시 새 슬라이드 생성 및 이미지 주입"""
+        if self.canvas.pixmap is None:
+            self.show_toast("내보낼 캡처 이미지가 없습니다. F9를 눌러 먼저 캡처하세요.")
+            return
+
+        qimg = self.canvas.get_composed_image()
+        if qimg is None:
+            return
+
+        pil_img = ExportEngine.qimage_to_pil(qimg)
+        target_w = self.config.get("target_width", 960)
+        if self.config.get("auto_resize", True):
+            pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+        self.status_label.setText(tr("slides_injecting", "구글 슬라이드 주입 중..."))
+        QApplication.processEvents()
+
+        return_focus = self.config.get("slides_return_focus", True)
+        res = ExportEngine.send_to_google_slides(
+            pil_img,
+            return_focus_hwnd=int(self.winId()),
+            return_focus=return_focus
+        )
+        if res.get("success"):
+            title = res.get("title", "")
+            success_msg = f"{tr('slides_success', '구글 슬라이드 새 슬라이드 생성 및 이미지 주입 완료')} [{title}]"
+            self.status_label.setText(success_msg)
+            self.show_toast(success_msg)
+        else:
+            err = res.get("error")
+            if err == "NOT_FOUND":
+                self.show_toast(tr("slides_not_found", "구글 슬라이드 웹 브라우저 창을 찾을 수 없습니다.\n크롬 또는 엣지에서 구글 슬라이드를 열어주세요."))
+            else:
+                self.show_toast(f"구글 슬라이드 주입 실패: {err}")
 
     def action_undo(self):
         self.canvas.undo()
@@ -7120,7 +7787,7 @@ class ManualStudioWindow(QMainWindow):
         bottom_layout.addWidget(btn_close)
         main_layout.addLayout(bottom_layout)
 
-        dlg.exec_()
+        dlg.exec()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -7282,7 +7949,7 @@ class ManualStudioWindow(QMainWindow):
     def show_license_dialog(self):
         dlg = LicenseRegistrationDialog(self)
         dlg.sig_license_activated.connect(self.on_license_activated)
-        dlg.exec_()
+        dlg.exec()
 
     def on_license_activated(self):
         self.update_window_title()
@@ -7314,7 +7981,7 @@ class ManualStudioWindow(QMainWindow):
     def _on_update_available(self, meta: dict):
         target_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(get_app_dir(), 'ManualStudio.exe')
         dlg = UpdateDialog(meta, APP_VERSION, target_exe_path=target_exe, parent=self)
-        dlg.exec_()
+        dlg.exec()
 
     def _on_up_to_date(self, current_ver: str):
         QMessageBox.information(
@@ -7408,20 +8075,31 @@ class ManualStudioWindow(QMainWindow):
         except Exception as e:
             print(f"[AutoSave] 복구 확인 중 오류: {e}")
 
+    def apply_ui_theme(self, theme_name: str):
+        self.ui_style = theme_name
+        self.config["ui_style"] = theme_name
+        ThemeManager.apply_theme(QApplication.instance(), theme_name, self)
+
     def open_settings_dialog(self):
+        old_loc = self.config.get("locale", "auto")
         dlg = SettingsDialog(self.config, self)
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             self.config = dlg.get_config()
             save_config(self.config)
-            loc = self.config.get("locale", "auto")
-            if loc != "auto":
-                I18nManager.instance().set_locale(loc)
+            new_style = self.config.get("ui_style", "windows")
+            self.apply_ui_theme(new_style)
+            new_loc = self.config.get("locale", "auto")
+            if new_loc != old_loc and new_loc != "auto":
+                self.switch_language(new_loc)
+            elif new_loc != "auto":
+                I18nManager.instance().set_locale(new_loc)
+                self.retranslate_ui()
             self.canvas.set_config(self.config)
             self.sync_ui_from_config()
             self.update_window_title()
             self.update_status_bar()
             self.update_autosave_timer()
-            self.show_toast("설정이 저장되었습니다.")
+            self.show_toast(tr("settings_toast_saved", "설정이 저장되었습니다."))
 
     def closeEvent(self, event):
         if hasattr(self, "hotkey_thread"):
@@ -7649,7 +8327,9 @@ class LicenseRegistrationDialog(QDialog):
         badge_color = "#10B981" if is_lic else "#D97706"
         badge_bg = "#ECFDF5" if is_lic else "#FFFBEB"
         badge_border = "#A7F3D0" if is_lic else "#FDE68A"
-        badge_text = f"상태: {status.get('badge_text', '평가판')} ({status.get('issued_to', '사용자')})"
+        b_txt = tr("about_badge_licensed", "정식 라이선스") if is_lic else tr("about_badge_trial", "평가판")
+        b_user = status.get("issued_to", "") or tr("license_user_default", "사용자")
+        badge_text = f"{tr('license_status_prefix', '상태')}: {b_txt} ({b_user})"
 
         self.lbl_status = QLabel(badge_text, self)
         self.lbl_status.setStyleSheet(f"""
@@ -7722,22 +8402,22 @@ class LicenseRegistrationDialog(QDialog):
 
     def copy_hwid(self):
         QApplication.clipboard().setText(self.edit_hwid.text().strip())
-        QToolTip.showText(QCursor.pos(), "HWID가 클립보드에 복사되었습니다.", self)
+        QToolTip.showText(QCursor.pos(), tr("msg_hwid_copied", "HWID가 클립보드에 복사되었습니다."), self)
 
     def activate_license(self):
         key = self.edit_key.text().strip()
         if not key:
-            QMessageBox.warning(self, "입력 오류", "라이선스 시리얼 키를 입력해 주세요.")
+            QMessageBox.warning(self, tr("title_input_error", "입력 오류"), tr("msg_enter_license_key", "라이선스 시리얼 키를 입력해 주세요."))
             return
 
         valid, payload, msg = LicenseEngine.verify_license_key(key)
         if valid:
             LicenseEngine.save_license(key)
-            QMessageBox.information(self, "인증 성공", tr("msg_license_success"))
+            QMessageBox.information(self, tr("title_auth_success", "인증 성공"), tr("msg_license_success"))
             self.sig_license_activated.emit()
             self.accept()
         else:
-            QMessageBox.warning(self, "인증 실패", f"라이선스 검증 실패:\n{msg}")
+            QMessageBox.warning(self, tr("title_auth_failed", "인증 실패"), f"{tr('msg_license_failed', '라이선스 검증 실패:')}\n{msg}")
 
 
 # ==============================================================================
@@ -7746,7 +8426,7 @@ class LicenseRegistrationDialog(QDialog):
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("About - DragonRPA Co.")
+        self.setWindowTitle(tr("about_window_title", "About - DragonRPA Co."))
         self.setFixedSize(540, 580)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
@@ -7779,20 +8459,20 @@ class AboutDialog(QDialog):
         layout.addWidget(lbl_logo)
 
         # 2. 프로그램 타이틀 & 버전 배지
-        lbl_title = QLabel("매뉴얼 스튜디오", self)
+        lbl_title = QLabel(tr("about_title", "매뉴얼 스튜디오"), self)
         lbl_title.setAlignment(Qt.AlignCenter)
         lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 2px;")
         layout.addWidget(lbl_title)
 
-        lbl_sub = QLabel("Manual Studio for PowerPoint", self)
+        lbl_sub = QLabel(tr("about_sub", "Manual Studio for PowerPoint"), self)
         lbl_sub.setAlignment(Qt.AlignCenter)
         lbl_sub.setStyleSheet("font-size: 11.5px; color: #64748B;")
         layout.addWidget(lbl_sub)
 
         status = LicenseEngine.check_license_status()
         is_lic = status.get("is_licensed", False)
-        badge_text = status.get("badge_text", "평가판")
-        issued_to = status.get("issued_to", "")
+        badge_text = tr("about_badge_licensed", "정식 라이선스") if is_lic else tr("about_badge_trial", "평가판")
+        issued_to = status.get("issued_to", "") or tr("license_user_default", "사용자")
 
         ver_layout = QHBoxLayout()
         ver_layout.setAlignment(Qt.AlignCenter)
@@ -7824,7 +8504,8 @@ class AboutDialog(QDialog):
                     border-radius: 8px;
                 }
             """)
-            lbl_tr_text.setText(f"<b>[정식 라이선스 활성화]</b> 등록 대상: <b>{issued_to}</b> ({badge_text})<br/>워터마크 없는 고해상도 PPT 슬라이드 생성이 활성화되었습니다.")
+            lic_tpl = tr("about_lic_card", "<b>[정식 라이선스 활성화]</b> 등록 대상: <b>{issued_to}</b> ({badge})<br/>워터마크 없는 고해상도 PPT 슬라이드 생성이 활성화되었습니다.")
+            lbl_tr_text.setText(lic_tpl.format(issued_to=issued_to, badge=badge_text))
             lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #065F46; border: none; background: transparent;")
         else:
             card_trial.setStyleSheet("""
@@ -7834,7 +8515,7 @@ class AboutDialog(QDialog):
                     border-radius: 8px;
                 }
             """)
-            lbl_tr_text.setText("<b>[기간 한정 평가판]</b> 사용 기한: <b>2026년 12월 31일</b>까지<br/>정식 라이선스 등록 시 모든 워터마크가 즉시 제거됩니다.")
+            lbl_tr_text.setText(tr("about_trial_card", "<b>[기간 한정 평가판]</b> 사용 기한: <b>2026년 12월 31일</b>까지<br/>정식 라이선스 등록 시 모든 워터마크가 즉시 제거됩니다."))
             lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #92400E; border: none; background: transparent;")
 
         tr_l.addWidget(lbl_tr_text, 1)
@@ -7860,16 +8541,16 @@ class AboutDialog(QDialog):
         dev_l.setContentsMargins(16, 12, 16, 12)
         dev_l.setSpacing(4)
 
-        lbl_company = QLabel("(주)드래곤알피에이 (DragonRPA Co.)", card_dev)
+        lbl_company = QLabel(tr("about_company_name", "(주)드래곤알피에이 (DragonRPA Co.)"), card_dev)
         lbl_company.setStyleSheet("font-size: 13px; font-weight: bold; color: #1E293B; border: none;")
         dev_l.addWidget(lbl_company)
 
-        lbl_dev_notice = QLabel("본 프로그램은 (주)드래곤알피에이(DragonRPA Co.)에서 기획 및 개발하였습니다.", card_dev)
+        lbl_dev_notice = QLabel(tr("about_dev_notice", "본 프로그램은 (주)드래곤알피에이(DragonRPA Co.)에서 기획 및 개발하였습니다."), card_dev)
         lbl_dev_notice.setWordWrap(True)
         lbl_dev_notice.setStyleSheet("font-size: 11.5px; color: #334155; border: none; line-height: 1.4;")
         dev_l.addWidget(lbl_dev_notice)
 
-        lbl_domain = QLabel("• 업무 자동화 (RPA) · 매뉴얼 표준화 · 지능형 엔터프라이즈 솔루션", card_dev)
+        lbl_domain = QLabel(tr("about_dev_domain", "• 업무 자동화 (RPA) · 매뉴얼 표준화 · 지능형 엔터프라이즈 솔루션"), card_dev)
         lbl_domain.setStyleSheet("font-size: 11px; color: #64748B; border: none;")
         dev_l.addWidget(lbl_domain)
 
@@ -7890,7 +8571,7 @@ class AboutDialog(QDialog):
 
         contact_info_l = QVBoxLayout()
         contact_info_l.setSpacing(2)
-        lbl_c_title = QLabel("공식 문의 및 기술 지원 (Contact)", card_contact)
+        lbl_c_title = QLabel(tr("about_contact_title", "공식 문의 및 기술 지원 (Contact)"), card_contact)
         lbl_c_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #166534; border: none;")
         lbl_email = QLabel("77.victor.lee@gmail.com", card_contact)
         lbl_email.setStyleSheet("font-size: 12.5px; font-weight: bold; color: #15803D; border: none;")
@@ -7900,7 +8581,7 @@ class AboutDialog(QDialog):
 
         c_l.addStretch(1)
 
-        btn_copy_email = QPushButton("이메일 주소 복사", card_contact)
+        btn_copy_email = QPushButton(tr("about_btn_copy_email", "이메일 주소 복사"), card_contact)
         btn_copy_email.setCursor(Qt.PointingHandCursor)
         btn_copy_email.setStyleSheet("""
             QPushButton {
@@ -7934,7 +8615,7 @@ class AboutDialog(QDialog):
         btn_box.setAlignment(Qt.AlignCenter)
         btn_box.setSpacing(10)
 
-        btn_lic = QPushButton("라이선스 등록", self)
+        btn_lic = QPushButton(tr("about_btn_license", "라이선스 등록"), self)
         btn_lic.setFixedHeight(34)
         btn_lic.setCursor(Qt.PointingHandCursor)
         btn_lic.setStyleSheet("""
@@ -7955,7 +8636,7 @@ class AboutDialog(QDialog):
         btn_lic.clicked.connect(self.open_license_dialog)
         btn_box.addWidget(btn_lic)
 
-        btn_eula = QPushButton("사용권 계약 (EULA)", self)
+        btn_eula = QPushButton(tr("about_btn_eula", "사용권 계약 (EULA)"), self)
         btn_eula.setFixedHeight(34)
         btn_eula.setCursor(Qt.PointingHandCursor)
         btn_eula.setStyleSheet("""
@@ -7977,7 +8658,7 @@ class AboutDialog(QDialog):
         btn_eula.clicked.connect(self.show_eula)
         btn_box.addWidget(btn_eula)
 
-        btn_ok = QPushButton("확인", self)
+        btn_ok = QPushButton(tr("btn_ok", "확인"), self)
         btn_ok.setFixedSize(90, 34)
         btn_ok.setCursor(Qt.PointingHandCursor)
         btn_ok.setStyleSheet("""
@@ -7999,19 +8680,19 @@ class AboutDialog(QDialog):
 
     def open_license_dialog(self):
         dlg = LicenseRegistrationDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             if self.parent() and hasattr(self.parent(), "on_license_activated"):
                 self.parent().on_license_activated()
             self.accept()
 
     def show_eula(self):
         dlg = EulaDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
     def copy_email(self):
         cb = QApplication.clipboard()
         cb.setText("77.victor.lee@gmail.com")
-        QMessageBox.information(self, "클립보드 복사", "이메일 주소(77.victor.lee@gmail.com)가 클립보드에 복사되었습니다.")
+        QMessageBox.information(self, tr("title_copy_email", "클립보드 복사"), tr("about_email_copied", "이메일 주소(77.victor.lee@gmail.com)가 클립보드에 복사되었습니다."))
 
 
 # ==============================================================================
@@ -8020,8 +8701,8 @@ class AboutDialog(QDialog):
 class SettingsDialog(QDialog):
     def __init__(self, current_config, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("환경 설정 (Settings)")
-        self.resize(540, 820)
+        self.setWindowTitle(tr("settings_window_title", "환경 설정"))
+        self.resize(580, 820)
         self.config = json.loads(json.dumps(current_config)) # 딥 카피
 
         self.current_stamp_color = self.config.get("stamp_style", {}).get("bg_color", "#E53935")
@@ -8052,9 +8733,9 @@ class SettingsDialog(QDialog):
         box_lang = QFrame(self)
         box_lang.setFrameShape(QFrame.StyledPanel)
         bl_l = QVBoxLayout(box_lang)
-        bl_l.addWidget(QLabel("<b>[글로벌 다국어 언어 설정 (Global Language)]</b>", self))
+        bl_l.addWidget(QLabel(f"<b>[{tr('settings_group_lang', '시스템 언어 설정')}]</b>", self))
         hl = QHBoxLayout()
-        hl.addWidget(QLabel("시스템 언어 (Language):", self))
+        hl.addWidget(QLabel(f"{tr('settings_lbl_lang', '시스템 언어')}:", self))
         self.combo_settings_lang = QComboBox(self)
         for code, name in I18nManager.instance().get_supported_locales().items():
             self.combo_settings_lang.addItem(name, code)
@@ -8066,16 +8747,36 @@ class SettingsDialog(QDialog):
         bl_l.addLayout(hl)
         layout.addWidget(box_lang)
 
+        # 00-1. UI 테마 스타일 설정 (Windows Fluent vs Macintosh Cupertino)
+        box_theme = QFrame(self)
+        box_theme.setFrameShape(QFrame.StyledPanel)
+        bt_l = QVBoxLayout(box_theme)
+        bt_l.addWidget(QLabel(f"<b>[{tr('settings_group_ui_theme', 'UI 테마 스타일')}]</b>", self))
+        ht = QHBoxLayout()
+        lbl_style = QLabel(f"{tr('settings_lbl_ui_style', 'UI 스타일 선택')}:", self)
+        lbl_style.setMinimumWidth(120)
+        ht.addWidget(lbl_style)
+        self.combo_ui_style = QComboBox(self)
+        self.combo_ui_style.addItem(tr("ui_style_windows", "Windows 스타일 (Fluent)"), "windows")
+        self.combo_ui_style.addItem(tr("ui_style_macos", "Macintosh 스타일 (Cupertino)"), "macos")
+        cur_style = self.config.get("ui_style", "windows")
+        idx_style = self.combo_ui_style.findData(cur_style)
+        if idx_style >= 0:
+            self.combo_ui_style.setCurrentIndex(idx_style)
+        ht.addWidget(self.combo_ui_style, 1)
+        bt_l.addLayout(ht)
+        layout.addWidget(box_theme)
+
         # 01. 실수 방지 자동 저장 설정
         box_as = QFrame(self)
         box_as.setFrameShape(QFrame.StyledPanel)
         bas_l = QVBoxLayout(box_as)
-        bas_l.addWidget(QLabel("<b>[실수 방지 자동 저장 설정 (Safety Auto-Save)]</b>", self))
-        self.chk_settings_autosave = QCheckBox("백그라운드 자동 안전 보관 활성화", self)
+        bas_l.addWidget(QLabel(f"<b>[{tr('settings_group_autosave', '자동 저장 설정')}]</b>", self))
+        self.chk_settings_autosave = QCheckBox(tr("settings_chk_autosave", "백그라운드 자동 안전 보관 활성화"), self)
         self.chk_settings_autosave.setChecked(bool(self.config.get("auto_save_enabled", True)))
         bas_l.addWidget(self.chk_settings_autosave)
         has = QHBoxLayout()
-        has.addWidget(QLabel("자동 저장 주기 (분):", self))
+        has.addWidget(QLabel(f"{tr('settings_lbl_autosave_interval', '자동 저장 주기 (분)')}:", self))
         self.spin_settings_autosave_interval = QSpinBox(self)
         self.spin_settings_autosave_interval.setRange(1, 60)
         self.spin_settings_autosave_interval.setValue(int(self.config.get("auto_save_interval_min", 5)))
@@ -8087,8 +8788,8 @@ class SettingsDialog(QDialog):
         box_upd = QFrame(self)
         box_upd.setFrameShape(QFrame.StyledPanel)
         bupd_l = QVBoxLayout(box_upd)
-        bupd_l.addWidget(QLabel("<b>[스마트 자동 업데이트 설정 (Smart Auto-Update)]</b>", self))
-        self.chk_settings_autoupdate = QCheckBox("프로그램 시작 시 최신 버전 자동 확인", self)
+        bupd_l.addWidget(QLabel(f"<b>[{tr('settings_group_autoupdate', '자동 업데이트 설정')}]</b>", self))
+        self.chk_settings_autoupdate = QCheckBox(tr("settings_chk_autoupdate", "프로그램 시작 시 최신 버전 자동 확인"), self)
         self.chk_settings_autoupdate.setChecked(bool(self.config.get("auto_check_update", True)))
         bupd_l.addWidget(self.chk_settings_autoupdate)
         layout.addWidget(box_upd)
@@ -8097,11 +8798,11 @@ class SettingsDialog(QDialog):
         box0 = QFrame(self)
         box0.setFrameShape(QFrame.StyledPanel)
         b0_l = QVBoxLayout(box0)
-        b0_l.addWidget(QLabel("<b>[다중 모니터 캡처 화면 설정]</b>", self))
+        b0_l.addWidget(QLabel(f"<b>[{tr('settings_group_monitor', '다중 모니터 캡처 화면 설정')}]</b>", self))
         h0 = QHBoxLayout()
-        h0.addWidget(QLabel("기본 캡처 화면:", self))
+        h0.addWidget(QLabel(f"{tr('settings_lbl_monitor', '기본 캡처 화면')}:", self))
         self.combo_settings_monitor = QComboBox(self)
-        self.combo_settings_monitor.addItem("전체 가상 화면 (모든 모니터)", -1)
+        self.combo_settings_monitor.addItem(tr("settings_monitor_all", "전체 가상 화면 (모든 모니터)"), -1)
         for m in MultiMonitorManager.get_monitor_info_list():
             self.combo_settings_monitor.addItem(m["label"], m["index"])
         cur_m = self.config.get("target_monitor", -1)
@@ -8116,9 +8817,9 @@ class SettingsDialog(QDialog):
         box1 = QFrame(self)
         box1.setFrameShape(QFrame.StyledPanel)
         b1_l = QVBoxLayout(box1)
-        b1_l.addWidget(QLabel("<b>[PPT 슬라이드 규격화 가로폭]</b>", self))
+        b1_l.addWidget(QLabel(f"<b>[{tr('settings_group_ppt_width', 'PPT 슬라이드 규격화 가로폭')}]</b>", self))
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("목표 가로 해상도(px):", self))
+        h1.addWidget(QLabel(f"{tr('settings_lbl_ppt_width', '목표 가로 해상도(px)')}:", self))
         self.spin_width = QSpinBox(self)
         self.spin_width.setRange(400, 3840)
         self.spin_width.setSingleStep(10)
@@ -8131,10 +8832,10 @@ class SettingsDialog(QDialog):
         box2 = QFrame(self)
         box2.setFrameShape(QFrame.StyledPanel)
         b2_l = QVBoxLayout(box2)
-        b2_l.addWidget(QLabel("<b>[번호 스탬프 스타일]</b>", self))
+        b2_l.addWidget(QLabel(f"<b>[{tr('settings_group_stamp', '번호 스탬프 스타일')}]</b>", self))
 
         h2_1 = QHBoxLayout()
-        h2_1.addWidget(QLabel("스탬프 뱃지 크기(px):", self))
+        h2_1.addWidget(QLabel(f"{tr('settings_lbl_stamp_size', '스탬프 뱃지 크기(px)')}:", self))
         self.spin_stamp_size = QSpinBox(self)
         self.spin_stamp_size.setRange(16, 120)
         self.spin_stamp_size.setValue(self.config.get("stamp_style", {}).get("size", 32))
@@ -8142,8 +8843,8 @@ class SettingsDialog(QDialog):
         b2_l.addLayout(h2_1)
 
         h2_2 = QHBoxLayout()
-        h2_2.addWidget(QLabel("스탬프 배경 색상:", self))
-        self.btn_stamp_color = QPushButton("색상 선택", self)
+        h2_2.addWidget(QLabel(f"{tr('settings_lbl_stamp_bg', '스탬프 배경 색상')}:", self))
+        self.btn_stamp_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         self.btn_stamp_color.setStyleSheet(f"background-color: {self.current_stamp_color}; color: #FFFFFF; font-weight: bold;")
         self.btn_stamp_color.clicked.connect(self.choose_stamp_color)
         h2_2.addWidget(self.btn_stamp_color)
@@ -8154,23 +8855,23 @@ class SettingsDialog(QDialog):
         box3 = QFrame(self)
         box3.setFrameShape(QFrame.StyledPanel)
         b3_l = QVBoxLayout(box3)
-        b3_l.addWidget(QLabel("<b>[텍스트 라벨 스타일]</b>", self))
+        b3_l.addWidget(QLabel(f"<b>[{tr('settings_group_text', '텍스트 라벨 스타일')}]</b>", self))
 
         h3_font = QHBoxLayout()
-        h3_font.addWidget(QLabel("기본 서체:", self))
+        h3_font.addWidget(QLabel(f"{tr('settings_lbl_text_font', '기본 서체')}:", self))
         self.combo_text_font = QFontComboBox(self)
         cur_tf = self.config.get("text_style", {}).get("font_family", "Malgun Gothic")
         self.combo_text_font.setCurrentFont(QFont(cur_tf))
         h3_font.addWidget(self.combo_text_font)
 
-        self.btn_add_font_text = QPushButton("+ 폰트 등록", self)
-        self.btn_add_font_text.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
+        self.btn_add_font_text = QPushButton(tr("settings_btn_add_font", "+ 폰트 등록"), self)
+        self.btn_add_font_text.setToolTip(tr("settings_font_dialog_title", "폰트 파일 등록"))
         self.btn_add_font_text.clicked.connect(self.action_add_custom_font)
         h3_font.addWidget(self.btn_add_font_text)
         b3_l.addLayout(h3_font)
 
         h3_1 = QHBoxLayout()
-        h3_1.addWidget(QLabel("글꼴 크기(pt):", self))
+        h3_1.addWidget(QLabel(f"{tr('settings_lbl_text_size', '글꼴 크기(pt)')}:", self))
         self.spin_font_size = QSpinBox(self)
         self.spin_font_size.setRange(8, 72)
         self.spin_font_size.setValue(self.config.get("text_style", {}).get("font_size", 14))
@@ -8178,14 +8879,14 @@ class SettingsDialog(QDialog):
         b3_l.addLayout(h3_1)
 
         h3_2 = QHBoxLayout()
-        h3_2.addWidget(QLabel("글자 색상:", self))
-        self.btn_text_color = QPushButton("글자색 선택", self)
+        h3_2.addWidget(QLabel(f"{tr('settings_lbl_text_color', '글자 색상')}:", self))
+        self.btn_text_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         self.btn_text_color.setStyleSheet(f"background-color: #333333; color: {self.current_text_color}; font-weight: bold;")
         self.btn_text_color.clicked.connect(self.choose_text_color)
         h3_2.addWidget(self.btn_text_color)
 
-        h3_2.addWidget(QLabel("배경 색상:", self))
-        self.btn_text_bg_color = QPushButton("배경색 선택", self)
+        h3_2.addWidget(QLabel(f"{tr('settings_lbl_text_bg', '배경 색상')}:", self))
+        self.btn_text_bg_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         self.btn_text_bg_color.setStyleSheet(f"background-color: {self.current_text_bg_color}; color: #FFFFFF; font-weight: bold;")
         self.btn_text_bg_color.clicked.connect(self.choose_text_bg_color)
         h3_2.addWidget(self.btn_text_bg_color)
@@ -8196,23 +8897,23 @@ class SettingsDialog(QDialog):
         box4 = QFrame(self)
         box4.setFrameShape(QFrame.StyledPanel)
         b4_l = QVBoxLayout(box4)
-        b4_l.addWidget(QLabel("<b>[강조 박스 스타일]</b>", self))
+        b4_l.addWidget(QLabel(f"<b>[{tr('settings_group_box', '강조 박스 스타일')}]</b>", self))
 
         h4_1 = QHBoxLayout()
-        h4_1.addWidget(QLabel("선 두께(px):", self))
+        h4_1.addWidget(QLabel(f"{tr('settings_lbl_box_width', '선 두께(px)')}:", self))
         self.spin_box_width = QSpinBox(self)
         self.spin_box_width.setRange(1, 20)
         self.spin_box_width.setValue(self.config.get("highlight_box_style", {}).get("border_width", 3))
         h4_1.addWidget(self.spin_box_width)
 
-        h4_1.addWidget(QLabel("박스 색상:", self))
-        self.btn_box_color = QPushButton("색상 선택", self)
+        h4_1.addWidget(QLabel(f"{tr('settings_lbl_box_color', '박스 색상')}:", self))
+        self.btn_box_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         self.btn_box_color.setStyleSheet(f"background-color: {self.current_box_color}; color: #FFFFFF; font-weight: bold;")
         self.btn_box_color.clicked.connect(self.choose_box_color)
         h4_1.addWidget(self.btn_box_color)
         b4_l.addLayout(h4_1)
 
-        self.chk_box_fill = QCheckBox("음영 채우기", self)
+        self.chk_box_fill = QCheckBox(tr("settings_chk_box_fill", "음영 채우기"), self)
         self.chk_box_fill.setChecked(self.config.get("highlight_box_style", {}).get("fill", False))
         b4_l.addWidget(self.chk_box_fill)
         layout.addWidget(box4)
@@ -8221,23 +8922,23 @@ class SettingsDialog(QDialog):
         box_arr = QFrame(self)
         box_arr.setFrameShape(QFrame.StyledPanel)
         b_arr_l = QVBoxLayout(box_arr)
-        b_arr_l.addWidget(QLabel("<b>[화살표 연결선 스타일]</b>", self))
+        b_arr_l.addWidget(QLabel(f"<b>[{tr('settings_group_arrow', '화살표 연결선 스타일')}]</b>", self))
 
         h_arr = QHBoxLayout()
-        h_arr.addWidget(QLabel("선 두께(px):", self))
+        h_arr.addWidget(QLabel(f"{tr('settings_lbl_arrow_width', '선 두께(px)')}:", self))
         self.spin_arrow_width = QSpinBox(self)
         self.spin_arrow_width.setRange(1, 20)
         self.spin_arrow_width.setValue(self.config.get("arrow_style", {}).get("width", 3))
         h_arr.addWidget(self.spin_arrow_width)
 
-        h_arr.addWidget(QLabel("촉 크기(px):", self))
+        h_arr.addWidget(QLabel(f"{tr('settings_lbl_arrow_head', '촉 크기(px)')}:", self))
         self.spin_arrow_head = QSpinBox(self)
         self.spin_arrow_head.setRange(6, 40)
         self.spin_arrow_head.setValue(self.config.get("arrow_style", {}).get("head_size", 14))
         h_arr.addWidget(self.spin_arrow_head)
 
-        h_arr.addWidget(QLabel("색상:", self))
-        self.btn_arrow_color = QPushButton("색상 선택", self)
+        h_arr.addWidget(QLabel(f"{tr('settings_lbl_arrow_color', '색상')}:", self))
+        self.btn_arrow_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         self.btn_arrow_color.setStyleSheet(f"background-color: {self.current_arrow_color}; color: #FFFFFF; font-weight: bold;")
         self.btn_arrow_color.clicked.connect(self.choose_arrow_color)
         h_arr.addWidget(self.btn_arrow_color)
@@ -8248,16 +8949,16 @@ class SettingsDialog(QDialog):
         box_rec = QFrame(self)
         box_rec.setFrameShape(QFrame.StyledPanel)
         b_rec_l = QVBoxLayout(box_rec)
-        b_rec_l.addWidget(QLabel("<b>[추천 주석 스타일 (말풍선·모자이크·단축키)]</b>", self))
+        b_rec_l.addWidget(QLabel(f"<b>[{tr('settings_group_recom', '주석 스타일 (말풍선·모자이크·단축키)')}]</b>", self))
 
         h_rec1 = QHBoxLayout()
-        h_rec1.addWidget(QLabel("말풍선 글꼴(pt):", self))
+        h_rec1.addWidget(QLabel(f"{tr('settings_lbl_callout_font', '말풍선 글꼴(pt)')}:", self))
         self.spin_callout_font = QSpinBox(self)
         self.spin_callout_font.setRange(8, 72)
         self.spin_callout_font.setValue(self.config.get("callout_style", {}).get("font_size", 12))
         h_rec1.addWidget(self.spin_callout_font)
 
-        h_rec1.addWidget(QLabel("말풍선 꼬리(px):", self))
+        h_rec1.addWidget(QLabel(f"{tr('settings_lbl_callout_tail', '말풍선 꼬리(px)')}:", self))
         self.spin_callout_tail = QSpinBox(self)
         self.spin_callout_tail.setRange(8, 40)
         self.spin_callout_tail.setValue(self.config.get("callout_style", {}).get("tail_base_width", 16))
@@ -8265,13 +8966,13 @@ class SettingsDialog(QDialog):
         b_rec_l.addLayout(h_rec1)
 
         h_rec2 = QHBoxLayout()
-        h_rec2.addWidget(QLabel("모자이크 크기(px):", self))
+        h_rec2.addWidget(QLabel(f"{tr('settings_lbl_blur_block', '모자이크 크기(px)')}:", self))
         self.spin_blur_block = QSpinBox(self)
         self.spin_blur_block.setRange(4, 40)
         self.spin_blur_block.setValue(self.config.get("blur_style", {}).get("block_size", 10))
         h_rec2.addWidget(self.spin_blur_block)
 
-        h_rec2.addWidget(QLabel("단축키 글꼴(pt):", self))
+        h_rec2.addWidget(QLabel(f"{tr('settings_lbl_hotkey_font', '단축키 글꼴(pt)')}:", self))
         self.spin_hotkey_font = QSpinBox(self)
         self.spin_hotkey_font.setRange(8, 36)
         self.spin_hotkey_font.setValue(self.config.get("hotkey_style", {}).get("font_size", 12))
@@ -8283,7 +8984,27 @@ class SettingsDialog(QDialog):
         box5 = QFrame(self)
         box5.setFrameShape(QFrame.StyledPanel)
         b5_l = QVBoxLayout(box5)
-        b5_l.addWidget(QLabel("<b>[PPT 슬라이드 배치 및 배율]</b>", self))
+        b5_l.addWidget(QLabel(f"<b>[{tr('settings_group_ppt_scale', 'PPT 슬라이드 배치 및 배율')}]</b>", self))
+
+        h_target = QHBoxLayout()
+        h_target.addWidget(QLabel(f"{tr('settings_lbl_export_target', '내보내기 대상')}:", self))
+        self.combo_export_target = QComboBox(self)
+        self.combo_export_target.addItem(tr("export_target_powerpoint", "PowerPoint (로컬 데스크톱)"), "powerpoint")
+        self.combo_export_target.addItem(tr("export_target_google_slides", "Google Slides (웹 브라우저)"), "google_slides")
+        cur_target = self.config.get("export_target", "powerpoint")
+        idx_t = self.combo_export_target.findData(cur_target)
+        if idx_t >= 0:
+            self.combo_export_target.setCurrentIndex(idx_t)
+        h_target.addWidget(self.combo_export_target)
+        b5_l.addLayout(h_target)
+
+        self.chk_slides_auto = QCheckBox(tr("chk_slides_auto_slide", "F10 실행 시 구글 슬라이드 자동 생성 및 주입"), self)
+        self.chk_slides_auto.setChecked(self.config.get("slides_auto_slide", True))
+        b5_l.addWidget(self.chk_slides_auto)
+
+        self.chk_slides_return = QCheckBox(tr("chk_slides_return_focus", "슬라이드 주입 후 스튜디오로 포커스 자동 복귀"), self)
+        self.chk_slides_return.setChecked(self.config.get("slides_return_focus", True))
+        b5_l.addWidget(self.chk_slides_return)
 
         h5_1 = QHBoxLayout()
         h5_1.addWidget(QLabel("Left(pt):", self))
@@ -8300,7 +9021,7 @@ class SettingsDialog(QDialog):
         self.spin_ppt_top.setValue(self.config.get("ppt_layout", {}).get("top", 80))
         h5_1.addWidget(self.spin_ppt_top)
 
-        h5_1.addWidget(QLabel("배율(%):", self))
+        h5_1.addWidget(QLabel(f"{tr('settings_lbl_ppt_scale', '배율(%)')}:", self))
         self.spin_ppt_scale = QSpinBox(self)
         self.spin_ppt_scale.setRange(10, 300)
         self.spin_ppt_scale.setSingleStep(5)
@@ -8308,7 +9029,7 @@ class SettingsDialog(QDialog):
         h5_1.addWidget(self.spin_ppt_scale)
         b5_l.addLayout(h5_1)
 
-        self.chk_ppt_title = QCheckBox("단계명 제목 상자 (Step N) 자동 생성", self)
+        self.chk_ppt_title = QCheckBox(tr("settings_chk_ppt_title", "단계명 제목 상자 자동 생성"), self)
         self.chk_ppt_title.setChecked(self.config.get("ppt_layout", {}).get("include_title", True))
         b5_l.addWidget(self.chk_ppt_title)
         layout.addWidget(box5)
@@ -8317,33 +9038,33 @@ class SettingsDialog(QDialog):
         box_title = QFrame(self)
         box_title.setFrameShape(QFrame.StyledPanel)
         b_t_l = QVBoxLayout(box_title)
-        b_t_l.addWidget(QLabel("<b>[PPT 단계명 제목 상자 스타일 및 배치]</b>", self))
+        b_t_l.addWidget(QLabel(f"<b>[{tr('settings_group_ppt_title', 'PPT 단계명 제목 상자 스타일 및 배치')}]</b>", self))
 
         ppt_l = self.config.get("ppt_layout", {})
 
         ht1 = QHBoxLayout()
-        ht1.addWidget(QLabel("제목 X(pt):", self))
+        ht1.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_x', '제목 X(pt)')}:", self))
         self.spin_title_left = QSpinBox(self)
         self.spin_title_left.setRange(0, 1920)
         self.spin_title_left.setSingleStep(5)
         self.spin_title_left.setValue(int(ppt_l.get("title_left", ppt_l.get("left", 26))))
         ht1.addWidget(self.spin_title_left)
 
-        ht1.addWidget(QLabel("제목 Y(pt):", self))
+        ht1.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_y', '제목 Y(pt)')}:", self))
         self.spin_title_top = QSpinBox(self)
         self.spin_title_top.setRange(0, 1080)
         self.spin_title_top.setSingleStep(5)
         self.spin_title_top.setValue(int(ppt_l.get("title_top", 15)))
         ht1.addWidget(self.spin_title_top)
 
-        ht1.addWidget(QLabel("너비(pt):", self))
+        ht1.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_w', '너비(pt)')}:", self))
         self.spin_title_width = QSpinBox(self)
         self.spin_title_width.setRange(50, 1920)
         self.spin_title_width.setSingleStep(20)
         self.spin_title_width.setValue(int(ppt_l.get("title_width", 500)))
         ht1.addWidget(self.spin_title_width)
 
-        ht1.addWidget(QLabel("높이(pt):", self))
+        ht1.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_h', '높이(pt)')}:", self))
         self.spin_title_height = QSpinBox(self)
         self.spin_title_height.setRange(15, 500)
         self.spin_title_height.setSingleStep(5)
@@ -8352,30 +9073,30 @@ class SettingsDialog(QDialog):
         b_t_l.addLayout(ht1)
 
         ht2 = QHBoxLayout()
-        ht2.addWidget(QLabel("글꼴:", self))
+        ht2.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_font', '글꼴')}:", self))
         self.combo_title_font = QFontComboBox(self)
         self.combo_title_font.setFixedWidth(130)
         cur_tfont = str(ppt_l.get("title_font_family", "Malgun Gothic"))
         self.combo_title_font.setCurrentFont(QFont(cur_tfont))
         ht2.addWidget(self.combo_title_font)
 
-        self.btn_add_font_title = QPushButton("+ 폰트 등록", self)
-        self.btn_add_font_title.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
+        self.btn_add_font_title = QPushButton(tr("settings_btn_add_font", "+ 폰트 등록"), self)
+        self.btn_add_font_title.setToolTip(tr("settings_font_dialog_title", "폰트 파일 등록"))
         self.btn_add_font_title.clicked.connect(self.action_add_custom_font)
         ht2.addWidget(self.btn_add_font_title)
 
-        ht2.addWidget(QLabel("크기(pt):", self))
+        ht2.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_size', '크기(pt)')}:", self))
         self.spin_title_font_size = QSpinBox(self)
         self.spin_title_font_size.setRange(8, 72)
         self.spin_title_font_size.setValue(int(ppt_l.get("title_font_size", 18)))
         ht2.addWidget(self.spin_title_font_size)
 
-        self.chk_title_bold = QCheckBox("굵게", self)
+        self.chk_title_bold = QCheckBox(tr("settings_chk_ppt_title_bold", "굵게"), self)
         self.chk_title_bold.setChecked(bool(ppt_l.get("title_font_bold", True)))
         ht2.addWidget(self.chk_title_bold)
 
-        ht2.addWidget(QLabel("글자색:", self))
-        self.btn_title_color = QPushButton("색상 선택", self)
+        ht2.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_color', '글자색')}:", self))
+        self.btn_title_color = QPushButton(tr("settings_btn_choose_color", "색상 선택"), self)
         qcol_t = QColor(self.current_title_color)
         t_fg = "#FFFFFF" if (qcol_t.red() * 0.299 + qcol_t.green() * 0.587 + qcol_t.blue() * 0.114) < 140 else "#000000"
         self.btn_title_color.setStyleSheet(f"background-color: {self.current_title_color}; color: {t_fg}; font-weight: bold;")
@@ -8384,7 +9105,7 @@ class SettingsDialog(QDialog):
         b_t_l.addLayout(ht2)
 
         ht3 = QHBoxLayout()
-        ht3.addWidget(QLabel("제목 템플릿:", self))
+        ht3.addWidget(QLabel(f"{tr('settings_lbl_ppt_title_template', '제목 템플릿')}:", self))
         self.edit_title_template = QLineEdit(str(ppt_l.get("title_template", "Step {n}. [단계명 입력]")), self)
         self.edit_title_template.setToolTip("'{n}'은 슬라이드 번호-1 로 자동 치환됩니다.")
         ht3.addWidget(self.edit_title_template)
@@ -8396,12 +9117,12 @@ class SettingsDialog(QDialog):
         box_tpl = QFrame(self)
         box_tpl.setFrameShape(QFrame.StyledPanel)
         btpl_l = QVBoxLayout(box_tpl)
-        btpl_l.addWidget(QLabel("<b>[사내 PPT 마스터 템플릿 연동 (Master Template)]</b>", self))
+        btpl_l.addWidget(QLabel(f"<b>[{tr('settings_group_master', '사내 PPT 마스터 템플릿 연동')}]</b>", self))
         htpl = QHBoxLayout()
-        htpl.addWidget(QLabel("마스터 파일(.pptx):", self))
+        htpl.addWidget(QLabel(f"{tr('settings_lbl_master_file', '마스터 파일(.pptx)')}:", self))
         self.edit_settings_ppt_template = QLineEdit(str(self.config.get("ppt_template_path", "")), self)
-        self.edit_settings_ppt_template.setPlaceholderText("기본 서식 (비어있을 시 기본 빈 슬라이드)")
-        btn_browse_tpl = QPushButton("찾아보기...", self)
+        self.edit_settings_ppt_template.setPlaceholderText(tr("settings_group_master", "사내 PPT 마스터 템플릿 연동"))
+        btn_browse_tpl = QPushButton(tr("settings_btn_browse", "찾아보기..."), self)
         btn_browse_tpl.clicked.connect(self.action_browse_ppt_template)
         htpl.addWidget(self.edit_settings_ppt_template)
         htpl.addWidget(btn_browse_tpl)
@@ -8410,10 +9131,10 @@ class SettingsDialog(QDialog):
 
         # 하단 확인/취소
         btn_layout = QHBoxLayout()
-        btn_ok = QPushButton("저장", self)
+        btn_ok = QPushButton(tr("settings_btn_save", "저장"), self)
         btn_ok.setStyleSheet("background-color: #2196F3; color: #FFFFFF; font-weight: bold; padding: 6px 14px;")
         btn_ok.clicked.connect(self.save_and_close)
-        btn_cancel = QPushButton("취소", self)
+        btn_cancel = QPushButton(tr("settings_btn_cancel", "취소"), self)
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addStretch()
         btn_layout.addWidget(btn_ok)
@@ -8423,7 +9144,7 @@ class SettingsDialog(QDialog):
     def action_add_custom_font(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "외부/유료/토너절약 폰트 파일 등록",
+            tr("settings_font_dialog_title", "폰트 파일 등록"),
             "",
             "폰트 파일 (*.ttf *.otf *.ttc *.woff);;모든 파일 (*.*)"
         )
@@ -8440,44 +9161,45 @@ class SettingsDialog(QDialog):
                     self.config["custom_fonts"].append(dest)
         if all_added:
             fam_str = ", ".join(all_added)
-            QMessageBox.information(self, "폰트 등록 완료", f"새 글꼴이 등록되었습니다:\n{fam_str}")
+            msg_succ = tr("settings_font_success_msg", "새 글꼴이 등록되었습니다:\n{fonts}").format(fonts=fam_str)
+            QMessageBox.information(self, tr("settings_font_success_title", "폰트 등록 완료"), msg_succ)
             if hasattr(self, "combo_title_font") and all_added:
                 self.combo_title_font.setCurrentFont(QFont(all_added[0]))
             if hasattr(self, "combo_text_font") and all_added:
                 self.combo_text_font.setCurrentFont(QFont(all_added[0]))
 
     def choose_stamp_color(self):
-        col = QColorDialog.getColor(QColor(self.current_stamp_color), self, "스탬프 배경 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_stamp_color), self, tr("settings_lbl_stamp_bg", "스탬프 배경 색상"))
         if col.isValid():
             self.current_stamp_color = col.name()
             self.btn_stamp_color.setStyleSheet(f"background-color: {self.current_stamp_color}; color: #FFFFFF; font-weight: bold;")
 
     def choose_text_color(self):
-        col = QColorDialog.getColor(QColor(self.current_text_color), self, "텍스트 글자 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_text_color), self, tr("settings_lbl_text_color", "글자 색상"))
         if col.isValid():
             self.current_text_color = col.name()
             self.btn_text_color.setStyleSheet(f"background-color: #333333; color: {self.current_text_color}; font-weight: bold;")
 
     def choose_text_bg_color(self):
-        col = QColorDialog.getColor(QColor(self.current_text_bg_color), self, "텍스트 배경 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_text_bg_color), self, tr("settings_lbl_text_bg", "배경 색상"))
         if col.isValid():
             self.current_text_bg_color = col.name()
             self.btn_text_bg_color.setStyleSheet(f"background-color: {self.current_text_bg_color}; color: #FFFFFF; font-weight: bold;")
 
     def choose_box_color(self):
-        col = QColorDialog.getColor(QColor(self.current_box_color), self, "박스 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_box_color), self, tr("settings_lbl_box_color", "박스 색상"))
         if col.isValid():
             self.current_box_color = col.name()
             self.btn_box_color.setStyleSheet(f"background-color: {self.current_box_color}; color: #FFFFFF; font-weight: bold;")
 
     def choose_arrow_color(self):
-        col = QColorDialog.getColor(QColor(self.current_arrow_color), self, "화살표 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_arrow_color), self, tr("settings_lbl_arrow_color", "색상"))
         if col.isValid():
             self.current_arrow_color = col.name()
             self.btn_arrow_color.setStyleSheet(f"background-color: {self.current_arrow_color}; color: #FFFFFF; font-weight: bold;")
 
     def choose_title_color(self):
-        col = QColorDialog.getColor(QColor(self.current_title_color), self, "제목 글자 색상 선택")
+        col = QColorDialog.getColor(QColor(self.current_title_color), self, tr("settings_lbl_ppt_title_color", "글자색"))
         if col.isValid():
             self.current_title_color = col.name()
             qcol = QColor(self.current_title_color)
@@ -8487,7 +9209,7 @@ class SettingsDialog(QDialog):
     def action_browse_ppt_template(self):
         fpath, _ = QFileDialog.getOpenFileName(
             self,
-            "사내 PPT 마스터 템플릿 파일 선택",
+            tr("settings_group_master", "사내 PPT 마스터 템플릿 연동"),
             "",
             "파워포인트 템플릿 (*.pptx *.potx);;모든 파일 (*.*)"
         )
@@ -8539,6 +9261,17 @@ class SettingsDialog(QDialog):
         self.config["ppt_layout"]["title_font_bold"] = self.chk_title_bold.isChecked()
         self.config["ppt_layout"]["title_font_color"] = self.current_title_color
         self.config["ppt_layout"]["title_template"] = self.edit_title_template.text().strip() or "Step {n}. [단계명 입력]"
+        if hasattr(self, "combo_export_target"):
+            self.config["export_target"] = self.combo_export_target.currentData() or "powerpoint"
+        if hasattr(self, "chk_slides_auto"):
+            self.config["slides_auto_slide"] = self.chk_slides_auto.isChecked()
+        if hasattr(self, "chk_slides_return"):
+            self.config["slides_return_focus"] = self.chk_slides_return.isChecked()
+        if hasattr(self, "combo_ui_style"):
+            new_style = self.combo_ui_style.currentData() or "windows"
+            self.config["ui_style"] = new_style
+            if self.parent() and hasattr(self.parent(), "apply_ui_theme"):
+                self.parent().apply_ui_theme(new_style)
         self.accept()
 
     def get_config(self):
@@ -8570,16 +9303,23 @@ def kill_other_instances():
 # 9. 엔트리 포인트
 # ==============================================================================
 def main():
-    # 0. 이전 인스턴스 정리 (글로벌 핫키 F9 독점 방지)
+    # 0. Windows 환경에서 python.exe로 실행 시 검은 콘솔창 즉시 숨김
+    hide_console_window()
+
+    # 이전 인스턴스 정리 (글로벌 핫키 F9 독점 방지)
     kill_other_instances()
 
     # Qt 플러그인 라이브러리 경로 명시적 추가
     if 'plugins_dir' in globals() and os.path.exists(plugins_dir):
         QCoreApplication.addLibraryPath(plugins_dir)
 
-    # 고해상도 High-DPI 지원
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # 고해상도 High-DPI 지원 (Qt 6는 상시 기본 내장, Qt 5 하위 호환 시에만 안전 호출)
+    if hasattr(Qt, "AA_EnableHighDpiScaling") and not hasattr(QApplication, "exec"):
+        try:
+            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        except Exception:
+            pass
 
     app = QApplication(sys.argv)
     app.setApplicationName("ManualCaptureStudio")
@@ -8601,7 +9341,7 @@ def main():
     window = ManualStudioWindow()
     window.show()
 
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()

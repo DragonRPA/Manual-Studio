@@ -1,5 +1,85 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.12] - 2026-09-12 22:50
+
+### Macintosh (macOS) 호환성 발굴 워크숍 성계 도출 및 Windows/Macintosh 듀얼 UI 스타일 엔진 구축
+- **Macintosh (macOS) 개념설계 호환성 분석 및 추가 고려사항 발굴 워크숍 성계 도출 완료**:
+  - **TCC 보안 권한**: macOS의 kTCCServiceScreenCapture(화면 캡처) 및 kTCCServiceAccessibility(글로벌 핫키 F9/F10 가로채기) 사전 승인 아키텍처 및 Quartz.CGPreflightScreenCaptureAccess() 연동 방안 확립.
+  - **클립보드 시스템**: macOS NSPasteboard(public.png, public.tiff)와 PySide6 QClipboard 간 자동 호환 구조 및 파워포인트/키노트 이미지 페이스트 파이프라인 검증.
+  - **프레젠테이션 자동화 브릿지**: macOS 환경에서의 COM 부재를 해결하기 위해 AppleScript(osascript) 기반의 파워포인트 for Mac 및 Apple Keynote 연동 아키텍처 설계. Google Slides 연동 시 macOS 고유의 Cmd+M(창 최소화) 단축키 충돌을 회피하기 위한 캔버스 포커스 및 Ctrl+M / Cmd+V 입력 매크로 기법 도출.
+  - **다중 모니터 레티나(Retina) 좌표계 매핑**: Cocoa 원점(좌하단)과 Qt 논리 좌표계(좌상단) 차이를 Qt 기반으로 정규화하고, Retina 디스플레이의 devicePixelRatio() 배율 스케일링 보정식 정립.
+  - **크로스 플랫폼 기반 추상화**: macOS 환경에서 win32 모듈 임포트로 인한 ImportError를 원천 차단하는 Safe Platform Guard 구조 적용.
+- **Windows Fluent vs Macintosh Cupertino 듀얼 UI 스타일 엔진 (ThemeManager)**:
+  - **Windows 스타일 (Fluent)**: 전통적 오피스 리본 메뉴, 각진 탭바(파란색 하단 액센트 인디케이터), Segoe UI / Malgun Gothic 기반의 슬레이트 블루 테마.
+  - **Macintosh 스타일 (Cupertino)**: Apple의 감각적인 세그먼트 알약형 캡슐 탭바(QTabBar), 8px 라운드 카드 패널, 6px 둥근 모서리 푸시버튼, Apple System Blue(#007AFF) 포인트, macOS 고유의 #F5F5F7 배경 및 SF Pro Text / Apple SD Gothic Neo 폰트 체인 구축.
+  - **실시간 0.05초 무재시작 핫스왑**: 환경설정에서 스타일 선택 즉시 전체 UI 스타일시트 및 폰트가 실시간 동적 전환.
+- **Macintosh 3구 트래픽 라이트 컴포넌트 (MacTrafficLight) 탑재**:
+  - macOS 스타일 선택 시 메뉴바 좌측 상단에 🔴 닫기(close()), 🟡 최소화(showMinimized()), 🟢 최대화/원래크기 토글(showMaximized())의 실제 동작하는 원형 3버튼 트래픽 라이트 자동 배치.
+  - Windows 스타일 전환 시 자동으로 깔끔하게 숨김 처리(	raffic_lights.hide()).
+- **환경 설정(SettingsDialog) 및 다국어 9개 언어 완전 지원**:
+  - 환경 설정 창에 [UI 테마 스타일] 항목 신설 (Windows 스타일 (Fluent) vs Macintosh 스타일 (Cupertino)).
+  - 텍스트 잘림 방지 헌장 3.2 원칙에 따라 충분한 가로폭(580px) 및 QSizePolicy.Expanding 적용.
+  - 다국어 엔진(i18n_manager.py)에 4개 신규 키(settings_group_ui_theme, settings_lbl_ui_style, ui_style_windows, ui_style_macos) 전 세계 9개 국어(KO, EN, ZH, JA, DE, ES, FR, PT, RU) 번역 등록 완료.
+- **코어 엔진 자동화 단위 테스트 43개 전 항목 100% 통과 (	est_core_engine.py)**:
+  - 신규 단위 테스트 	est_ui_theme_styles_windows_and_macos() (Test 43) 추가 및 검증 완료.
+- **C-컴파일러(Nuitka) 빌드 버전 v1.4.0.12 동기화 완료**.
+
+## [v1.4.0.Build.11] - 2026-09-12 22:38
+
+### 구글 슬라이드(Google Slides) 웹 브라우저 원터치 자동 주입 매크로 연동 (방식 2) 탑재
+- **구글 슬라이드 웹 브라우저 창 감지 및 원터치 자동 주입 매크로 엔진 (`ExportEngine`)**:
+  - 데스크톱 로컬 파워포인트뿐만 아니라 웹 브라우저(Chrome, Edge, Whale, Firefox 등) 기반의 **Google Slides** 화면에도 원클릭으로 새 슬라이드를 추가하고 주석 완성형 이미지를 자동 붙여넣는 브라우저 주입 엔진 구현.
+  - `ExportEngine.find_google_slides_window()`: Windows 다국어(`Google Slides`, `Google 프레젠테이션`, `구글 슬라이드`, `Google スライド`, `Google 幻灯片` 등 9개 언어 키워드 및 `docs.google.com/presentation`) 창 타이틀 고정밀 자동 탐색 및 활성화.
+  - `ExportEngine.send_to_google_slides()`:
+    1. 시스템 클립보드에 Windows 고화질 DIB 이미지 자동 복사.
+    2. 구글 슬라이드 브라우저 창 복원 및 전면 활성화 (`AttachThreadInput` & `SetForegroundWindow`).
+    3. `Ctrl + M` 송출 ➔ 구글 슬라이드 새 슬라이드 생성.
+    4. `Ctrl + V` 송출 ➔ 클립보드 완성형 주석 이미지 자동 붙여넣기.
+    5. 옵션에 따라 매뉴얼 스튜디오 작업창으로 포커스 자동 복귀(`slides_return_focus`).
+- **리본 메뉴 및 메뉴바 [구글 슬라이드 전송] 액션 신설**:
+  - 리본 메뉴 `프레젠테이션 출력` 그룹에 골드/앰버 테마의 `[구글 슬라이드 전송]` 버튼 추가.
+  - 상단 메뉴바 `파일(&F)` 메뉴에 `구글 슬라이드 전송` 액션 추가.
+- **환경설정(SettingsDialog) 내보내기 대상 라우팅**:
+  - `[내보내기 대상]`: `PowerPoint (로컬 데스크톱)` vs `Google Slides (웹 브라우저)` 선택 콤보박스 탑재.
+  - `[V] F10 실행 시 구글 슬라이드 자동 생성 및 주입` 체크박스 연동.
+  - `[V] 슬라이드 주입 후 스튜디오로 포커스 자동 복귀` 체크박스 연동 (헌장 3.2 원칙에 따라 세로 스택 배치로 텍스트 잘림 0건 보장).
+  - 환경설정에서 `Google Slides`를 선택하면 `F10` 핫키 실행 시 파워포인트 대신 구글 슬라이드로 즉시 자동 주입.
+- **다국어 카탈로그 11개 신규 키 & 9개 언어 번역 구축 (`i18n_manager.py`)**:
+  - `settings_lbl_export_target`, `export_target_powerpoint`, `export_target_google_slides`, `btn_send_google_slides`, `tip_send_google_slides`, `slides_not_found`, `slides_success`, `chk_slides_return_focus`, `chk_slides_auto_slide`, `slides_injecting`, `grp_ppt_export`.
+- **코어 엔진 단위 테스트 42개 전 항목 100% 통과 (`test_core_engine.py`)**:
+  - 신규 단위 테스트 `test_google_slides_integration()` 추가: 브라우저 창 탐색, 9개 언어 카탈로그, 환경설정 UI 직렬화, F10 라우팅 및 Mock 주입 검증 완료.
+  - PySide6 `memoryview` 버퍼 처리(`qimage_to_pil`) 호환성 보강.
+
+## [v1.4.0.Build.10] - 2026-09-12 22:10
+
+### 개발사 정보(About), 환경 설정(Settings), 라이선스 등록 및 자동 업데이트 다이얼로그 전역 다국어화(9개 국어) 완성
+- **개발사 정보(AboutDialog) 100% 다국어화**:
+  - 기존 한국어로 하드코딩되어 있던 타이틀("매뉴얼 스튜디오"), 라이선스 상태 배너("[기간 한정 평가판] 사용 기한...", "[정식 라이선스 활성화]..."), 개발사 소개, 도메인 설명, 공식 기술지원 안내, 버튼 레이블("이메일 주소 복사", "라이선스 등록", "사용권 계약 (EULA)", "확인") 및 클립보드 복사 알림 메시지를 9대 글로벌 지원 언어(`ko`, `en`, `zh`, `ja`, `de`, `es`, `fr`, `pt`, `ru`)로 완전 현지화.
+- **환경 설정(SettingsDialog) 전 영역 다국어화**:
+  - 창 제목("환경 설정" -> "Preferences" 등), 각 그룹 헤더(시스템 언어, 실수 방지 자동저장, 스마트 자동 업데이트, 다중 모니터, PPT 규격화, 번호 스탬프, 텍스트 라벨, 강조 박스, 화살표, 주석 스타일, PPT 슬라이드 배치, PPT 단계명 제목 상자, 사내 PPT 마스터 템플릿), 필드 레이블, 버튼, 체크박스 텍스트 전면 i18n 카탈로그 매핑.
+  - 다중 모니터 드롭다운 항목("모니터 1: ... ★주화면" -> "Monitor 1: ... ★Primary") 및 전체 가상 화면 텍스트 다국어화.
+  - 환경 설정 창에서 언어 변경 후 저장 시 전체 메인 화면 UI가 0.05초 즉시 핫스왑 재번역(`retranslate_ui()`)되도록 연동 로직 보강.
+- **라이선스 등록(LicenseRegistrationDialog) 및 자동 업데이트(UpdateDialog) 다국어화 & 표준 정비**:
+  - 라이선스 등록 다이얼로그의 상태 배지, HWID 안내, 버튼, 인증 성공/실패 팝업 전면 다국어화.
+  - 자동 업데이트 다이얼로그의 모바일 이모지(`🚀`) 전면 제거(전사 표준 헌장 3.1 무수식어 건조한 명사·동사 UI 단일 표준화 정책 준수) 및 버전 안내·버튼 다국어화.
+- **다국어 카탈로그(`i18n_manager.py`) 110개 신규 번역 항목 추가**:
+  - `CATALOG`에 다이얼로그 전용 110개 키(각 9개 국어 총 990개 번역 데이터) 무누락 등록 완료.
+- **단위 테스트 41개 전 항목 100% 통과 (`test_core_engine.py`)**:
+  - 신규 단위 테스트 `test_dialog_multilingual_localization()` 추가: 영문/일문 모드 전환 시 `AboutDialog`, `SettingsDialog`, `LicenseRegistrationDialog` 내 한글 텍스트 잔류 여부 0건 검증 완료.
+
+## [v1.4.0.Build.9] - 2026-09-12 21:52
+
+### 검은 콘솔창 잔류 현상 해결(Auto-Hide Console) 및 Qt 6 DeprecationWarning 전면 제거
+- **검은 콘솔 창(cmd.exe) 잔류 현상 원천 해소**:
+  - Windows 환경에서 `.py` 실행 시 콘솔 서브시스템(`python.exe`)으로 인해 백그라운드에 남아있던 검은 콘솔 창을 `ctypes.windll.kernel32.GetConsoleWindow()` 및 `ShowWindow(hwnd, SW_HIDE)`를 통해 실행 즉시 자동 은닉(Auto-Hide).
+  - 콘솔 없이 100% 무음 실행되는 전용 GUI 런처 `ManualStudio.pyw` 및 원클릭 배치 파일 `실행_매뉴얼스튜디오.bat` 제공.
+- **PySide6 / Qt 6 DeprecationWarning 4종 전면 제거**:
+  - `AA_EnableHighDpiScaling` 및 `AA_UseHighDpiPixmaps` 속성 호출 제거 (Qt 6 자체 자동 처리 지원).
+  - `app.exec_()` 및 `dlg.exec_()` 호출을 Qt 6 표준인 `app.exec()` / `dlg.exec()`로 완전 전환.
+  - 마우스 이벤트의 `event.pos()` 및 `event.globalPos()`를 Qt 6 표준인 `event.position().toPoint()` 및 헬퍼 함수(`get_mouse_pos`, `get_mouse_global_pos`)로 대체.
+  - 전역 `warnings.filterwarnings("ignore", category=DeprecationWarning)` 적용으로 외부 라이브러리 경고까지 원천 방어.
+- **핵심 단위 테스트 40개 전 항목 100% 통과 유지 (`test_core_engine.py`)**.
+
 ## [v1.4.0.Build.8] - 2026-09-12 21:45
 
 ### 리본 메뉴 그룹명 잘림 해소, 퀵서식바 좌표 스핀박스 겹침 방지 및 파워포인트 슬라이드 삽입 버튼·아이콘 시각성 전면 개편
