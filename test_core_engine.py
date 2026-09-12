@@ -2087,8 +2087,8 @@ def test_ai_agent_cli_and_mcp_server():
         assert os.path.exists(rnd_file)
         assert rnd_res.get("items_count") == 2
 
-        # 6. MCP Server 도구 규격(TOOLS_SPEC) 6종 검증
-        assert len(TOOLS_SPEC) == 6
+        # 6. MCP Server 도구 규격(TOOLS_SPEC) 기본 6종 이상 검증
+        assert len(TOOLS_SPEC) >= 6
         tool_names = [t["name"] for t in TOOLS_SPEC]
         assert "manual_studio_status" in tool_names
         assert "manual_studio_capture_screen" in tool_names
@@ -2121,6 +2121,140 @@ def test_ai_agent_cli_and_mcp_server():
         assert os.path.exists(mcp_step.get("annotated_image"))
 
     print("[PASS] test_ai_agent_cli_and_mcp_server (AGENTS.md, CLI headless capture/annotate/render, and MCP 6-tool engine fully verified)")
+
+def test_ai_agent_advanced_annotations_batch_and_doc_export():
+    """Test 45: AI 에이전트 전용 고급 그래픽 주석, 배치 파이프라인, MD/HTML 문서 내보내기 및 9대 MCP 도구 무결성 검증"""
+    import tempfile
+    import json
+    from manual_capture_studio import (
+        SpotlightMaskItem, ClickRippleItem, MagnifierZoomItem,
+        ExportEngine, ITEM_REGISTRY
+    )
+    from manual_cli import cli_capture, cli_annotate, cli_batch, cli_export_doc
+    from mcp_server import MCPServer, TOOLS_SPEC
+
+    # 1. 신규 3대 주석 객체 레지스트리 및 직렬화 검증
+    assert "SpotlightMaskItem" in ITEM_REGISTRY
+    assert "ClickRippleItem" in ITEM_REGISTRY
+    assert "MagnifierZoomItem" in ITEM_REGISTRY
+
+    sp = SpotlightMaskItem([20, 20, 100, 80], {"border_color": "#007AFF", "dim_opacity": 180})
+    sp_d = sp.to_dict()
+    assert sp_d["type"] == "SpotlightMaskItem"
+    assert sp_d["rect"] == [20, 20, 100, 80]
+    sp_restored = SpotlightMaskItem.from_dict(sp_d)
+    assert sp_restored.rect.width() == 100
+
+    cr = ClickRippleItem(150, 120, "double", {"label": "2x CLICK"})
+    cr_d = cr.to_dict()
+    assert cr_d["click_type"] == "double"
+    cr_restored = ClickRippleItem.from_dict(cr_d)
+    assert cr_restored.click_type == "double"
+
+    mag = MagnifierZoomItem([10, 10, 50, 40], [200, 100, 150, 120], 2.5)
+    mag_d = mag.to_dict()
+    assert mag_d["zoom_factor"] == 2.5
+    mag_restored = MagnifierZoomItem.from_dict(mag_d)
+    assert mag_restored.source_rect.width() == 50
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 2. 임시 원본 이미지 캡처
+        cap_file = os.path.join(tmpdir, "base_cap.png")
+        cap_res = cli_capture(rect="0,0,400,300", output=cap_file)
+        assert cap_res.get("status") == "ok"
+
+        # 3. 고급 주석(스포트라이트, 클릭, 돋보기) 복합 합성 렌더링 검증
+        ann_file = os.path.join(tmpdir, "advanced_ann.png")
+        ann_res = cli_annotate(
+            input_path=cap_file,
+            output_path=ann_file,
+            spotlights=["50,50,150,100:#007AFF:150:2"],
+            clicks=["100,100:left:CLICK"],
+            magnifiers=["50,50,60,40:220,50,140,100:2.0"],
+            stamps=["1:60,60"]
+        )
+        assert ann_res.get("status") == "ok"
+        assert os.path.exists(ann_file)
+        assert ann_res.get("items_applied") == 4
+
+        # 4. 다단계 배치 파이프라인(cli_batch) 및 MD / HTML 일괄 생성 검증
+        wf_file = os.path.join(tmpdir, "workflow.json")
+        wf_data = {
+            "title": "Automated Deployment Manual",
+            "steps": [
+                {
+                    "step_num": 1,
+                    "title": "Server Status Check",
+                    "description": "Inspect server health metrics.",
+                    "source": cap_file,
+                    "annotations": {
+                        "stamps": ["1:40,40"],
+                        "spotlights": ["30,30,120,80"]
+                    }
+                },
+                {
+                    "step_num": 2,
+                    "title": "Trigger Production Release",
+                    "description": "Click deploy button in dashboard.",
+                    "source": cap_file,
+                    "annotations": {
+                        "clicks": ["120,80:double:DEPLOY"]
+                    }
+                }
+            ]
+        }
+        with open(wf_file, "w", encoding="utf-8") as f:
+            json.dump(wf_data, f)
+
+        out_batch_dir = os.path.join(tmpdir, "batch_result")
+        bat_res = cli_batch(workflow_path=wf_file, output_dir=out_batch_dir, doc_format="all")
+        assert bat_res.get("status") == "ok"
+        assert bat_res.get("total_steps") == 2
+        assert os.path.exists(bat_res["markdown_file"])
+        assert os.path.exists(bat_res["html_file"])
+
+        with open(bat_res["markdown_file"], "r", encoding="utf-8") as f:
+            md_text = f.read()
+        assert "# Automated Deployment Manual" in md_text
+        assert "Step 1. Server Status Check" in md_text
+
+        with open(bat_res["html_file"], "r", encoding="utf-8") as f:
+            html_text = f.read()
+        assert "<title>Automated Deployment Manual</title>" in html_text
+        assert "STEP 01" in html_text
+
+        # 5. 기존 파일 기반 문서 내보내기(cli_export_doc) 검증
+        doc_md = os.path.join(tmpdir, "custom_doc.md")
+        exp_res = cli_export_doc([ann_file], doc_md, doc_format="md", title="Custom Guide")
+        assert exp_res.get("status") == "ok"
+        assert os.path.exists(doc_md)
+
+        # 6. 9대 MCP 도구 등록 및 도구 실행 검증
+        assert len(TOOLS_SPEC) == 9
+        tool_names = [t["name"] for t in TOOLS_SPEC]
+        assert "manual_studio_batch_pipeline" in tool_names
+        assert "manual_studio_add_spotlight" in tool_names
+        assert "manual_studio_export_document" in tool_names
+
+        server = MCPServer()
+        mcp_sp_res = server.execute_tool("manual_studio_add_spotlight", {
+            "input_path": cap_file,
+            "rect": "20,20,100,80",
+            "output_path": os.path.join(tmpdir, "mcp_spotlight.png")
+        })
+        assert mcp_sp_res.get("status") == "ok"
+        assert os.path.exists(mcp_sp_res["output_file"])
+
+        mcp_doc_res = server.execute_tool("manual_studio_export_document", {
+            "steps": [{"title": "Step A", "description": "Desc A", "image_file": cap_file}],
+            "output_path": os.path.join(tmpdir, "mcp_manual.md"),
+            "format": "md",
+            "title": "MCP Guide"
+        })
+        assert mcp_doc_res.get("status") == "ok"
+        assert os.path.exists(mcp_doc_res["output_file"])
+
+    print("[PASS] test_ai_agent_advanced_annotations_batch_and_doc_export (Spotlight, Click, Magnifier, Batch Pipeline, MD/HTML export, and 9 MCP tools fully valid)")
 
 if __name__ == "__main__":
     test_config_loader()
@@ -2167,7 +2301,8 @@ if __name__ == "__main__":
     test_google_slides_integration()
     test_ui_theme_styles_windows_and_macos()
     test_ai_agent_cli_and_mcp_server()
-    print("\nALL 44 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME & AI AGENT CLI/MCP TESTS PASSED 100%!")
+    test_ai_agent_advanced_annotations_batch_and_doc_export()
+    print("\nALL 45 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP TESTS PASSED 100%!")
     os._exit(0)
 
 

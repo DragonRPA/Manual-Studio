@@ -2073,6 +2073,181 @@ class WordArtItem:
 
 
 # ------------------------------------------------------------------------------
+class SpotlightMaskItem:
+    """타겟 영역 외 전체 배경을 반투명 암전 처리하여 시선을 집중시키는 스포트라이트 마스크 객체"""
+    def __init__(self, rect, style=None):
+        self.rect = QRect(rect) if isinstance(rect, QRect) else QRect(int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+        self.style = style.copy() if style else {}
+
+    def clone(self):
+        return SpotlightMaskItem(QRect(self.rect), self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "SpotlightMaskItem",
+            "rect": [int(self.rect.x()), int(self.rect.y()), int(self.rect.width()), int(self.rect.height())],
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(data.get("rect", [0, 0, 100, 100]), data.get("style", {}))
+
+    def render_spotlight(self, painter: QPainter, canvas_w: int, canvas_h: int):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        outer = QPainterPath()
+        outer.addRect(0, 0, canvas_w, canvas_h)
+        radius = float(self.style.get("border_radius", 6))
+        inner = QPainterPath()
+        inner.addRoundedRect(QRectF(self.rect), radius, radius)
+        mask = outer.subtracted(inner)
+        opacity = int(self.style.get("dim_opacity", 160))
+        dim_color = QColor(self.style.get("dim_color", "#000000"))
+        dim_color.setAlpha(opacity)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(dim_color))
+        painter.drawPath(mask)
+        border_w = int(self.style.get("border_width", 2))
+        if border_w > 0:
+            border_col = QColor(self.style.get("border_color", "#007AFF"))
+            painter.setPen(QPen(border_col, border_w))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRectF(self.rect), radius, radius)
+        painter.restore()
+
+    def render(self, painter: QPainter):
+        self.render_spotlight(painter, 1920, 1080)
+
+
+class ClickRippleItem:
+    """마우스 클릭(좌클릭, 우클릭, 더블클릭) 위치 및 동작을 시각화하는 파동 인디케이터 객체"""
+    def __init__(self, x, y, click_type="left", style=None):
+        self.pos = QPointF(float(x), float(y))
+        self.click_type = str(click_type).lower()
+        self.style = style.copy() if style else {}
+
+    def clone(self):
+        return ClickRippleItem(self.pos.x(), self.pos.y(), self.click_type, self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "ClickRippleItem",
+            "x": float(self.pos.x()),
+            "y": float(self.pos.y()),
+            "click_type": self.click_type,
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(data.get("x", 0.0), data.get("y", 0.0), data.get("click_type", "left"), data.get("style", {}))
+
+    def render(self, painter: QPainter):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        base_col = QColor(self.style.get("color", "#007AFF" if self.click_type == "left" else "#FF9500"))
+        size = float(self.style.get("size", 36))
+        r = size / 2.0
+        ring1 = QColor(base_col)
+        ring1.setAlpha(80)
+        painter.setPen(QPen(ring1, 2.5))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(self.pos, r, r)
+        if self.click_type in ("double", "double_click"):
+            ring2 = QColor(base_col)
+            ring2.setAlpha(140)
+            painter.setPen(QPen(ring2, 2.0))
+            painter.drawEllipse(self.pos, r * 0.7, r * 0.7)
+        center_col = QColor(base_col)
+        center_col.setAlpha(220)
+        painter.setPen(QPen(QColor(255, 255, 255), 1.5))
+        painter.setBrush(QBrush(center_col))
+        painter.drawEllipse(self.pos, 5.0, 5.0)
+        label = self.style.get("label", "CLICK" if self.click_type == "left" else ("2x CLICK" if self.click_type in ("double", "double_click") else "R-CLICK"))
+        if label:
+            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            badge_rect = QRectF(self.pos.x() + 10, self.pos.y() - 20, 64, 18)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(20, 20, 20, 200)))
+            painter.drawRoundedRect(badge_rect, 4, 4)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(badge_rect, Qt.AlignCenter, label)
+        painter.restore()
+
+
+class MagnifierZoomItem:
+    """미세한 UI 컨트롤을 지정 배율로 확대하여 별도 렌즈로 시각화하는 돋보기 상세 주석 객체"""
+    def __init__(self, source_rect, lens_rect, zoom_factor=2.0, style=None):
+        self.source_rect = QRect(source_rect) if isinstance(source_rect, QRect) else QRect(int(source_rect[0]), int(source_rect[1]), int(source_rect[2]), int(source_rect[3]))
+        self.lens_rect = QRect(lens_rect) if isinstance(lens_rect, QRect) else QRect(int(lens_rect[0]), int(lens_rect[1]), int(lens_rect[2]), int(lens_rect[3]))
+        self.zoom_factor = float(zoom_factor)
+        self.style = style.copy() if style else {}
+
+    def clone(self):
+        return MagnifierZoomItem(QRect(self.source_rect), QRect(self.lens_rect), self.zoom_factor, self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "MagnifierZoomItem",
+            "source_rect": [int(self.source_rect.x()), int(self.source_rect.y()), int(self.source_rect.width()), int(self.source_rect.height())],
+            "lens_rect": [int(self.lens_rect.x()), int(self.lens_rect.y()), int(self.lens_rect.width()), int(self.lens_rect.height())],
+            "zoom_factor": self.zoom_factor,
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            data.get("source_rect", [0, 0, 50, 50]),
+            data.get("lens_rect", [100, 100, 150, 150]),
+            data.get("zoom_factor", 2.0),
+            data.get("style", {})
+        )
+
+    def render_zoom(self, painter: QPainter, pixmap: QPixmap):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        border_col = QColor(self.style.get("border_color", "#007AFF"))
+        painter.setPen(QPen(border_col, 2, Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(self.source_rect)
+        p1 = QPointF(self.source_rect.center())
+        p2 = QPointF(self.lens_rect.center())
+        painter.setPen(QPen(border_col, 1.5, Qt.DotLine))
+        painter.drawLine(p1, p2)
+        lens_f = QRectF(self.lens_rect)
+        path = QPainterPath()
+        radius = self.lens_rect.width() / 2.0 if self.style.get("shape") == "circle" else 8.0
+        if self.style.get("shape") == "circle":
+            path.addEllipse(lens_f)
+        else:
+            path.addRoundedRect(lens_f, radius, radius)
+        painter.save()
+        painter.setClipPath(path)
+        if pixmap and not pixmap.isNull():
+            cropped = pixmap.copy(self.source_rect)
+            scaled = cropped.scaled(
+                self.lens_rect.size(),
+                Qt.IgnoreAspectRatio,
+                Qt.SmoothTransformation
+            )
+            painter.drawPixmap(self.lens_rect, scaled)
+        else:
+            painter.fillRect(self.lens_rect, QColor(240, 240, 240))
+        painter.restore()
+        border_w = int(self.style.get("border_width", 3))
+        painter.setPen(QPen(border_col, border_w))
+        painter.setBrush(Qt.NoBrush)
+        if self.style.get("shape") == "circle":
+            painter.drawEllipse(lens_f)
+        else:
+            painter.drawRoundedRect(lens_f, radius, radius)
+        painter.restore()
+
+    def render(self, painter: QPainter):
+        self.render_zoom(painter, None)
+
 # 주석 직렬화 레지스트리 및 팩토리 (Annotation Registry & Factory)
 # ------------------------------------------------------------------------------
 ITEM_REGISTRY = {
@@ -2088,6 +2263,9 @@ ITEM_REGISTRY = {
     "ImageOverlayItem": ImageOverlayItem,
     "DraftStampItem": DraftStampItem,
     "WordArtItem": WordArtItem,
+    "SpotlightMaskItem": SpotlightMaskItem,
+    "ClickRippleItem": ClickRippleItem,
+    "MagnifierZoomItem": MagnifierZoomItem,
 }
 
 def item_from_dict(data):
@@ -3525,6 +3703,10 @@ class StudioCanvasWidget(QWidget):
                 try:
                     if isinstance(item, BlurMosaicItem):
                         item.render_mosaic(painter, self.pixmap)
+                    elif isinstance(item, MagnifierZoomItem):
+                        item.render_zoom(painter, self.pixmap)
+                    elif isinstance(item, SpotlightMaskItem):
+                        item.render_spotlight(painter, self.pixmap.width(), self.pixmap.height())
                     elif isinstance(item, (ImageOverlayItem, DraftStampItem)):
                         item.render(painter, is_selected=False)
                     else:
@@ -4128,7 +4310,234 @@ class ExportEngine:
             return {"success": False, "error": str(e), "details": []}
 
 
-# ==============================================================================
+
+    @staticmethod
+    def export_to_markdown(steps: list, output_path: str, title: str = "Manual Studio Documentation") -> str:
+        """AI 에이전트 및 팀 협업용 GitHub 호환 마크다운 매뉴얼 파일 생성"""
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            
+        md_lines = [
+            f"# {title}",
+            "",
+            "> Generated automatically by DragonRPA Manual Studio AI Engine",
+            "",
+            "## Table of Contents",
+        ]
+        for i, step in enumerate(steps):
+            s_title = step.get("title", f"Step {i+1}")
+            anchor = f"step-{i+1}"
+            md_lines.append(f"- [{s_title}](#{anchor})")
+        md_lines.append("")
+        md_lines.append("---")
+        md_lines.append("")
+
+        for i, step in enumerate(steps):
+            s_title = step.get("title", f"Step {i+1}")
+            s_desc = step.get("description", "")
+            img_file = step.get("image_file", "")
+            # 상대 경로화
+            if img_file and os.path.isabs(img_file) and out_dir:
+                try:
+                    rel_img = os.path.relpath(img_file, out_dir).replace("\\", "/")
+                except Exception:
+                    rel_img = img_file.replace("\\", "/")
+            else:
+                rel_img = img_file.replace("\\", "/")
+
+            md_lines.append(f"<a id='step-{i+1}'></a>")
+            md_lines.append(f"### Step {i+1}. {s_title}")
+            if s_desc:
+                md_lines.append(f"\n{s_desc}\n")
+            if rel_img:
+                md_lines.append(f"\n![{s_title}]({rel_img})\n")
+            md_lines.append("")
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(md_lines) + "\n")
+        return output_path
+
+    @staticmethod
+    def export_to_html(steps: list, output_path: str, title: str = "Manual Studio Interactive Guide") -> str:
+        """단일 독립 실행형 반응형 HTML 매뉴얼 파일 생성 (인쇄/PDF 최적화 내장)"""
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        step_cards_html = []
+        nav_items_html = []
+        for i, step in enumerate(steps):
+            s_title = step.get("title", f"Step {i+1}")
+            s_desc = step.get("description", "")
+            img_file = step.get("image_file", "")
+            if img_file and os.path.isabs(img_file) and out_dir:
+                try:
+                    rel_img = os.path.relpath(img_file, out_dir).replace("\\", "/")
+                except Exception:
+                    rel_img = img_file.replace("\\", "/")
+            else:
+                rel_img = img_file.replace("\\", "/")
+
+            nav_items_html.append(f'<li><a href="#step-{i+1}" class="nav-link"><span class="step-num">{i+1}</span> {s_title}</a></li>')
+
+            img_tag = f'<div class="step-image-box"><img src="{rel_img}" alt="{s_title}" class="step-img" loading="lazy" /></div>' if rel_img else ''
+            desc_tag = f'<p class="step-desc">{s_desc}</p>' if s_desc else ''
+
+            step_cards_html.append(f"""
+            <section id="step-{i+1}" class="step-card">
+              <div class="step-header">
+                <span class="step-badge">STEP {i+1:02d}</span>
+                <h2 class="step-title">{s_title}</h2>
+              </div>
+              {desc_tag}
+              {img_tag}
+            </section>
+            """)
+
+        html_template = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+  <style>
+    :root {{
+      --bg: #0F172A;
+      --card-bg: #1E293B;
+      --text: #F8FAFC;
+      --text-muted: #94A3B8;
+      --primary: #38BDF8;
+      --primary-dark: #0284C7;
+      --border: #334155;
+      --accent: #E53935;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Malgun Gothic", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+      line-height: 1.6;
+    }}
+    aside.sidebar {{
+      width: 280px;
+      background: #090D16;
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 24px 16px;
+      flex-shrink: 0;
+    }}
+    .sidebar h1 {{ font-size: 1.1rem; color: var(--primary); margin-bottom: 20px; font-weight: 700; }}
+    .sidebar ul {{ list-style: none; }}
+    .sidebar li {{ margin-bottom: 8px; }}
+    .nav-link {{
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+    }}
+    .nav-link:hover {{ background: var(--border); color: #FFF; }}
+    .step-num {{
+      background: var(--primary-dark);
+      color: #FFF;
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
+    }}
+    main.content {{
+      flex: 1;
+      max-width: 1040px;
+      padding: 40px;
+      margin: 0 auto;
+    }}
+    .doc-header {{
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 24px;
+      margin-bottom: 40px;
+    }}
+    .doc-header h1 {{ font-size: 2rem; color: #FFF; margin-bottom: 8px; font-weight: 800; }}
+    .doc-meta {{ color: var(--text-muted); font-size: 0.85rem; }}
+    .step-card {{
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      margin-bottom: 40px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+      scroll-margin-top: 40px;
+    }}
+    .step-header {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }}
+    .step-badge {{
+      background: var(--primary);
+      color: #0F172A;
+      font-size: 0.8rem;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }}
+    .step-title {{ font-size: 1.35rem; font-weight: 700; color: #FFF; }}
+    .step-desc {{ color: #CBD5E1; margin-bottom: 20px; font-size: 1rem; }}
+    .step-image-box {{
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }}
+    .step-img {{
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }}
+    @media print {{
+      aside.sidebar {{ display: none; }}
+      main.content {{ max-width: 100%; padding: 0; }}
+      .step-card {{ page-break-inside: avoid; border: 1px solid #CCC; color: #000; background: #FFF; }}
+      .step-title {{ color: #000; }}
+      .step-desc {{ color: #333; }}
+      body {{ background: #FFF; color: #000; }}
+    }}
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Manual Studio</h1>
+    <ul>
+      {''.join(nav_items_html)}
+    </ul>
+  </aside>
+  <main class="content">
+    <header class="doc-header">
+      <h1>{title}</h1>
+      <p class="doc-meta">Automated Documentation by DragonRPA Manual Studio AI Engine</p>
+    </header>
+    {''.join(step_cards_html)}
+  </main>
+</body>
+</html>"""
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html_template)
+        return output_path
+
+
 # 7. 라이선스 및 사용 기간(Time-Bomb) 검증 관리자 (DragonRPA License Engine)
 # ==============================================================================
 class LicenseValidator:

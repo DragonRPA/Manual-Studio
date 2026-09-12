@@ -15,7 +15,8 @@ import traceback
 
 # CLI 엔진 함수들 임포트
 from manual_cli import (
-    cli_status, cli_capture, cli_annotate, cli_render_project, cli_export
+    cli_status, cli_capture, cli_annotate, cli_render_project, cli_export,
+    cli_batch, cli_export_doc
 )
 
 SERVER_NAME = "manual-studio-mcp-server"
@@ -142,6 +143,61 @@ TOOLS_SPEC = [
                 },
                 "step_title": {"type": "string", "description": "Step title in presentation"}
             }
+        }
+    },
+    {
+        "name": "manual_studio_batch_pipeline",
+        "description": "Execute a declarative multi-step manual workflow JSON, generating screenshots, annotations, and Markdown/HTML documentation in a single call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workflow_path": {"type": "string", "description": "File path to workflow JSON"},
+                "workflow_data": {"type": "object", "description": "Direct workflow JSON object with title and steps"},
+                "output_dir": {"type": "string", "description": "Output directory for generated screenshots and documentation"},
+                "format": {"type": "string", "enum": ["all", "md", "html", "markdown"], "description": "Output document format (default: all)"},
+                "title": {"type": "string", "description": "Manual title"}
+            }
+        }
+    },
+    {
+        "name": "manual_studio_add_spotlight",
+        "description": "Apply a spotlight focus mask that darkens the background while highlighting a specific UI bounding box.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string", "description": "Source image path"},
+                "rect": {"type": "string", "description": "Bounding box to highlight in 'x,y,w,h' format"},
+                "border_color": {"type": "string", "description": "Highlight border color (default #007AFF)"},
+                "dim_opacity": {"type": "integer", "description": "Background dimming opacity 0-255 (default 160)"},
+                "output_path": {"type": "string", "description": "Destination PNG path"}
+            },
+            "required": ["input_path", "rect"]
+        }
+    },
+    {
+        "name": "manual_studio_export_document",
+        "description": "Export step images and descriptions into a clean Markdown or standalone interactive HTML manual.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "image_file": {"type": "string"}
+                        },
+                        "required": ["title", "image_file"]
+                    },
+                    "description": "List of manual steps"
+                },
+                "output_path": {"type": "string", "description": "Target file path (.md or .html)"},
+                "format": {"type": "string", "enum": ["md", "html", "markdown"], "description": "Document format"},
+                "title": {"type": "string", "description": "Manual title"}
+            },
+            "required": ["steps", "output_path"]
         }
     }
 ]
@@ -291,6 +347,45 @@ class MCPServer:
                 title=args.get("title"),
                 template=args.get("template")
             )
+
+        elif name == "manual_studio_batch_pipeline":
+            wf_path = args.get("workflow_path")
+            wf_data = args.get("workflow_data")
+            out_dir = args.get("output_dir")
+            fmt = args.get("format", "all")
+            title = args.get("title")
+
+            if wf_data and not wf_path:
+                import tempfile
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tf:
+                    json.dump(wf_data, tf)
+                    wf_path = tf.name
+
+            if not wf_path or not os.path.exists(wf_path):
+                return {"status": "error", "message": "Valid workflow_path or workflow_data is required"}
+
+            return cli_batch(workflow_path=wf_path, output_dir=out_dir, doc_format=fmt, title=title)
+
+        elif name == "manual_studio_add_spotlight":
+            in_p = args.get("input_path")
+            r = args.get("rect")
+            b_col = args.get("border_color", "#007AFF")
+            op = args.get("dim_opacity", 160)
+            out_p = args.get("output_path")
+            sp_spec = f"{r}:{b_col}:{op}:2"
+            return cli_annotate(input_path=in_p, output_path=out_p, spotlights=[sp_spec])
+
+        elif name == "manual_studio_export_document":
+            from manual_capture_studio import ExportEngine
+            steps_list = args.get("steps", [])
+            out_p = args.get("output_path")
+            fmt = args.get("format", "md").lower()
+            doc_title = args.get("title", "Manual Guide")
+            if fmt in ("md", "markdown"):
+                res_path = ExportEngine.export_to_markdown(steps_list, out_p, title=doc_title)
+            else:
+                res_path = ExportEngine.export_to_html(steps_list, out_p, title=doc_title)
+            return {"status": "ok", "output_file": os.path.abspath(res_path), "total_steps": len(steps_list)}
 
         elif name == "manual_studio_create_step":
             # 올인원 복합 액션: 캡처 -> 주석 -> 내보내기

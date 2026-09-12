@@ -1,5 +1,27 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.14] - 2026-09-13 08:50
+
+### AI 에이전트 전용 고급 그래픽 주석 원시 객체, 다단계 배치 파이프라인 및 9대 MCP 도구 확장
+- **AI 에이전트 전용 3대 고급 그래픽 주석 객체 신설 (`manual_capture_studio.py`)**:
+  - `SpotlightMaskItem`: 타겟 UI 사각형 외의 전 영역을 60~70% 반투명 암전 처리하고 타겟 테두리에 액센트 보더를 렌더링하여 사용자/독자의 시선을 지정 컨트롤에 100% 집중시키는 스포트라이트 포커스 마스크.
+  - `ClickRippleItem`: 좌클릭, 우클릭, 더블클릭에 따른 동심원 파동 링, 중심 타겟 포인트 및 영문 액션 텍스트 배지(`CLICK`, `2x CLICK`, `R-CLICK`)를 시각화하는 마우스 동작 인디케이터.
+  - `MagnifierZoomItem`: 고밀도 화면의 미세한 UI 버튼/텍스트를 2.0~3.0배 고해상도로 확대하여 연결 지시선과 함께 원형/라운드 렌즈로 시각화하는 돋보기 상세 주석.
+- **다단계 자동화 배치 파이프라인 (`manual_cli.py batch`)**:
+  - 선언적 워크플로우 JSON(`workflow.json`) 1회 전달만으로 다단계 캡처 ➔ 주석 합성 ➔ 개별 스텝 이미지 생성 ➔ Markdown/HTML 문서 종합 내보내기를 일괄 수행.
+- **마크다운(MD) 및 반응형 단일 독립 실행형 HTML 매뉴얼 생성 엔진 (`ExportEngine`)**:
+  - `export_to_markdown`: 목차(TOC), 앵커 점프, 상대 경로 이미지, 스텝 설명이 포함된 깔끔한 GitHub Markdown 매뉴얼 생성.
+  - `export_to_html`: 브라우저에서 바로 열람 가능하며, 고정 좌측 네비게이션 인덱스바, 스텝 배지 카드, 이미지 뷰어, 인쇄/PDF 최적화 CSS(`@media print`)가 내장된 독립 실행형 HTML 매뉴얼 파일 생성.
+- **Anthropic Model Context Protocol (MCP) 서버 9대 도구 전면 확장 (`mcp_server.py`)**:
+  - `manual_studio_batch_pipeline`: 다단계 매뉴얼 일괄 자동화 생성.
+  - `manual_studio_add_spotlight`: 스포트라이트 집중 마스크 주석 단독 추가.
+  - `manual_studio_export_document`: 기존 스텝 이미지 목록을 단일 MD 또는 HTML 문서로 조립.
+- **AGENTS.md 기계 판독형 명세서 최신 동기화**:
+  - 고급 주석 CLI 플래그(`--spotlight`, `--click`, `--magnifier`), 배치 파이프라인 스키마, 9대 MCP 도구 완전 반영.
+- **자동화 단위 테스트 45개 전 항목 100% 통과 (`test_core_engine.py`)**:
+  - `test_ai_agent_advanced_annotations_batch_and_doc_export()` (Test 45) 추가 및 통과 완료.
+- **C-컴파일러(Nuitka) 빌드 버전 v1.4.0.14 동기화**.
+
 ## [v1.4.0.Build.13] - 2026-09-12 23:30
 
 ### AI 에이전트 전용 호출 API, 헤드리스 CLI 엔진 및 Model Context Protocol (MCP) 서버 구축

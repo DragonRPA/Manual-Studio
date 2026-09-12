@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication
 from manual_capture_studio import (
     StampItem, HighlightBoxItem, ArrowItem, CalloutItem,
     TextLabelItem, BlurMosaicItem, HotkeyBadgeItem,
+    SpotlightMaskItem, ClickRippleItem, MagnifierZoomItem,
     ProjectManager, ExportEngine, DEFAULT_CONFIG, APP_VERSION,
     item_from_dict
 )
@@ -141,7 +142,7 @@ def cli_capture(rect: str = None, monitor: int = 0, fixed: bool = False, output:
     }
 
 
-def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=None, raw_items=None) -> list:
+def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> list:
     """CLI 인자 및 JSON 스펙을 주석 Item 객체 목록으로 파싱"""
     items = []
     cfg = load_user_config()
@@ -219,6 +220,47 @@ def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=
                 style["bg_color"] = parts[4]
             items.append(TextLabelItem(text, coords[0], coords[1], style))
 
+    # 5.1 Spotlights: "x,y,w,h[:border_color:dim_opacity:border_width]"
+    if spotlights:
+        for sp in spotlights:
+            parts = sp.split(":")
+            rect_vals = [int(v) for v in parts[0].split(",")]
+            style = {}
+            if len(parts) > 1 and parts[1]:
+                style["border_color"] = parts[1]
+            if len(parts) > 2 and parts[2]:
+                style["dim_opacity"] = int(parts[2])
+            if len(parts) > 3 and parts[3]:
+                style["border_width"] = int(parts[3])
+            items.append(SpotlightMaskItem(QRect(rect_vals[0], rect_vals[1], rect_vals[2], rect_vals[3]), style))
+
+    # 5.2 Clicks: "x,y[:left|right|double:label]"
+    if clicks:
+        for clk in clicks:
+            parts = clk.split(":")
+            coords = [float(v) for v in parts[0].split(",")]
+            click_type = parts[1] if len(parts) > 1 and parts[1] else "left"
+            style = {}
+            if len(parts) > 2 and parts[2]:
+                style["label"] = parts[2]
+            items.append(ClickRippleItem(coords[0], coords[1], click_type, style))
+
+    # 5.3 Magnifiers: "sx,sy,sw,sh:lx,ly,lw,lh[:zoom:border_color]"
+    if magnifiers:
+        for mag in magnifiers:
+            parts = mag.split(":")
+            src_vals = [int(v) for v in parts[0].split(",")]
+            lens_vals = [int(v) for v in parts[1].split(",")]
+            zoom = float(parts[2]) if len(parts) > 2 and parts[2] else 2.0
+            style = {}
+            if len(parts) > 3 and parts[3]:
+                style["border_color"] = parts[3]
+            items.append(MagnifierZoomItem(
+                QRect(src_vals[0], src_vals[1], src_vals[2], src_vals[3]),
+                QRect(lens_vals[0], lens_vals[1], lens_vals[2], lens_vals[3]),
+                zoom, style
+            ))
+
     # 6. Raw JSON Items
     if raw_items:
         for item_dict in raw_items:
@@ -230,7 +272,7 @@ def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=
 
 
 def cli_annotate(input_path: str, output_path: str = None, stamps=None, boxes=None,
-                 arrows=None, callouts=None, texts=None, raw_items=None) -> dict:
+                 arrows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> dict:
     """기존 이미지에 주석 객체를 합성 렌더링하여 새 이미지로 저장"""
     get_or_create_app()
     if not os.path.exists(input_path):
@@ -240,7 +282,7 @@ def cli_annotate(input_path: str, output_path: str = None, stamps=None, boxes=No
     if pixmap.isNull():
         return {"status": "error", "message": f"Failed to load image: {input_path}"}
 
-    items = parse_item_specs(stamps, boxes, arrows, callouts, texts, raw_items)
+    items = parse_item_specs(stamps, boxes, arrows, callouts, texts, spotlights, clicks, magnifiers, raw_items)
 
     img = QImage(pixmap.size(), QImage.Format_ARGB32)
     img.fill(Qt.transparent)
@@ -254,6 +296,10 @@ def cli_annotate(input_path: str, output_path: str = None, stamps=None, boxes=No
             try:
                 if isinstance(item, BlurMosaicItem):
                     item.render_mosaic(painter, pixmap)
+                elif isinstance(item, MagnifierZoomItem):
+                    item.render_zoom(painter, pixmap)
+                elif isinstance(item, SpotlightMaskItem):
+                    item.render_spotlight(painter, pixmap.width(), pixmap.height())
                 else:
                     item.render(painter)
             except Exception as e:
@@ -390,6 +436,135 @@ def cli_export(input_path: str, target: str = "powerpoint", title: str = None, t
         return {"status": "error", "message": f"Unsupported target '{target}'. Use 'powerpoint', 'google_slides', or 'clipboard'"}
 
 
+def cli_batch(workflow_path: str, output_dir: str = None, doc_format: str = "all", title: str = None) -> dict:
+    """AI 에이전트 다단계 매뉴얼 일괄 캡처 및 복합 문서(MD, HTML, PPT) 동시 생성 파이프라인"""
+    get_or_create_app()
+    if not os.path.exists(workflow_path):
+        return {"status": "error", "message": f"Workflow file not found: {workflow_path}"}
+
+    try:
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            workflow = json.load(f)
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to parse workflow JSON: {e}"}
+
+    manual_title = title or workflow.get("title", "Automated Manual Guide")
+    steps_data = workflow.get("steps", [])
+    if not steps_data:
+        return {"status": "error", "message": "Workflow contains no steps"}
+
+    if not output_dir:
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(workflow_path)), "manual_output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    generated_steps = []
+
+    for i, step_spec in enumerate(steps_data):
+        step_idx = i + 1
+        s_title = step_spec.get("title", f"Step {step_idx}")
+        s_desc = step_spec.get("description", "")
+        s_source = step_spec.get("source", "capture")
+
+        # 1. 원본 이미지 확보 (캡처 또는 기존 파일)
+        if s_source == "capture":
+            rect = step_spec.get("rect")
+            mon = int(step_spec.get("monitor", 0))
+            fixed = bool(step_spec.get("fixed", False))
+            step_raw_path = os.path.join(output_dir, f"step_{step_idx:03d}_raw.png")
+            cap_res = cli_capture(rect=rect, monitor=mon, fixed=fixed, output=step_raw_path)
+            if cap_res.get("status") != "ok":
+                return {"status": "error", "message": f"Step {step_idx} capture failed: {cap_res.get('message')}"}
+            source_img = cap_res["output_file"]
+        else:
+            source_img = s_source
+            if not os.path.exists(source_img):
+                return {"status": "error", "message": f"Step {step_idx} source file not found: {source_img}"}
+
+        # 2. 주석 합성
+        step_ann_path = os.path.join(output_dir, f"step_{step_idx:03d}.png")
+        ann_cfg = step_spec.get("annotations", {})
+
+        ann_res = cli_annotate(
+            input_path=source_img,
+            output_path=step_ann_path,
+            stamps=ann_cfg.get("stamps"),
+            boxes=ann_cfg.get("boxes"),
+            arrows=ann_cfg.get("arrows"),
+            callouts=ann_cfg.get("callouts"),
+            texts=ann_cfg.get("texts"),
+            spotlights=ann_cfg.get("spotlights"),
+            clicks=ann_cfg.get("clicks"),
+            magnifiers=ann_cfg.get("magnifiers"),
+            raw_items=ann_cfg.get("raw_items")
+        )
+        if ann_res.get("status") != "ok":
+            return {"status": "error", "message": f"Step {step_idx} annotation failed: {ann_res.get('message')}"}
+
+        generated_steps.append({
+            "step_num": step_idx,
+            "title": s_title,
+            "description": s_desc,
+            "image_file": os.path.abspath(step_ann_path)
+        })
+
+    # 3. 문서 내보내기 (Markdown, HTML)
+    md_path = None
+    html_path = None
+
+    if doc_format in ("all", "md", "markdown"):
+        md_path = os.path.join(output_dir, "manual.md")
+        ExportEngine.export_to_markdown(generated_steps, md_path, title=manual_title)
+
+    if doc_format in ("all", "html"):
+        html_path = os.path.join(output_dir, "manual.html")
+        ExportEngine.export_to_html(generated_steps, html_path, title=manual_title)
+
+    return {
+        "status": "ok",
+        "title": manual_title,
+        "total_steps": len(generated_steps),
+        "output_dir": os.path.abspath(output_dir),
+        "markdown_file": os.path.abspath(md_path) if md_path else None,
+        "html_file": os.path.abspath(html_path) if html_path else None,
+        "steps": generated_steps
+    }
+
+
+def cli_export_doc(input_files: list, output_path: str, doc_format: str = "md", title: str = None) -> dict:
+    """기존 이미지 목록을 단일 마크다운 또는 HTML 매뉴얼 문서로 통합 내보내기"""
+    get_or_create_app()
+    steps = []
+    for i, p in enumerate(input_files):
+        if os.path.exists(p):
+            base = os.path.basename(p)
+            clean = os.path.splitext(base)[0].replace("_", " ")
+            steps.append({
+                "step_num": i + 1,
+                "title": f"Step {i+1}: {clean}",
+                "description": "",
+                "image_file": os.path.abspath(p)
+            })
+
+    if not steps:
+        return {"status": "error", "message": "No valid input image files found"}
+
+    doc_title = title or "Manual Studio Document"
+    fmt = doc_format.lower()
+    if fmt in ("md", "markdown"):
+        out = ExportEngine.export_to_markdown(steps, output_path, title=doc_title)
+    elif fmt == "html":
+        out = ExportEngine.export_to_html(steps, output_path, title=doc_title)
+    else:
+        return {"status": "error", "message": f"Unsupported format: {doc_format}. Use 'md' or 'html'"}
+
+    return {
+        "status": "ok",
+        "format": fmt,
+        "output_file": os.path.abspath(out),
+        "steps_count": len(steps)
+    }
+
+
 def handle_cli(argv: list) -> int:
     """CLI 명령어 파싱 및 실행 메인 핸들러"""
     parser = argparse.ArgumentParser(
@@ -417,6 +592,9 @@ def handle_cli(argv: list) -> int:
     p_ann.add_argument("--arrow", "-a", action="append", help="Arrow: x1,y1,x2,y2[:color:width]")
     p_ann.add_argument("--callout", "-c", action="append", help="Callout: text:bx,by,bw,bh:tx,ty")
     p_ann.add_argument("--text", "-t", action="append", help="Text: text:x,y[:color:size:bg]")
+    p_ann.add_argument("--spotlight", action="append", help="Spotlight: x,y,w,h[:border:dim:bw]")
+    p_ann.add_argument("--click", action="append", help="Click: x,y[:left|right|double:label]")
+    p_ann.add_argument("--magnifier", action="append", help="Magnifier: sx,sy,sw,sh:lx,ly,lw,lh[:zoom:border]")
 
     # 4. render-project
     p_rnd = subparsers.add_parser("render-project", help="Render .mcs.json project file")
@@ -432,6 +610,20 @@ def handle_cli(argv: list) -> int:
     p_exp.add_argument("--title", type=str, help="Step title")
     p_exp.add_argument("--template", type=str, help="PowerPoint template path (.pptx)")
 
+    # 6. batch
+    p_bat = subparsers.add_parser("batch", help="Execute multi-step manual workflow JSON")
+    p_bat.add_argument("--input", "-i", type=str, required=True, help="Workflow JSON file path")
+    p_bat.add_argument("--output-dir", "-o", type=str, help="Output directory")
+    p_bat.add_argument("--format", type=str, default="all", choices=["all", "md", "html", "markdown"])
+    p_bat.add_argument("--title", type=str, help="Manual title")
+
+    # 7. export-doc
+    p_doc = subparsers.add_parser("export-doc", help="Export images to Markdown or HTML manual")
+    p_doc.add_argument("--input", "-i", nargs="+", required=True, help="List of step image paths")
+    p_doc.add_argument("--output", "-o", type=str, required=True, help="Output document path (.md or .html)")
+    p_doc.add_argument("--format", type=str, default="md", choices=["md", "html", "markdown"])
+    p_doc.add_argument("--title", type=str, help="Document title")
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "status":
@@ -442,12 +634,17 @@ def handle_cli(argv: list) -> int:
         res = cli_annotate(
             args.input, args.output,
             stamps=args.stamp, boxes=args.box, arrows=args.arrow,
-            callouts=args.callout, texts=args.text
+            callouts=args.callout, texts=args.text,
+            spotlights=args.spotlight, clicks=args.click, magnifiers=args.magnifier
         )
     elif args.subcommand == "render-project":
         res = cli_render_project(args.input, args.output, args.export_ppt, args.export_slides)
     elif args.subcommand == "export":
         res = cli_export(args.input, args.target, args.title, args.template)
+    elif args.subcommand == "batch":
+        res = cli_batch(args.input, args.output_dir, args.format, args.title)
+    elif args.subcommand == "export-doc":
+        res = cli_export_doc(args.input, args.output, args.format, args.title)
     else:
         parser.print_help()
         return 1
