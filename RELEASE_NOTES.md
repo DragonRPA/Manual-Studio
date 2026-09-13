@@ -1,5 +1,16 @@
 # Manual Studio Release Notes
 
+## [v1.5.0.Build.4] - 2026-09-13 22:50
+
+### 타임라인 스토리보드 슬라이드 선택 삭제 중복 방출(2개씩 삭제) 버그 픽스
+- **원인 규명**: `FilmstripDockWidget.request_delete_selected`에서 `sig_delete_step(active_idx)`와 `sig_delete_steps(selected_indices)` 두 시그널이 연속 이중 emit 되어, 메인 윈도우의 삭제 슬롯(`on_filmstrip_delete_selected`)이 1클릭에 2회 연쇄 호출되면서 슬라이드가 2개씩 삭제되던 문제 적발.
+- **조치 사항**:
+  - `request_delete_selected` 내 중복 시그널 방출 제거 ➔ `sig_delete_steps(targets)` 단일 방출로 일원화.
+  - `FilmstripDockWidget` 초기화 시 `selected_indices`를 빈 집합(`set()`)으로 정합 설정하여 인덱스 왜곡 방지.
+  - 단위 테스트(`test_core_engine.py`)에 단일 선택 삭제 및 다중 선택 삭제 검증 케이스 추가, 72개 전 테스트 100% 통과.
+
+---
+
 ## [v1.5.0.Build.3] - 2026-09-13 22:30
 
 ### 매뉴얼 스튜디오 Phase 9 릴리즈: 도움말 업데이트 노트 뷰어(전체 30개 릴리즈 수록), 리본 42개 전 도구 고해상도 벡터 아이콘 100% 매핑, 13개국어 번역 완전 해소(누락 0건), 스마트 자동 업데이트 실패 원인 해결 및 공식 릴리즈 연계, 전 기능키 배선 완비

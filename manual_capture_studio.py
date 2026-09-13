@@ -7860,7 +7860,7 @@ class FilmstripDockWidget(QWidget):
         super().__init__(parent)
         self.steps = []
         self.active_idx = 0
-        self.selected_indices = {0}
+        self.selected_indices = set()
         self.hover_preview_enabled = True
         self.setFixedHeight(115)
         self.init_ui()
@@ -8034,8 +8034,9 @@ class FilmstripDockWidget(QWidget):
         self.update_card_selection_states()
 
     def request_delete_selected(self):
-        self.sig_delete_step.emit(self.active_idx)
-        self.sig_delete_steps.emit(sorted(list(self.selected_indices)))
+        targets = sorted(list(self.selected_indices)) if self.selected_indices else ([self.active_idx] if self.active_idx is not None else [])
+        if targets:
+            self.sig_delete_steps.emit(targets)
 
     def on_card_clicked_with_mod(self, idx: int, modifiers):
         if modifiers and (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):

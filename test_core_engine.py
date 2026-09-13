@@ -3296,6 +3296,7 @@ def test_phase5_export_menu_storyboard_and_pii_custom_rules():
 
     signals_received = {}
     film.sig_delete_step.connect(lambda idx: signals_received.setdefault("del", []).append(idx))
+    film.sig_delete_steps.connect(lambda indices: signals_received.setdefault("del", []).extend(indices))
     film.sig_export_all_ppt.connect(lambda: signals_received.setdefault("ppt", True))
     film.sig_export_all_slides.connect(lambda: signals_received.setdefault("slides", True))
     film.sig_export_all_hwp.connect(lambda: signals_received.setdefault("hwp", True))
@@ -3824,12 +3825,29 @@ def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
         win.keyPressEvent(key_ev)
         assert win.canvas.current_mode == expected_mode, f"Key {k} should switch mode to {expected_mode}"
 
-    # 6. 스마트 업데이트 복원력 검증
+    # 6. 선택 삭제 (선택 1개 시 정확히 1개만 삭제, 중복 삭제 방지 검증)
+    win.storyboard_steps = [
+        {"step_num": 1, "title": "Step 1", "raw_pixmap": None, "items": []},
+        {"step_num": 2, "title": "Step 2", "raw_pixmap": None, "items": []},
+        {"step_num": 3, "title": "Step 3", "raw_pixmap": None, "items": []},
+    ]
+    win.filmstrip.set_steps(win.storyboard_steps, active_idx=1)
+    # 1개만 선택된 상태 확인
+    assert len(win.filmstrip.selected_indices) == 1, "Only 1 step must be selected initially"
+    assert 1 in win.filmstrip.selected_indices
+    # 선택 삭제 버튼 클릭 시뮬레이션
+    win.filmstrip.btn_delete_selected.click()
+    # 정확히 1개만 삭제되어 2개 슬라이드가 남아 있어야 함 (2개 삭제 버그 방지)
+    assert len(win.storyboard_steps) == 2, f"Expected 2 slides remaining after deleting 1 slide, got {len(win.storyboard_steps)}"
+    assert win.storyboard_steps[0]["step_num"] == 1
+    assert win.storyboard_steps[1]["step_num"] == 2
+
+    # 7. 스마트 업데이트 복원력 검증
     patcher_script = WindowsPatcher.get_patcher_script_content("ManualStudio.exe", "update.exe", 12345)
     assert "update_patcher" in patcher_script or "Manual Studio" in patcher_script
 
     win.close()
-    print("[PASS] test_phase9_release_notes_ribbon_icons_function_keys_and_updater (Release notes viewer, 42 vector icons, display mode, hotkeys F8-F12/Ctrl+N/S & updater resilience valid)")
+    print("[PASS] test_phase9_release_notes_ribbon_icons_function_keys_and_updater (Release notes viewer, 42 vector icons, display mode, hotkeys F8-F12/Ctrl+N/S, single/multi delete & updater resilience valid)")
 
 
 if __name__ == "__main__":
