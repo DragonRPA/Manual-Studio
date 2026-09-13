@@ -1,5 +1,26 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.15] - 2026-09-13 09:35
+
+### 구글 슬라이드 전송 전용 벡터 아이콘 탑재 및 F11 원터치 전역/로컬 단축키 정의
+- **구글 슬라이드 전송 전용 고품질 벡터 아이콘 신설 (`RibbonIconProvider`)**:
+  - 아이콘 보기 모드 전환 시 텍스트 대신 앰버/골드 테마(`#D97706`)의 슬라이드 캔버스 프레임과 알파벳 **`G`**가 각인된 전용 벡터 아이콘(`slides_export`) 렌더링.
+  - 파워포인트 슬라이드 삽입(`ppt_export`, 주황 테마 `P`)과 완벽한 시각적 대칭 및 통일성 확보.
+- **리본 메뉴 아이콘 표시 모드 전환 엔진 (`toggle_ribbon_display_mode`) 동기화**:
+  - `btn_icon_defs` 목록에 `btn_send_slides` 정식 등록 완료.
+  - 아이콘 보기 전환 시 텍스트 노출 결함 해소, 버튼 텍스트 공백화(`setText("")`) 및 18x18px 고정 크기 정렬 보장.
+- **F11 단축키 전역(Global HotKey) 및 로컬(Local Window) 3중 매핑 완결**:
+  - **글로벌 핫키 (`GlobalHotkeyThread`)**: Windows API `RegisterHotKey`에 `VK_F11`(0x7A) 등록하여 스튜디오가 최소화되거나 비활성화된 상태에서도 백그라운드 구글 슬라이드 즉시 주입 지원.
+  - **윈도우 키 이벤트 (`keyPressEvent`)**: `Qt.Key_F11` 수신 시 `action_send_to_google_slides()` 즉각 발화.
+  - **상단 파일 메뉴 (`act_export_slides`)**: 메뉴명 `구글 슬라이드 전송 (F11)` 및 `QKeySequence("F11")` 표준 단축키 등록.
+  - **Alt 키팁 배지 (`get_keytip_mappings`)**: Alt 키 입력 시 구글 슬라이드 전송 버튼 위에 노란색 `F11` 배지 팝업 연동.
+- **버튼 툴팁 및 안내 문구 최신화**:
+  - 툴팁 및 하단 상태바(`status_ready`)에 `F10 (PowerPoint) / F11 (Google Slides)` 명시.
+- **AGENTS.md 단축키 명세 동기화**:
+  - `BtnSendSlides` / `F11`: Direct Google Slides browser injection 추가.
+- **자동화 단위 테스트 45개 전 항목 100% 통과**:
+  - 26개 벡터 아이콘 렌더링, 텍스트⇄아이콘 모드 토글 동기화, F11 키 이벤트 발화 검증 완결.
+
 ## [v1.4.0.Build.14] - 2026-09-13 08:50
 
 ### AI 에이전트 전용 고급 그래픽 주석 원시 객체, 다단계 배치 파이프라인 및 9대 MCP 도구 확장

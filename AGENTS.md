@@ -179,6 +179,7 @@ Manual Studio uses a simple JSON schema for multi-layered annotation projects:
   - `BtnFixedCapture` / F9: Quick fixed capture.
   - `BtnVariableCapture` / Shift+F9: Interactive region capture.
   - `BtnSubCapture` / F8: Modal sub-window capture.
-  - `BtnExportPpt` / F10: PPT/Slides generation.
+  - `BtnExportPpt` / F10: PowerPoint slide insertion.
+  - `BtnSendSlides` / F11: Direct Google Slides browser injection.
   - `BtnSaveProject` / Ctrl+S: Save `.mcs.json`.
   - Mode switches: `V` (Select), `S` (Stamp), `B` (Box).

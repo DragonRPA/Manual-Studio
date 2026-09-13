@@ -1720,12 +1720,12 @@ def test_ribbon_display_mode_toggle_and_icon_provider():
     app = QApplication.instance() or QApplication(sys.argv)
     win = ManualStudioWindow()
 
-    # 1. Test RibbonIconProvider generates all 25 vector icons
+    # 1. Test RibbonIconProvider generates all 26 vector icons
     icon_names = [
         "capture_fixed", "capture_area", "capture_sub", "open_project", "save_project",
         "autosave", "open_image", "copy_image", "select", "undo", "clear",
         "stamp", "step_arrow", "elbow", "arrow", "box", "blur", "draft",
-        "callout", "text", "hotkey", "wordart", "ppt_export", "ppt_autofit", "ppt_renumber"
+        "callout", "text", "hotkey", "wordart", "ppt_export", "slides_export", "ppt_autofit", "ppt_renumber"
     ]
     for name in icon_names:
         ico = RibbonIconProvider.get_icon(name, size=18)
@@ -1736,6 +1736,8 @@ def test_ribbon_display_mode_toggle_and_icon_provider():
     assert win.config["ribbon_display_mode"] == "icon"
     assert win.btn_capture.text() == ""
     assert not win.btn_capture.icon().isNull()
+    assert win.btn_send_slides.text() == ""
+    assert not win.btn_send_slides.icon().isNull()
     assert win.btn_save_project.text() == ""
     assert not win.btn_save_project.icon().isNull()
 
@@ -1743,9 +1745,10 @@ def test_ribbon_display_mode_toggle_and_icon_provider():
     win.toggle_ribbon_display_mode(mode="text")
     assert win.config["ribbon_display_mode"] == "text"
     assert len(win.btn_capture.text()) > 0
+    assert len(win.btn_send_slides.text()) > 0
     assert len(win.btn_save_project.text()) > 0
 
-    print("[PASS] test_ribbon_display_mode_toggle_and_icon_provider (25 vector icons, text <-> icon mode toggle, config sync valid)")
+    print("[PASS] test_ribbon_display_mode_toggle_and_icon_provider (26 vector icons, text <-> icon mode toggle, config sync valid)")
 
 def test_all_shortcuts_and_alt_keytips():
     from PySide6.QtWidgets import QApplication
@@ -1931,11 +1934,18 @@ def test_google_slides_integration():
         win.config["export_target"] = "google_slides"
         win.export_to_ppt_and_clipboard()
         assert len(calls) == 2
+
+        # 5. Test F11 shortcut keyPressEvent triggering Google Slides export
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtCore import Qt
+        event_f11 = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_F11, Qt.NoModifier)
+        win.keyPressEvent(event_f11)
+        assert len(calls) == 3 and calls[2][0] == "slides"
     finally:
         ExportEngine.send_to_google_slides = orig_slides
         win.hide()
 
-    print("[PASS] test_google_slides_integration (Window detection, i18n in 9 languages, Settings UI, and F10 routing valid)")
+    print("[PASS] test_google_slides_integration (Window detection, i18n in 9 languages, Settings UI, F11 shortcut and F10 routing valid)")
 
 def test_ui_theme_styles_windows_and_macos():
     """Windows Fluent vs Macintosh Cupertino 듀얼 UI 스타일 및 핫스왑 종합 검증 (Test 43)"""

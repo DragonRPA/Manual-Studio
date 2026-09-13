@@ -1,6 +1,7 @@
 {
   "hotkey_capture": "F9",
   "hotkey_export": "F10",
+  "hotkey_slides": "F11",
   "target_width": 960,
   "auto_resize": true,
   "save_to_file": true,

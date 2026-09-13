@@ -70,7 +70,7 @@ pyqtSlot = Slot
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
     QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices,
-    QFontDatabase, QGuiApplication, QScreen, QAction
+    QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -153,6 +153,7 @@ def get_dragon_rpa_ci_pixmap() -> QPixmap:
 DEFAULT_CONFIG = {
     "hotkey_capture": "F9",
     "hotkey_export": "F10",
+    "hotkey_slides": "F11",
     "target_width": 960,
     "auto_resize": True,
     "save_to_file": True,
@@ -844,16 +845,19 @@ class GlobalHotkeyThread(QThread):
     sig_drag_capture = pyqtSignal()
     sig_sub_capture = pyqtSignal()
     sig_export = pyqtSignal()
+    sig_slides_export = pyqtSignal()
 
-    def __init__(self, capture_key="F9", export_key="F10", parent=None):
+    def __init__(self, capture_key="F9", export_key="F10", slides_key="F11", parent=None):
         super().__init__(parent)
         self.capture_key = capture_key.upper()
         self.export_key = export_key.upper()
+        self.slides_key = slides_key.upper()
         self.running = True
         self.hotkey_id_capture = 101
         self.hotkey_id_drag_capture = 103
         self.hotkey_id_sub_capture = 104
         self.hotkey_id_export = 102
+        self.hotkey_id_slides_export = 105
 
     def run(self):
         user32 = ctypes.windll.user32
@@ -864,8 +868,10 @@ class GlobalHotkeyThread(QThread):
         # MOD_NOREPEAT = 0x4000, MOD_SHIFT = 0x0004
         user32.RegisterHotKey(None, self.hotkey_id_capture, 0x4000, vk_cap)
         user32.RegisterHotKey(None, self.hotkey_id_drag_capture, 0x4000 | 0x0004, vk_cap)
+        vk_slides = VK_MAPPING.get(self.slides_key, 0x7A)
         user32.RegisterHotKey(None, self.hotkey_id_sub_capture, 0x4000, vk_sub)
         user32.RegisterHotKey(None, self.hotkey_id_export, 0x4000, vk_exp)
+        user32.RegisterHotKey(None, self.hotkey_id_slides_export, 0x4000, vk_slides)
 
         msg = wintypes.MSG()
         while self.running:
@@ -880,6 +886,8 @@ class GlobalHotkeyThread(QThread):
                         self.sig_sub_capture.emit()
                     elif msg.wParam == self.hotkey_id_export:
                         self.sig_export.emit()
+                    elif msg.wParam == self.hotkey_id_slides_export:
+                        self.sig_slides_export.emit()
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             else:
@@ -889,6 +897,7 @@ class GlobalHotkeyThread(QThread):
         user32.UnregisterHotKey(None, self.hotkey_id_drag_capture)
         user32.UnregisterHotKey(None, self.hotkey_id_sub_capture)
         user32.UnregisterHotKey(None, self.hotkey_id_export)
+        user32.UnregisterHotKey(None, self.hotkey_id_slides_export)
 
     def stop(self):
         self.running = False
@@ -4766,6 +4775,14 @@ class RibbonIconProvider:
             p.drawLine(QPointF(2.5, 6.0), QPointF(s - 2.5, 6.0))
             p.setFont(QFont("Arial", int(s * 0.46), QFont.Bold))
             p.drawText(QRectF(0, 5.0, s, s - 4.0), Qt.AlignCenter, "P")
+        elif name == "slides_export":
+            slides_color = QColor(color if color != "#334155" else "#D97706")
+            p.setPen(QPen(slides_color, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(1.5, 2.0, s - 3.0, s - 4.5), 2.0, 2.0)
+            p.drawLine(QPointF(2.5, 6.0), QPointF(s - 2.5, 6.0))
+            p.setFont(QFont("Arial", int(s * 0.46), QFont.Bold))
+            p.drawText(QRectF(0, 5.0, s, s - 4.0), Qt.AlignCenter, "G")
         elif name == "ppt_autofit":
             p.drawRect(QRectF(2, 3, s - 4, s - 6))
             p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
@@ -5186,7 +5203,8 @@ class ManualStudioWindow(QMainWindow):
         self.btn_renumber_steps.clicked.connect(self.action_renumber_powerpoint_steps)
 
         self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"), self)
-        self.btn_send_slides.setToolTip(tr("tip_send_google_slides", "열려 있는 구글 슬라이드 웹 브라우저 창에 새 슬라이드를 추가하고 이미지를 자동 주입합니다."))
+        self.btn_send_slides.setObjectName("btn_send_slides")
+        self.btn_send_slides.setToolTip(f"{tr('tip_send_google_slides', '열려 있는 구글 슬라이드 웹 브라우저 창에 새 슬라이드를 추가하고 이미지를 자동 주입합니다.')} (F11)")
         self.btn_send_slides.setStyleSheet("""
             QPushButton {
                 background-color: #FEF3C7;
@@ -5769,7 +5787,7 @@ class ManualStudioWindow(QMainWindow):
         status_layout.setContentsMargins(4, 2, 6, 2)
         status_layout.setSpacing(8)
 
-        self.status_label = QLabel(tr("status_ready", "대기 중: F9를 눌러 캡처하고, 주석 편집 후 F10을 눌러 슬라이드로 내보내세요."), self)
+        self.status_label = QLabel(tr("status_ready", "대기 중: F9로 캡처, F10(PPT) / F11(구글 슬라이드)로 내보내기"), self)
         self.status_label.setStyleSheet("color: #666666; font-size: 11px; padding: 2px 4px;")
         status_layout.addWidget(self.status_label, 1)
 
@@ -5866,7 +5884,8 @@ class ManualStudioWindow(QMainWindow):
         self.menu_file.addSeparator()
         self.act_export_ppt = self.menu_file.addAction("PPT 슬라이드 생성 (F10)")
         self.act_export_ppt.triggered.connect(self.export_to_ppt_and_clipboard)
-        self.act_export_slides = self.menu_file.addAction(tr("btn_send_google_slides", "구글 슬라이드 전송"))
+        self.act_export_slides = self.menu_file.addAction(f"{tr('btn_send_google_slides', '구글 슬라이드 전송')} (F11)")
+        self.act_export_slides.setShortcut(QKeySequence("F11"))
         self.act_export_slides.triggered.connect(self.action_send_to_google_slides)
         self.menu_file.addSeparator()
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
@@ -6265,7 +6284,7 @@ class ManualStudioWindow(QMainWindow):
                     btn.setToolTip(tr(tt_key, ""))
 
         if hasattr(self, "act_export_slides"):
-            self.act_export_slides.setText(tr("btn_send_google_slides", "구글 슬라이드 전송"))
+            self.act_export_slides.setText(f"{tr('btn_send_google_slides', '구글 슬라이드 전송')} (F11)")
         if hasattr(self, "chk_ppt_title"):
             self.chk_ppt_title.setText(tr("chk_ppt_title", "제목 상자"))
             self.chk_ppt_title.setToolTip(tr("tooltip_title_box", ""))
@@ -6385,6 +6404,7 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_hotkey", "hotkey", "btn_mode_hotkey", "단축키 배지"),
             ("btn_mode_wordart", "wordart", "btn_mode_wordart", "워드아트"),
             ("btn_export", "ppt_export", "btn_export", "슬라이드 삽입"),
+            ("btn_send_slides", "slides_export", "btn_send_google_slides", "구글 슬라이드 전송"),
             ("btn_ppt_fit", "ppt_autofit", "btn_ppt_fit", "배율 맞춤"),
             ("btn_renumber_steps", "ppt_renumber", "btn_renumber_steps", "순번 재정렬"),
         ]
@@ -6393,7 +6413,7 @@ class ManualStudioWindow(QMainWindow):
             if hasattr(self, attr):
                 btn = getattr(self, attr)
                 if new_mode == "icon":
-                    icon_color = "#C2410C" if attr == "btn_export" else "#334155"
+                    icon_color = "#C2410C" if attr == "btn_export" else ("#D97706" if attr == "btn_send_slides" else "#334155")
                     icon = RibbonIconProvider.get_icon(icon_name, size=18, color=icon_color)
                     btn.setIcon(icon)
                     btn.setIconSize(QSize(18, 18))
@@ -6444,6 +6464,7 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_hotkey", "K"),
             ("btn_mode_wordart", "R"),
             ("btn_export", "F10"),
+            ("btn_send_slides", "F11"),
             ("btn_ppt_fit", "^F"),
             ("btn_renumber_steps", "^R"),
         ]
@@ -6661,11 +6682,13 @@ class ManualStudioWindow(QMainWindow):
     def init_hotkey(self):
         cap_key = self.config.get("hotkey_capture", "F9")
         exp_key = self.config.get("hotkey_export", "F10")
-        self.hotkey_thread = GlobalHotkeyThread(cap_key, exp_key, self)
+        slides_key = self.config.get("hotkey_slides", "F11")
+        self.hotkey_thread = GlobalHotkeyThread(cap_key, exp_key, slides_key, self)
         self.hotkey_thread.sig_capture.connect(self.handle_hotkey_capture)
         self.hotkey_thread.sig_drag_capture.connect(self.start_capture)
         self.hotkey_thread.sig_sub_capture.connect(self.start_sub_capture)
         self.hotkey_thread.sig_export.connect(self.export_to_ppt_and_clipboard)
+        self.hotkey_thread.sig_slides_export.connect(self.action_send_to_google_slides)
         self.hotkey_thread.start()
 
     def switch_mode(self, mode):
@@ -8293,6 +8316,10 @@ class ManualStudioWindow(QMainWindow):
             return
         elif key == Qt.Key_F10:
             self.export_to_ppt_and_clipboard()
+            self.hide_keytips()
+            return
+        elif key == Qt.Key_F11:
+            self.action_send_to_google_slides()
             self.hide_keytips()
             return
 
