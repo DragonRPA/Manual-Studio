@@ -1069,9 +1069,9 @@ def test_dragon_rpa_branding_and_about_dialog():
     menubar = win.menuBar()
     assert menubar is not None, "MenuBar must exist"
 
-    # 메뉴바 코너 위젯 존재 확인 (상단 단일 배치)
-    cw = menubar.cornerWidget()
-    assert cw is not None, "MenuBar corner widget must exist"
+    # 도움말 메뉴에 EULA 및 About 액션 정상 탑재 검증 (상단 코너 위젯 중복 배제)
+    assert hasattr(win, "act_eula_m"), "Help menu must include EULA action"
+    assert hasattr(win, "act_about_m"), "Help menu must include About action"
 
     # 리본 탭 코너 위젯에 회사 브랜딩(About/CI) 중복 배치가 없는지 검증 (리본 모드 토글 버튼만 허용)
     rcw = win.ribbon_tabs.cornerWidget()

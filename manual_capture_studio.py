@@ -9186,80 +9186,6 @@ class ManualStudioWindow(QMainWindow):
         self.act_eula_m.triggered.connect(self.show_eula_dialog)
         self.act_about_m = self.menu_help.addAction("프로그램 정보 (About)")
         self.act_about_m.triggered.connect(self.show_about_dialog)
-
-        # 6. 메뉴바 오른쪽 코너 위젯: CI 아이콘 + 회사명 + EULA 버튼 + About 버튼
-        corner_widget = QWidget(self)
-        corner_layout = QHBoxLayout(corner_widget)
-        corner_layout.setContentsMargins(0, 0, 8, 0)
-        corner_layout.setSpacing(6)
-
-        ci_pix = get_dragon_rpa_ci_pixmap()
-        lbl_ci = QLabel(corner_widget)
-        if not ci_pix.isNull():
-            lbl_ci.setPixmap(ci_pix.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            lbl_ci.setToolTip("DragonRPA Co. 공식 CI")
-
-        self.lbl_company = QLabel("(주)드래곤알피에이 | DragonRPA Co.", corner_widget)
-        self.lbl_company.setStyleSheet("""
-            QLabel {
-                font-family: 'Malgun Gothic';
-                font-size: 11px;
-                font-weight: bold;
-                color: #475569;
-                padding-right: 2px;
-            }
-        """)
-
-        self.btn_eula_corner = QPushButton("EULA", corner_widget)
-        self.btn_eula_corner.setCursor(Qt.PointingHandCursor)
-        self.btn_eula_corner.setStyleSheet("""
-            QPushButton {
-                background-color: #F8FAFC;
-                color: #475569;
-                border: 1px solid #CBD5E1;
-                border-radius: 4px;
-                padding: 2px 8px;
-                font-family: 'Malgun Gothic';
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #F1F5F9;
-                border-color: #94A3B8;
-                color: #0F172A;
-            }
-        """)
-        self.btn_eula_corner.clicked.connect(self.show_eula_dialog)
-
-        self.btn_about_corner = QPushButton("About", corner_widget)
-        self.btn_about_corner.setCursor(Qt.PointingHandCursor)
-        self.btn_about_corner.setStyleSheet("""
-            QPushButton {
-                background-color: #EFF6FF;
-                color: #1D4ED8;
-                border: 1px solid #BFDBFE;
-                border-radius: 4px;
-                padding: 2px 10px;
-                font-family: 'Malgun Gothic';
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #DBEAFE;
-                border-color: #93C5FD;
-                color: #1E40AF;
-            }
-        """)
-        self.btn_about_corner.clicked.connect(self.show_about_dialog)
-
-        corner_layout.addWidget(lbl_ci)
-        corner_layout.addWidget(self.lbl_company)
-        corner_layout.addWidget(self.btn_eula_corner)
-        corner_layout.addWidget(self.btn_about_corner)
-
-        menubar.setCornerWidget(corner_widget, Qt.TopRightCorner)
-
-
     def show_about_dialog(self):
         dlg = AboutDialog(self)
         dlg.exec()
@@ -9405,13 +9331,6 @@ class ManualStudioWindow(QMainWindow):
             self.act_eula_m.setText(tr("act_eula", "사용권 계약서 (EULA)"))
         if hasattr(self, "act_about_m"):
             self.act_about_m.setText(tr("act_about", "프로그램 정보 (About)"))
-
-        if hasattr(self, "lbl_company"):
-            self.lbl_company.setText(tr("company_brand", "(주)드래곤알피에이 | DragonRPA Co."))
-        if hasattr(self, "btn_eula_corner"):
-            self.btn_eula_corner.setText(tr("btn_eula_corner", "EULA"))
-        if hasattr(self, "btn_about_corner"):
-            self.btn_about_corner.setText(tr("btn_about_corner", "About"))
 
     def retranslate_ribbon(self):
         # 1. 탭 이름
