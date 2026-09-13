@@ -1,5 +1,74 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.27] - 2026-09-13 16:55
+
+### 매뉴얼 스튜디오 2세대(Manual Studio 2.0) 4대 혁신 마일스톤(Phase 1~4) 전면 통합 릴리즈
+
+#### 배경 및 목적
+- 매뉴얼 저작의 임직원 업무 편익과 생산성을 비약적으로 혁신하기 위해 구상된 **Manual Studio 2.0 4대 마일스톤**의 전 기능을 완결했습니다.
+- **Phase 1 (Visual & Office Foundation)**: 어도비 스타일 `Ms` 모노그램 아이콘 정식 배포, 모던 윈도우 액자 프레임(🔴🟡🟢) 및 소프트 드롭 섀도우(기본 ON), 브라우저 충돌 없는 한컴 한글(HWP) COM 직결(`Shift+F10`/`F12`), 하단 다단계 타임라인 스토리보드 도크 완비.
+- **Phase 2 (Packaging & Animation)**: 외부 의존성 없는 반응형 단일 파일 HTML5 자가완비형 웹북 매뉴얼 출판(`ExportEngine.export_to_html`), 노션/슬랙 최적화 초경량 루핑 애니메이션 GIF 튜토리얼 생성기(`ExportEngine.export_to_animated_gif`).
+- **Phase 3 (Intelligent Processing & Security)**: 6대 표준 개인정보(전화, 주민번호, 이메일, 계좌, 카드, IP) 비동기 OCR 자동 탐색 및 비파괴 블러 마스킹(`Shift+M`), OpenCV Telea/Navier-Stokes 기반 배경 클린업 스마트 지우개(`X` / `SmartCleanupEngine`, 100% `Ctrl+Z` 원본 복원).
+- **Phase 4 (Next-Gen Capture Automation)**: Windows 컨트롤 계층 탐지 기반 UI 요소 마그네틱 자석 스마트 스냅(`MagneticSnapEngine`, 단 한 번의 클릭으로 버튼 영역 캡처 확정, `X` 토글), 정규화 템플릿 매칭 기반 파노라마 수직 스크롤 스티칭(`ScrollStitchEngine`, CLI `--cli stitch`), 저지연 마우스 클릭 실시간 감지 무인 연속 액션 레코더(`ActionRecorderThread`, 콤팩트 플로팅 위젯).
+- 글로벌 13개 언어(KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) 신규 i18n 키 31종 전수 등록 및 67개 단위 테스트 100% 검증 통과.
+
+#### 변경 내역
+
+| 마일스톤 | 항목 | 내용 |
+|:---|:---|:---|
+| **Phase 1** | **어도비 정통 스타일 'Ms' 아이콘** | 어도비 CC 명명 규격을 계승한 일렉트릭 시안 M + 화이트 s의 `Ms` 모노그램 7대 해상도 멀티 레이어 안티에일리어싱 ICO 배포 (`assets/manual_studio.ico`), 작업표시줄 및 바탕화면 바로가기 갱신 |
+| | **모던 윈도우 창틀 & 소프트 섀도우** | Notion/Apple 스타일 3색 신호등 버튼(🔴🟡🟢) 윈도우 바 + 12px 둥근 모서리 + 20px 소프트 드롭 섀도우 합성 (`apply_window_frame_and_shadow`), 기본값 활성화(ON) 및 툴바 토글 버튼 지원 |
+| | **한컴 한글(HWP) COM 직결 내보내기** | `HWPFrame.HwpObject` COM Dispatch 기반 문서 커서 위치 자동 안착. 브라우저 F12 충돌 없는 전역 단축키 `Shift+F10` 및 스튜디오 창 내 `F12` 동시 지원 |
+| | **하단 타임라인 스토리보드 필름스트립** | 작업대 하단 가로 스크롤 스텝 썸네일 카드 도크. 원클릭 스텝 전환, 우클릭 복제/순서이동/삭제, `[전체 PPT 전송]`, `[전체 한글 전송]` 일괄 자동화 |
+| **Phase 2** | **반응형 단일 파일 HTML5 웹북** | 외부 CDN/로컬 폴더 의존성 0% 단일 자가완비형 웹북 출판. Base64 인라인 이미지 임베딩, 좌측 목차 이동, 실시간 검색 필터, 확대 라이트박스, 다크/라이트 테마, `@media print` 인쇄 최적화 |
+| | **초경량 애니메이션 GIF 생성기** | 스토리보드 누적 스텝들을 1.5초 루핑 애니메이션 GIF로 일괄 변환. Pillow 적응형 양자화로 잔상 없는 초경량 고화질 압축 |
+| **Phase 3** | **6대 개인정보 자동 마스킹** | WinRT OCR 바운딩 박스 + 토큰 결합 기반 전화, 주민번호, 이메일, 계좌, 카드, IP 탐색 후 `BlurMosaicItem` 비파괴 일괄 생성 (`Shift+M`), `Ctrl+Z` 1회 복원 |
+| | **배경 클린업 스마트 지우개** | 드래그 영역 주변 텍스처/색상 분석 인페인팅(`cv2.inpaint`)으로 워터마크, 텍스트 무흔적 소거 (`X`), 마우스 릴리즈 즉시 픽셀맵 저장으로 `Ctrl+Z` 100% 복구 |
+| **Phase 4** | **UI 요소 마그네틱 자석 스냅** | `ChildWindowFromPointEx` 계층 순회로 최하단 UI 컨트롤 바운딩 박스 탐색, 형광 시안 점선 가이드 및 단순 클릭 시 100% 자동 채택 캡처 확정, `X` 키 토글 |
+| | **파노라마 수직 스크롤 스티칭** | OpenCV 정규화 템플릿 매칭($\ge 0.70$) 기반 수직 오프셋 계산, 중복 영역 절단 및 `np.vstack` 무경계선 긴 이미지 합성, GUI 리본 및 CLI `--cli stitch` 지원 |
+| | **무인 연속 액션 레코더** | 저지연 마우스 클릭 실시간 감지 + 클릭 좌표 번호 스탬프 자동 타각 + 스토리보드 스텝 자동 누적, 상시 최상위 플로팅 바(`🔴 REC`, `N단계`, `[완료]`) 제공 |
+| **i18n & Test** | **13개 언어 31개 키 등록 & 67개 테스트** | 글로벌 13개 언어 i18n 카탈로그 전수 등록, `test_core_engine.py` 67개 단위 테스트 100% 통과 |
+
+#### 수정 파일
+- `assets/manual_studio.ico`, `assets/manual_studio_ms_adobe.ico`, `assets/manual_studio_ms_adobe.png`: 신규 `Ms` 아이콘 배포
+- `manual_capture_studio.py`: 모던 윈도우 프레임/소프트 섀도우, 한컴 한글 COM 직결, 스토리보드 필름스트립 도크, HTML5 웹북 엔진, 애니메이션 GIF 엔진, 개인정보 자동 마스킹 엔진, 스마트 지우개 인페인팅 엔진, 마그네틱 스냅 엔진, 스크롤 스티칭 엔진, 액션 레코더 스레드 및 플로팅 위젯 전면 구현
+- `manual_cli.py`: `--cli stitch` 파노라마 수직 스크롤 스티칭 서브커맨드 추가
+- `i18n_manager.py`: Phase 1~4 누적 31개 신규 키 13개 언어(KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) 무누락 등록
+- `test_core_engine.py`: Phase 1~4 신규 단위 테스트 11종 추가 (누적 67개 전 항목 100% PASS)
+- `build_c.bat`: Windows 파일/제품 버전 `1.4.0.27` 및 `assets/manual_studio.ico` 연결 갱신
+- `각 기능(키)설명.MD`: 2세대 전 기능 및 단축키 상세 설명서 개정 완료
+- `dev_temp.md`: 마일스톤별 구현 태스크 완료 로그 기록
+
+---
+
+## [v1.4.0.Build.24] - 2026-09-13 15:45
+
+### 매뉴얼 스튜디오 전용 고해상도 바탕화면 앱 아이콘(`manual_studio.ico`) 신규 디자인 및 윈도우/작업표시줄/바이너리 통합 적용, `각 기능(키)설명.MD` 완비
+
+#### 배경 및 목적
+- 기존 프로그램 실행 파일 및 바탕화면 바로가기 아이콘이 회사 CI 로고(DragonRPA)와 동일하여, 사용자가 바탕화면에서 매뉴얼 제작 도구임을 즉각 직관적으로 식별하기 어려웠던 문제를 해결했습니다.
+- "화면 캡처 레티클 + 오픈 매뉴얼 북 + ①번 스텝 뱃지 + 마우스 커서"를 결합한 모던 Windows 11 Fluent 스타일의 전용 앱 아이콘을 제작하여 시각적 인지성과 사용성을 대폭 강화했습니다.
+- 사용자가 시스템의 모든 캡처/주석/편집/내보내기 기능과 단축키를 한눈에 익힐 수 있는 정밀 설명서(`각 기능(키)설명.MD`)를 전격 편찬했습니다.
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| **매뉴얼 스튜디오 전용 멀티 레이어 아이콘 디자인** | 화면 캡처 뷰파인더(`[ ┌ ┐ ]`), 오픈 매뉴얼 가이드 북, 오렌지 ① 스텝 번호 뱃지, 커서 포인터가 결합된 모던 로열 블루 스퀘어클(Squircle) 아이콘 제작 (`assets/manual_studio.ico`, `assets/manual_studio_app_icon.png`) |
+| **7대 멀티 해상도 밉맵 지원** | 16x16, 24x24, 32x32, 48x48, 64x64, 128x128, 256x256 등 Windows 데스크톱/작업표시줄/탐색기 전 영역에서 선명하게 렌더링되는 알파 투명도 내장 ICO 파일 구축 |
+| **애플리케이션 및 윈도우 창 아이콘 분리 적용** | `get_manual_studio_icon()`을 신설하여 메인 윈도우 및 작업표시줄 아이콘을 신규 전용 아이콘으로 교체하고, 회사 CI 로고(`get_dragon_rpa_ci_pixmap()`)는 About 다이얼로그 전용으로 목적 분리 |
+| **C-컴파일 바이너리 리소스 동기화** | `build_c.bat`의 `--windows-icon-from-ico="assets/manual_studio.ico"` 적용 및 `ManualStudio.exe` 빌드 버전 `1.4.0.24` 갱신 |
+| **바탕화면 바로가기 자동 생성** | Windows 바탕화면에 신규 전용 아이콘이 적용된 `매뉴얼 스튜디오.lnk` 바로가기 자동 연동 |
+| **`각 기능(키)설명.MD` 완비** | 3대 캡처 모드, 17종 주석 도구, 단일 키 모드 전환, 객체 편집, 슬라이드 내보내기, 리본/키팁/자동저장, AI 에이전트 CLI/MCP, 단축키 총괄 매트릭스를 망라한 정밀 가이드 문서 작성 |
+
+#### 수정 파일
+- `assets/manual_studio.ico`, `assets/manual_studio_app_icon.png`, `assets/manual_studio_app_icon_256.png`: 신규 전용 고해상도 앱 아이콘 세트 생성
+- `manual_capture_studio.py`: `get_manual_studio_icon()` 헬퍼 함수 구현 및 `ManualStudioWindow`, `QApplication` 아이콘 연동
+- `build_c.bat`: Windows ICO 리소스 `assets/manual_studio.ico` 연결 및 버전 `1.4.0.24` 동기화
+- `각 기능(키)설명.MD`: 전 기능 및 단축키 상세 설명서 신규 편찬
+
+---
+
 ## [v1.4.0.Build.23] - 2026-09-13 15:18
 
 ### OCR 스마트 전처리(외곽 패딩+Lanczos 업스케일링) 파이프라인 탑재, 텍스트 미인식 토스트 안내 및 드래그 최소 크기 임계값 완화 (C-컴파일 최적화)

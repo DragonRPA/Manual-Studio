@@ -2904,6 +2904,338 @@ def test_ocr_smart_preprocessing():
     print("[PASS] test_ocr_smart_preprocessing (Smart Padding, Lanczos Upscaling & 13-Lang i18n valid)")
 
 
+
+def test_phase1_window_frame_and_shadow():
+    from manual_capture_studio import ExportEngine
+    base_img = Image.new("RGB", (400, 300), color=(200, 220, 240))
+    framed = ExportEngine.apply_window_frame_and_shadow(
+        base_img,
+        include_header=True,
+        corner_radius=12,
+        shadow_radius=20,
+        header_height=32
+    )
+    assert framed.mode == "RGBA", "Framed image must be RGBA for drop shadow transparency"
+    assert framed.width > 400
+    assert framed.height > 332
+    assert framed.getpixel((0, 0))[3] == 0, "Corner pixel must be transparent"
+    print("[PASS] test_phase1_window_frame_and_shadow (Modern Window Frame and Soft Drop Shadow valid)")
+
+def test_phase1_hwp_com_and_hotkey():
+    from manual_capture_studio import ExportEngine, GlobalHotkeyThread
+    assert hasattr(ExportEngine, "send_to_hwp")
+    th = GlobalHotkeyThread()
+    assert hasattr(th, "sig_hwp_export")
+    assert th.hotkey_id_hwp_export == 106
+    print("[PASS] test_phase1_hwp_com_and_hotkey (HWP COM Dispatch and Shift+F10 / F12 Hotkey valid)")
+
+def test_phase1_filmstrip_storyboard_and_i18n():
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    from manual_capture_studio import FilmstripDockWidget, StepCardWidget
+    from i18n_manager import I18nManager
+    dock = FilmstripDockWidget()
+    assert dock.lbl_title.text() == "🎞️ 스토리보드 타임라인 (0단계)"
+
+    new_keys = ["btn_export_hwp", "tip_export_hwp", "btn_window_frame", "tip_window_frame", "btn_filmstrip_toggle", "tip_filmstrip_toggle", "btn_add_step", "btn_export_all_ppt", "btn_export_all_hwp"]
+    for k in new_keys:
+        assert k in I18nManager.CATALOG, f"Missing {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            assert I18nManager.CATALOG[k].get(loc, ""), f"Missing {loc} for {k}"
+    print("[PASS] test_phase1_filmstrip_storyboard_and_i18n (Storyboard Timeline and 13-Lang i18n valid)")
+
+
+def test_phase2_animated_gif_export():
+    from manual_capture_studio import ExportEngine
+    frames = []
+    for i in range(1, 4):
+        im = Image.new("RGB", (200, 100), color=(100 * i % 255, 150, 200))
+        frames.append(im)
+
+    out_gif = os.path.abspath("assets/test_phase2_run.gif")
+    if os.path.exists(out_gif):
+        os.remove(out_gif)
+
+    ret = ExportEngine.export_to_animated_gif(frames, out_gif, interval_sec=0.5)
+    assert os.path.exists(out_gif), "GIF output file must exist"
+    assert os.path.getsize(out_gif) > 0, "GIF output file must not be empty"
+
+    with Image.open(out_gif) as gif_im:
+        n_frames = 0
+        try:
+            while True:
+                n_frames += 1
+                gif_im.seek(gif_im.tell() + 1)
+        except EOFError:
+            pass
+        assert n_frames == 3, f"Expected 3 frames, got {n_frames}"
+
+    os.remove(out_gif)
+    print("[PASS] test_phase2_animated_gif_export (Animated GIF multi-frame export valid)")
+
+def test_phase2_webbook_export_and_i18n():
+    from manual_capture_studio import ExportEngine, FilmstripDockWidget
+    from i18n_manager import I18nManager, tr
+
+    steps = [
+        {"step_num": 1, "title": "Step 1. Login", "description": "Enter ID and PW", "image_b64": "data:image/png;base64,iVBORw0KGgo="},
+        {"step_num": 2, "title": "Step 2. Search", "description": "Query items", "image_b64": "data:image/png;base64,iVBORw0KGgo="}
+    ]
+    out_html = os.path.abspath("assets/test_phase2_webbook.html")
+    if os.path.exists(out_html):
+        os.remove(out_html)
+
+    ret = ExportEngine.export_to_html(steps, out_html, title="Test Web Book Guide")
+    assert os.path.exists(out_html)
+    assert os.path.getsize(out_html) > 0
+
+    with open(out_html, "r", encoding="utf-8") as f:
+        html_text = f.read()
+
+    assert "Test Web Book Guide" in html_text
+    assert "Step 1. Login" in html_text
+    assert "data:image/png;base64," in html_text
+    os.remove(out_html)
+
+    dock = FilmstripDockWidget()
+    assert hasattr(dock, "btn_export_webbook")
+    assert hasattr(dock, "btn_export_gif")
+    assert hasattr(dock, "sig_export_webbook")
+    assert hasattr(dock, "sig_export_gif")
+
+    phase2_keys = ["btn_export_webbook", "tip_export_webbook", "btn_export_gif", "tip_export_gif"]
+    for k in phase2_keys:
+        assert k in I18nManager.CATALOG, f"Missing key {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            assert I18nManager.CATALOG[k].get(loc, ""), f"Missing {loc} for {k}"
+
+    print("[PASS] test_phase2_webbook_export_and_i18n (HTML5 WebBook, Base64 Ingestion, Filmstrip & 13-Lang i18n valid)")
+
+
+def test_phase3_pii_patterns_and_detection():
+    from manual_capture_studio import PiiRedactionEngine
+    from PySide6.QtCore import QRect
+    mock_lines = [
+        [
+            ("고객:", QRect(10, 10, 30, 16)),
+            ("010-1234-5678", QRect(45, 10, 80, 16)),
+            ("주민번호:", QRect(135, 10, 50, 16)),
+            ("880512-1234567", QRect(190, 10, 85, 16)),
+        ],
+        [
+            ("이메일:", QRect(10, 35, 40, 16)),
+            ("admin@dragonrpa.com", QRect(55, 35, 120, 16)),
+            ("계좌:", QRect(185, 35, 30, 16)),
+            ("123-456-789012", QRect(220, 35, 90, 16)),
+        ],
+        [
+            ("카드:", QRect(10, 60, 30, 16)),
+            ("9410-1234-5678-9012", QRect(45, 60, 110, 16)),
+            ("IP:", QRect(165, 60, 20, 16)),
+            ("192.168.0.100", QRect(190, 60, 75, 16)),
+        ]
+    ]
+
+    rects = PiiRedactionEngine.detect_pii_from_lines(mock_lines)
+    assert len(rects) == 6, f"Expected 6 PII rects, got {len(rects)}"
+    print("[PASS] test_phase3_pii_patterns_and_detection (All 6 PII patterns detected with padding)")
+
+def test_phase3_smart_cleanup_and_undo():
+    from manual_capture_studio import StudioCanvasWidget, SmartCleanupEngine
+    from PySide6.QtGui import QPixmap, QPainter, QColor
+    from PySide6.QtCore import QRect, QPoint
+    canvas = StudioCanvasWidget()
+    pix = QPixmap(300, 150)
+    pix.fill(QColor(240, 240, 240))
+    p = QPainter(pix)
+    p.fillRect(50, 50, 100, 30, QColor(10, 10, 10))
+    p.end()
+
+    canvas.set_pixmap(pix)
+    orig_color = canvas.pixmap.toImage().pixelColor(60, 60)
+    assert orig_color.red() < 50, "Text must be dark originally"
+
+    canvas.set_mode("ERASER")
+    assert canvas.current_mode == "ERASER"
+
+    canvas.eraser_start = QPoint(40, 50)
+    canvas.eraser_end = QPoint(220, 85)
+    canvas.drawing_eraser = True
+
+    erase_rect = QRect(40, 50, 180, 35)
+    canvas.push_undo()
+    canvas.pixmap = SmartCleanupEngine.inpaint_rect(canvas.pixmap, erase_rect)
+    canvas.drawing_eraser = False
+
+    cleaned_color = canvas.pixmap.toImage().pixelColor(60, 60)
+    assert abs(cleaned_color.red() - 240) < 15, f"Cleaned color was {cleaned_color.red()}"
+
+    canvas.undo()
+    restored_color = canvas.pixmap.toImage().pixelColor(60, 60)
+    assert restored_color.red() < 50, "Undo must restore original dark text pixelmap"
+    print("[PASS] test_phase3_smart_cleanup_and_undo (Smart Eraser inpainting & Ctrl+Z restoration valid)")
+
+def test_phase3_canvas_auto_pii_and_window_buttons():
+    from manual_capture_studio import StudioCanvasWidget, ManualStudioWindow, BlurMosaicItem
+    from i18n_manager import I18nManager
+    from PySide6.QtGui import QPixmap, QColor
+    from PySide6.QtCore import QRect
+
+    canvas = StudioCanvasWidget()
+    pix = QPixmap(400, 200)
+    pix.fill(QColor(255, 255, 255))
+    canvas.set_pixmap(pix)
+
+    mock_rects = [
+        QRect(50, 50, 100, 20),
+        QRect(50, 90, 120, 20)
+    ]
+    canvas._on_pii_result(mock_rects, "2 items found")
+    assert len(canvas.items) == 2
+    assert isinstance(canvas.items[0], BlurMosaicItem)
+    canvas.undo()
+    assert len(canvas.items) == 0
+
+    win = ManualStudioWindow()
+    assert hasattr(win, "btn_auto_pii")
+    assert hasattr(win, "btn_mode_eraser")
+    win.switch_mode("ERASER")
+    assert win.btn_mode_eraser.isChecked()
+    assert win.canvas.current_mode == "ERASER"
+
+    phase3_keys = [
+        "btn_auto_pii", "tip_auto_pii", "toast_pii_found", "toast_pii_none",
+        "btn_smart_eraser", "tip_smart_eraser", "toast_eraser_done", "mode_eraser"
+    ]
+    for k in phase3_keys:
+        assert k in I18nManager.CATALOG, f"Missing key {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            assert I18nManager.CATALOG[k].get(loc, ""), f"Missing {loc} for {k}"
+
+    print("[PASS] test_phase3_canvas_auto_pii_and_window_buttons (Auto PII batch blur, Undo, Eraser button & 13-Lang i18n valid)")
+
+
+def test_phase4_magnetic_snap_engine():
+    from PySide6.QtCore import QPoint, QRect
+    from manual_capture_studio import MagneticSnapEngine, CaptureOverlayWidget
+
+    # 1. Engine contract check
+    rect = MagneticSnapEngine.get_element_rect(QPoint(100, 100))
+    assert isinstance(rect, QRect)
+
+    # 2. CaptureOverlayWidget attributes
+    overlay = CaptureOverlayWidget()
+    assert hasattr(overlay, "snap_enabled")
+    assert overlay.snap_enabled is True
+    assert hasattr(overlay, "snapped_rect")
+    assert isinstance(overlay.snapped_rect, QRect)
+    overlay.close()
+
+    print("[PASS] test_phase4_magnetic_snap_engine (MagneticSnapEngine and CaptureOverlayWidget snapping valid)")
+
+
+def test_phase4_scroll_stitch_engine():
+    import tempfile
+    import os
+    import numpy as np
+    from PIL import Image, ImageDraw
+    from manual_capture_studio import ScrollStitchEngine
+    from manual_cli import cli_stitch
+
+    # 1. Generate 3 synthetic overlapping scroll slices
+    # Width: 300, Slice Height: 200. Overlap: 50px between slices
+    slices = []
+    tmp_files = []
+    td = tempfile.mkdtemp()
+
+    # Slice 0: lines 0..200
+    im0 = Image.new("RGB", (300, 200), (240, 240, 240))
+    d0 = ImageDraw.Draw(im0)
+    d0.rectangle([10, 10, 290, 50], fill=(200, 50, 50))
+    d0.rectangle([10, 160, 290, 195], fill=(50, 50, 200)) # overlap marker A
+    p0 = os.path.join(td, "slice_0.png")
+    im0.save(p0)
+    slices.append(im0)
+    tmp_files.append(p0)
+
+    # Slice 1: overlap marker A at top (0..35), new content in middle, overlap marker B at bottom
+    im1 = Image.new("RGB", (300, 200), (240, 240, 240))
+    d1 = ImageDraw.Draw(im1)
+    d1.rectangle([10, 10, 290, 45], fill=(50, 50, 200)) # overlap marker A matched
+    d1.rectangle([20, 80, 280, 120], fill=(50, 200, 50))
+    d1.rectangle([10, 160, 290, 195], fill=(200, 150, 30)) # overlap marker B
+    p1 = os.path.join(td, "slice_1.png")
+    im1.save(p1)
+    slices.append(im1)
+    tmp_files.append(p1)
+
+    # Slice 2: overlap marker B at top (0..35), footer at bottom
+    im2 = Image.new("RGB", (300, 200), (240, 240, 240))
+    d2 = ImageDraw.Draw(im2)
+    d2.rectangle([10, 10, 290, 45], fill=(200, 150, 30)) # overlap marker B matched
+    d2.rectangle([30, 90, 270, 150], fill=(150, 50, 150)) # footer
+    p2 = os.path.join(td, "slice_2.png")
+    im2.save(p2)
+    slices.append(im2)
+    tmp_files.append(p2)
+
+    # Stitch via Engine
+    stitched = ScrollStitchEngine.stitch_images(slices)
+    assert stitched is not None
+    assert stitched.width == 300
+    assert stitched.height > 200 # Height must be extended via stitching
+
+    # Stitch via CLI
+    out_stitched = os.path.join(td, "stitched_cli.png")
+    res = cli_stitch(tmp_files, out_stitched)
+    assert res["status"] == "ok"
+    assert os.path.exists(out_stitched)
+    assert res["width"] == 300
+    assert res["height"] == stitched.height
+
+    print("[PASS] test_phase4_scroll_stitch_engine (Panoramic vertical scroll stitching via Engine and CLI valid)")
+
+
+def test_phase4_action_recorder_and_i18n():
+    from manual_capture_studio import (
+        ManualStudioWindow, ActionRecorderThread, RecordingFloatWidget, FilmstripDockWidget
+    )
+    from i18n_manager import I18nManager
+
+    # 1. ActionRecorderThread & RecordingFloatWidget
+    rec_thread = ActionRecorderThread()
+    assert hasattr(rec_thread, "signal_action_captured")
+    assert hasattr(rec_thread, "signal_stopped")
+    assert hasattr(rec_thread, "running")
+
+    float_bar = RecordingFloatWidget()
+    assert hasattr(float_bar, "btn_stop")
+    assert hasattr(float_bar, "signal_stop_requested")
+    float_bar.close()
+
+    # 2. MainWindow Action Recorder & Scroll Stitch buttons
+    win = ManualStudioWindow()
+    assert hasattr(win, "btn_scroll_stitch")
+    assert hasattr(win, "btn_action_recorder")
+    assert hasattr(win, "toggle_action_recorder")
+    assert hasattr(win, "start_scroll_stitch_capture")
+    win.close()
+
+    # 3. Phase 4 i18n 13-Locale Completeness
+    phase4_keys = [
+        "btn_magnetic_snap", "tip_magnetic_snap", "btn_scroll_stitch",
+        "tip_scroll_stitch", "btn_action_record", "tip_action_record",
+        "btn_stop_recording", "toast_recording_started",
+        "toast_recording_stopped", "toast_stitch_success"
+    ]
+    for k in phase4_keys:
+        assert k in I18nManager.CATALOG, f"Missing Phase 4 key: {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            val = I18nManager.CATALOG[k].get(loc, "")
+            assert val, f"Missing locale {loc} for key {k}"
+
+    print("[PASS] test_phase4_action_recorder_and_i18n (ActionRecorderThread, RecordingFloatWidget, Ribbon triggers & 13-locale i18n valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -2961,5 +3293,16 @@ if __name__ == "__main__":
     test_dimension_and_properties_i18n_keys()
     test_box_dimension_and_ocr_labels_and_ghost_fix()
     test_ocr_smart_preprocessing()
-    print("\nALL 56 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
+    test_phase1_window_frame_and_shadow()
+    test_phase1_hwp_com_and_hotkey()
+    test_phase1_filmstrip_storyboard_and_i18n()
+    test_phase2_animated_gif_export()
+    test_phase2_webbook_export_and_i18n()
+    test_phase3_pii_patterns_and_detection()
+    test_phase3_smart_cleanup_and_undo()
+    test_phase3_canvas_auto_pii_and_window_buttons()
+    test_phase4_magnetic_snap_engine()
+    test_phase4_scroll_stitch_engine()
+    test_phase4_action_recorder_and_i18n()
+    print("\nALL 67 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING & ACTION RECORDER TESTS PASSED 100%!")
     os._exit(0)

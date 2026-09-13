@@ -28,11 +28,11 @@ python -m nuitka ^
   --include-data-files="config.json=config.json" ^
   --include-data-files="version.json=version.json" ^
   --include-data-files="AGENTS.md=AGENTS.md" ^
-  --windows-icon-from-ico="assets/dragon_rpa.ico" ^
+  --windows-icon-from-ico="assets/manual_studio.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^
-  --windows-file-version=1.4.0.23 ^
-  --windows-product-version=1.4.0.23 ^
+  --windows-file-version=1.4.0.27 ^
+  --windows-product-version=1.4.0.27 ^
   --windows-file-description="DragonRPA Manual Studio" ^
   --assume-yes-for-downloads ^
   --output-dir="C:\ManualStudioBuild" ^

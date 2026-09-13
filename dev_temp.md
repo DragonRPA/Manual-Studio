@@ -1,5 +1,106 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-13 16:55] 매뉴얼 스튜디오 2세대 Phase 4 구현: 차세대 캡처 자동화 (UI 마그네틱 스마트 스냅, 파노라마 스크롤 스티칭, 무인 액션 레코더) 완비, 13개국어 i18n 및 67개 단위 테스트 100% 통과
+- [x] UI 요소 마그네틱 스마트 스냅 엔진 (`MagneticSnapEngine`)
+  - Windows API `WindowFromPoint` + `ChildWindowFromPointEx` 계층 순회로 최하단 UI 자식 컨트롤(버튼, 입력창, 탭, 체크박스 등) 바운딩 박스 정밀 탐지
+  - `CaptureOverlayWidget` 영역 캡처 시 마우스 호버 대상에 형광 시안(`QColor(6, 182, 212)`) 점선 테두리 및 반투명 채우기 자석 스냅 가이드 실시간 표출
+  - 원클릭 자동 채택: 스냅된 컨트롤 위를 마우스 단순 클릭하면 해당 컨트롤 사각 영역이 100% 자동 채택되어 즉시 캡처 확정
+  - 오버레이 창 내 단축키 `X`로 자석 스냅 켜기/끄기 즉시 토글 지원
+- [x] 파노라마 수직 스크롤 스티칭 엔진 (`ScrollStitchEngine`, CLI `--cli stitch`)
+  - 긴 웹페이지, ERP 테이블, 보고서 등 화면을 넘어가는 연속 스크롤 프레임 합성
+  - OpenCV `cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)` 기반 수직 오프셋 정규화 상관 매칭 ($\ge 0.70$)
+  - 중복 영역 무손실 절단 및 `np.vstack` 경계선 없는 1장의 초고화질 파노라마 긴 이미지 생성
+  - 리본 메뉴 `[스크롤 스티칭]` 버튼 연동: 현재 스토리보드 스텝 일괄 합성 또는 외부 이미지 파일 다중 선택 합성 지원
+  - 헤드리스 CLI `ManualStudio.exe --cli stitch -i frame1.png frame2.png frame3.png -o stitched.png` 완비
+- [x] 무인 연속 액션 레코더 (`ActionRecorderThread`, `RecordingFloatWidget`)
+  - 비동기 백그라운드 QThread 기반 저지연 마우스 클릭 감지 (`GetAsyncKeyState(VK_LBUTTON)` 250ms 디바운싱)
+  - 마우스 클릭 시 화면 자동 캡처 + 클릭 지점에 번호 스탬프(`StampItem`) 자동 타각 + 하단 타임라인 스토리보드에 스텝 자동 누적 적립
+  - 화면 상단 구석 상시 최상위 반투명 플로팅 컨트롤 바(`RecordingFloatWidget`: `🔴 REC`, `N단계`, `[완료]`) 제공
+  - 리본 메뉴 `[액션 녹화]` 버튼 원클릭 시작/종료 토글 및 시작/종료 시 감지 스텝 수 토스트 알림 안내
+- [x] 13개 글로벌 언어 i18n 신규 키 전수 등록
+  - `btn_magnetic_snap`, `tip_magnetic_snap`, `btn_scroll_stitch`, `tip_scroll_stitch`, `btn_action_record`, `tip_action_record`, `btn_stop_recording`, `toast_recording_started`, `toast_recording_stopped`, `toast_stitch_success` (13개국어 100% 등록)
+- [x] 핵심 단위 테스트 67개 전 항목 100% 통과 (`test_core_engine.py` 67/67 ALL PASS)
+- [x] `각 기능(키)설명.MD` 2절 캡처 및 레코더 기능, 8절 단축키 총괄표 개정 완료
+
+## [2026-09-13 16:44] 매뉴얼 스튜디오 2세대 Phase 3 구현: 개인정보 자동 마스킹 (Auto PII Redaction, Shift+M) & 배경 스마트 지우개 (Content-Aware Eraser, X) 완비, 13개국어 i18n 및 64개 단위 테스트 100% 통과
+- [x] 개인정보 및 민감 데이터 자동 마스킹 엔진 (`PiiRedactionEngine`, `PiiWorkerThread`)
+  - WinRT OCR 단어 레벨 바운딩 박스(`word.bounding_rect`) 기반 비동기 스캔 파이프라인
+  - 6대 표준 개인정보 정규식(전화번호/휴대폰, 주민등록번호, 이메일, 계좌번호, 카드번호, IP 주소) 탐지
+  - 인접 분절 단어 결합(Token Merging) 및 4px 안전 마진 패딩 알고리즘 탑재
+  - 원클릭 비파괴 마스킹: 캔버스에 개별 선택·이동·크기조절·삭제 가능한 `BlurMosaicItem` 일괄 생성
+  - 단축키 `Shift + M` 및 리본 메뉴 `[개인정보 마스킹]` 버튼 연동, `Ctrl + Z` 일괄 되돌리기 100% 지원
+  - 완료 시 감지 건수 토스트 안내 (`toast_pii_found`, `toast_pii_none`)
+- [x] 배경 클린업 스마트 지우개 엔진 (`SmartCleanupEngine`, 캔버스 모드 `ERASER`)
+  - OpenCV Telea / Navier-Stokes (`cv2.inpaint`) 기반 배경 텍스처·그라데이션 인페인팅 합성 엔진 탑재
+  - OpenCV 미탑재 환경을 대비한 Pillow/NumPy 경계선 가우시안 블러 비상 폴백 파이프라인 내장
+  - 단축키 `X` 단일 키 모드 전환 및 리본 메뉴 `[스마트 지우개]` 토글 버튼 연동
+  - 드래그 중 반투명 핑크 점선 영역 실시간 프리뷰
+  - 마우스 릴리즈 즉시 인페인팅 적용 + `self.history` 픽셀맵 스냅샷 저장으로 `Ctrl + Z` 누를 시 100% 원본 무손실 복원
+- [x] 글로벌 13개 언어 i18n 8개 신규 키 전수 등록
+  - `btn_auto_pii`, `tip_auto_pii`, `toast_pii_found`, `toast_pii_none`, `btn_smart_eraser`, `tip_smart_eraser`, `toast_eraser_done`, `mode_eraser`
+- [x] 핵심 단위 테스트 64개 전 항목 100% 통과 (`test_core_engine.py` 64/64 ALL PASS)
+- [x] `각 기능(키)설명.MD` 3.3절 강조·보안 도구 및 8절 단축키 총괄표 개정 완료
+
+## [2026-09-13 16:35] 매뉴얼 스튜디오 2세대 Phase 2 구현: 반응형 단일 파일 HTML5 웹북 매뉴얼 및 초경량 루핑 애니메이션 GIF 숏클립 생성기 탑재, 13개국어 i18n 및 필름스트립 도크 연동 완비
+
+- [x] 반응형 단일 파일 HTML5 웹북 매뉴얼 출력 엔진 (`ExportEngine.export_to_html`)
+  - 외부 CDN 및 로컬 이미지 폴더 의존성이 일절 없는 100% 자가완비형(Self-Contained) Single `.html` 파일 생성
+  - Base64 Data URI 스텝 이미지 인라인 임베딩 지원 (`image_b64`)
+  - 좌측 목차(TOC) 클릭 이동 네비게이션 및 상단 스텝 실시간 필터 검색창 내장
+  - 고화질 클릭 확대 라이트박스(Lightbox) 모달 뷰어 및 다크/라이트 테마 원클릭 스위처 내장
+  - A4 문서 출력 및 PDF 저장을 위한 `@media print` CSS 인쇄 최적화 규칙 완비
+- [x] 숏클립 튜토리얼 애니메이션 GIF 생성기 (`ExportEngine.export_to_animated_gif`)
+  - 필름스트립에 등록된 모든 단계(Step) 화면을 1.5초 루핑 애니메이션 GIF로 일괄 변환
+  - Pillow RGB/P 모드 최적화 및 캔버스 배경 합성으로 알파 디더링 아티팩트 없는 고화질 압축 지원
+  - 노션(Notion), 슬랙(Slack), 잔디, 메신저 업로드에 최적화된 초경량 파일 포맷
+- [x] 하단 스토리보드 타임라인 독 연동
+  - `[웹북 내보내기]` (`btn_export_webbook`) 및 `[숏클립 GIF]` (`btn_export_gif`) 액션 버튼 배치
+  - 메인 윈도우 시그널 연결: 액자 프레임 옵션에 맞추어 캔버스 베이킹 후 브라우저 자동 실행 또는 파일 저장 다이얼로그 호출
+- [x] 13개 글로벌 언어 i18n 4개 신규 키 전수 등록
+  - `btn_export_webbook`, `tip_export_webbook`, `btn_export_gif`, `tip_export_gif`
+- [x] 핵심 단위 테스트 61개 전 항목 100% 통과 (`test_core_engine.py` 61/61 ALL PASS)
+- [x] `각 기능(키)설명.MD` 매뉴얼 설명서 6.5절 최신화
+
+## [2026-09-13 16:25] 매뉴얼 스튜디오 2세대 Phase 1 구현: 어도비 스타일 'Ms' 아이콘 확정, 모던 윈도우 액자 프레임·소프트 섀도우(기본 ON), 한컴 한글(HWP) COM 직결(Shift+F10/F12) 및 하단 스토리보드 타임라인 독 완비
+
+- [x] 어도비 스타일 'Ms' 아이콘 정식 채택 및 시스템 배포
+  - CamelCase `Ms` (일렉트릭 시안 M + 퓨어 화이트 s) 다중 해상도 안티에일리어싱 `.ico` 교체 (`assets/manual_studio.ico`)
+  - 윈도우 타이틀바, 작업표시줄 및 바탕화면 바로가기(`매뉴얼 스튜디오.lnk`) 아이콘 갱신 완료
+- [x] 모던 윈도우 창틀 & 소프트 드롭 섀도우 액자 효과 탑재 (`ExportEngine.apply_window_frame_and_shadow`)
+  - Notion / CleanShot X / macOS 스타일 3색 신호등 버튼(🔴🟡🟢) 윈도우 상단 바 + 12px 둥근 모서리 + 20px 부드러운 가우시안 드롭 섀도우 합성
+  - 투명 알파 마스크 기반으로 PPT, 슬라이드, 문서에 자연스러운 입체감 부여
+  - 사용자 요구사항 100% 준수: 기본값 활성화(ON), 툴바 `[액자 프레임]` 토글 버튼으로 원클릭 끄기/켜기 지원
+  - 클립보드 복사(`Ctrl+C`), PPT 삽입, 구글 슬라이드, 한컴 한글 삽입에 일체형 연동
+- [x] 한컴 한글(HWP / HWPX) COM 직결 내보내기 엔진 탑재 (`ExportEngine.send_to_hwp`)
+  - Windows COM Dispatch (`HWPFrame.HwpObject`) 기반 실시간 연동
+  - 브라우저 개발자 도구(F12) 전역 단축키 충돌 원천 방지:
+    - 전역(Global) 단축키: `Shift + F10` (PPT F10의 패밀리 단축키 배정)
+    - 스튜디오 창 활성화 시: `F12` 원클릭 로컬 단축키 동시 지원
+  - 커서 위치에 표 및 규격화된 이미지 중앙 정렬 자동 안착 + 단계명 상단 텍스트 자동 삽입
+  - 툴바 `[한글 전송]` 버튼 추가
+- [x] 하단 타임라인 필름스트립 (스토리보드) 도크 구현 (`StepCardWidget`, `FilmstripDockWidget`)
+  - 작업대 하단에 가로 스크롤 가능한 스텝별 썸네일 카드(Step 1, Step 2...) 스트립 상시 노출
+  - 원클릭 스텝 전환: 썸네일 클릭 시 현재 작업 자동 스냅샷 저장 및 대상 스텝 캔버스 즉시 복원 로드
+  - 우클릭 컨텍스트 메뉴: 스텝 복제, 좌/우 순서 맞교환, 스텝 삭제 및 자동 번호 재정렬
+  - `[+ 새 단계]`, `[전체 PPT 전송]`, `[전체 한글 전송]` 원스톱 일괄 자동화 버튼군 완비
+- [x] 13개 글로벌 언어 i18n 9개 신규 키 전수 등록
+  - `btn_export_hwp`, `tip_export_hwp`, `btn_window_frame`, `tip_window_frame`, `btn_filmstrip_toggle`, `tip_filmstrip_toggle`, `btn_add_step`, `btn_export_all_ppt`, `btn_export_all_hwp`
+- [x] 단위 테스트 59개 전 항목 100% 통과 (`test_core_engine.py` 59/59 ALL PASS)
+- [x] `각 기능(키)설명.MD` 기능 및 단축키 설명서 전면 최신화
+
+
+## [2026-09-13 15:45] 매뉴얼 스튜디오 전용 고해상도 바탕화면 앱 아이콘(`manual_studio.ico`) 신규 제작, 윈도우/작업표시줄/바이너리 통합 적용 및 `각 기능(키)설명.MD` 완비
+- [x] 매뉴얼 스튜디오 전용 모던 로열 블루 스퀘어클(Squircle) 멀티 레이어 앱 아이콘 제작
+  - 뷰파인더 캡처 레티클(`[ ┌ ┐ ]`) + 오픈 매뉴얼 가이드 북 + 오렌지 ① 스텝 번호 뱃지 + 마우스 커서 결합
+  - 16, 24, 32, 48, 64, 128, 256px 7대 멀티 해상도 밉맵 ICO 파일 구축 (`assets/manual_studio.ico`)
+- [x] 프로그램 창 및 작업표시줄 아이콘 전용화
+  - `get_manual_studio_icon()` 구현 및 `ManualStudioWindow`, `QApplication`에 신규 전용 아이콘 적용
+  - DragonRPA 회사 CI는 About 다이얼로그 전용으로 목적 분리
+- [x] Nuitka C-컴파일러 바이너리 리소스 동기화
+  - `build_c.bat` Windows 파일/제품 버전 `1.4.0.24` 및 `--windows-icon-from-ico="assets/manual_studio.ico"` 컴파일 완료
+- [x] Windows 바탕화면 바로가기(`매뉴얼 스튜디오.lnk`) 자동 생성 연동
+- [x] `각 기능(키)설명.MD` 전 기능 및 단축키 상세 설명서 편찬 완료
+
 ## [2026-09-13 15:18] OCR 라벨 간헐적 인식 실패 해결: 스마트 전처리 파이프라인(패딩+적응형 Lanczos 업스케일링) 탑재, 미인식 토스트 알림 안내 및 드래그 임계값 완화
 - [x] OcrWorkerThread 스마트 이미지 전처리(Smart Preprocessing) 파이프라인 구현
   - 모서리 4점 배경색 자동 샘플링 기반 외곽 16px 패딩 여백 부여 (WinRT 경계선 노이즈 판정 방지)

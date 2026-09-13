@@ -18,6 +18,7 @@ import io
 import time
 import math
 import base64
+import re
 from datetime import datetime
 import ctypes
 from ctypes import wintypes
@@ -81,7 +82,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGroupBox
 )
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
@@ -147,8 +148,28 @@ def get_dragon_rpa_ci_pixmap() -> QPixmap:
     return QPixmap()
 
 
+def get_manual_studio_icon() -> QIcon:
+    """Manual Studio 전용 앱 아이콘 QIcon 로드 (화면 캡처+매뉴얼 가이드+① 스탬프 심볼)"""
+    current_dir = get_app_dir()
+    candidates = [
+        os.path.join(current_dir, "assets", "manual_studio.ico"),
+        os.path.join(current_dir, "assets", "manual_studio_app_icon.png"),
+        os.path.join(os.getcwd(), "assets", "manual_studio.ico"),
+        os.path.join(os.getcwd(), "assets", "manual_studio_app_icon.png"),
+        os.path.join(current_dir, "manual_studio.ico"),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            icon = QIcon(p)
+            if not icon.isNull():
+                return icon
 
-# ==============================================================================
+    # 폴백: CI 로고
+    ci_pix = get_dragon_rpa_ci_pixmap()
+    if not ci_pix.isNull():
+        return QIcon(ci_pix)
+    return QIcon()
+
 # 1. 설정 관리자 (Configuration Manager)
 # ==============================================================================
 DEFAULT_CONFIG = {
@@ -276,7 +297,19 @@ DEFAULT_CONFIG = {
     "export_target": "powerpoint",
     "slides_auto_slide": True,
     "slides_return_focus": True,
-    "ui_style": "auto"
+    "ui_style": "auto",
+    "enable_window_frame": True,
+    "window_frame_style": {
+        "include_header": True,
+        "corner_radius": 12,
+        "shadow_radius": 20,
+        "shadow_opacity": 0.35,
+        "bg_color": "#F8FAFC",
+        "border_color": "#CBD5E1",
+        "header_height": 32
+    },
+    "hotkey_hwp": "Shift+F10",
+    "filmstrip_visible": True
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -872,6 +905,7 @@ class GlobalHotkeyThread(QThread):
     sig_sub_capture = pyqtSignal()
     sig_export = pyqtSignal()
     sig_slides_export = pyqtSignal()
+    sig_hwp_export = pyqtSignal()
 
     def __init__(self, capture_key="F9", export_key="F10", slides_key="F11", parent=None):
         super().__init__(parent)
@@ -884,6 +918,7 @@ class GlobalHotkeyThread(QThread):
         self.hotkey_id_sub_capture = 104
         self.hotkey_id_export = 102
         self.hotkey_id_slides_export = 105
+        self.hotkey_id_hwp_export = 106
 
     def run(self):
         user32 = ctypes.windll.user32
@@ -898,6 +933,7 @@ class GlobalHotkeyThread(QThread):
         user32.RegisterHotKey(None, self.hotkey_id_sub_capture, 0x4000, vk_sub)
         user32.RegisterHotKey(None, self.hotkey_id_export, 0x4000, vk_exp)
         user32.RegisterHotKey(None, self.hotkey_id_slides_export, 0x4000, vk_slides)
+        user32.RegisterHotKey(None, self.hotkey_id_hwp_export, 0x4000 | 0x0004, vk_exp)
 
         msg = wintypes.MSG()
         while self.running:
@@ -914,6 +950,8 @@ class GlobalHotkeyThread(QThread):
                         self.sig_export.emit()
                     elif msg.wParam == self.hotkey_id_slides_export:
                         self.sig_slides_export.emit()
+                    elif msg.wParam == self.hotkey_id_hwp_export:
+                        self.sig_hwp_export.emit()
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             else:
@@ -924,6 +962,7 @@ class GlobalHotkeyThread(QThread):
         user32.UnregisterHotKey(None, self.hotkey_id_sub_capture)
         user32.UnregisterHotKey(None, self.hotkey_id_export)
         user32.UnregisterHotKey(None, self.hotkey_id_slides_export)
+        user32.UnregisterHotKey(None, self.hotkey_id_hwp_export)
 
     def stop(self):
         self.running = False
@@ -2758,6 +2797,432 @@ class OcrResultDialog(QDialog):
         self.btn_copy.setText(tr("ocr_copy_btn_done", "✓ 복사됨"))
 
 
+class PiiRedactionEngine:
+    """화면 내 민감 개인정보(PII) 자동 탐지 및 마스킹 영역 좌표 계산 엔진"""
+
+    PATTERNS = {
+        "phone": re.compile(r'(?:01[016789]-?\d{3,4}-?\d{4}|0[2-6][1-5]?-?\d{3,4}-?\d{4}|1[568]\d{2}-?\d{4})'),
+        "resident": re.compile(r'\b\d{6}-[1-4]\d{6}\b'),
+        "email": re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
+        "account": re.compile(r'\b\d{3,6}-\d{2,6}-\d{3,6}\b'),
+        "card": re.compile(r'\b(?:\d{4}[ -]?){3}\d{4}\b'),
+        "ip": re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'),
+    }
+
+    @classmethod
+    def detect_pii_from_lines(cls, lines_of_words):
+        raw_rects = []
+        for line in lines_of_words:
+            n = len(line)
+            if n == 0:
+                continue
+            matched_indices = set()
+            for length in range(1, min(7, n + 1)):
+                for i in range(n - length + 1):
+                    if any(idx in matched_indices for idx in range(i, i + length)):
+                        continue
+                    sub = line[i:i + length]
+                    for sep in ['', '.', ' ', '-']:
+                        combined = sep.join(w[0] for w in sub)
+                        matched = False
+                        for cat in ["resident", "phone", "email", "card", "account", "ip"]:
+                            pat = cls.PATTERNS[cat]
+                            m = pat.search(combined)
+                            if m:
+                                u_rect = sub[0][1]
+                                for w in sub[1:]:
+                                    u_rect = u_rect.united(w[1])
+                                raw_rects.append(u_rect)
+                                for idx in range(i, i + length):
+                                    matched_indices.add(idx)
+                                matched = True
+                                break
+                        if matched:
+                            break
+
+        return cls.deduplicate_and_pad(raw_rects)
+
+    @classmethod
+    def deduplicate_and_pad(cls, rect_list, pad_x=4, pad_y=3):
+        if not rect_list:
+            return []
+        merged = []
+        for r in rect_list:
+            padded = r.adjusted(-pad_x, -pad_y, pad_x, pad_y)
+            combined = False
+            for idx, m in enumerate(merged):
+                if m.intersects(padded) or m.contains(padded) or padded.contains(m):
+                    merged[idx] = m.united(padded)
+                    combined = True
+                    break
+            if not combined:
+                merged.append(padded)
+        return merged
+
+
+class PiiWorkerThread(QThread):
+    """WinRT OCR을 비동기로 호출하여 화면 내 모든 단어와 좌표를 추출한 뒤 PII 마스킹 영역 목록을 방출"""
+    sig_result = Signal(list, str)
+
+    def __init__(self, pil_img, lang="ko", parent=None):
+        super().__init__(parent)
+        self.pil_img = pil_img
+        self.lang = lang
+
+    def run(self):
+        try:
+            lines_words = self._extract_ocr_words()
+            if not lines_words:
+                self.sig_result.emit([], "No text detected")
+                return
+            rects = PiiRedactionEngine.detect_pii_from_lines(lines_words)
+            self.sig_result.emit(rects, f"{len(rects)} items found")
+        except Exception as e:
+            self.sig_result.emit([], str(e))
+
+    def _extract_ocr_words(self):
+        try:
+            import asyncio
+            from winsdk.windows.media.ocr import OcrEngine
+            import winsdk.windows.globalization as glob
+            import winsdk.windows.graphics.imaging as wgi
+            import winsdk.windows.storage.streams as wss
+
+            async def _do_scan():
+                engine = None
+                try:
+                    lang_obj = glob.Language(self.lang)
+                    if OcrEngine.is_language_supported(lang_obj):
+                        engine = OcrEngine.try_create_from_language(lang_obj)
+                except Exception:
+                    pass
+                if engine is None:
+                    engine = OcrEngine.try_create_from_user_profile_languages()
+                if engine is None and OcrEngine.available_recognizer_languages:
+                    engine = OcrEngine.try_create_from_language(OcrEngine.available_recognizer_languages[0])
+                if engine is None:
+                    return []
+
+                pil_rgba = self.pil_img.convert("RGBA")
+                tw, th = pil_rgba.size
+                raw_bytes = pil_rgba.tobytes()
+                writer = wss.DataWriter()
+                writer.write_bytes(bytes(raw_bytes))
+                ibuf = writer.detach_buffer()
+                soft_bmp = wgi.SoftwareBitmap.create_copy_from_buffer(
+                    ibuf, wgi.BitmapPixelFormat.RGBA8, tw, th
+                )
+                result = await engine.recognize_async(soft_bmp)
+                lines = []
+                for line in result.lines:
+                    lw = []
+                    for word in line.words:
+                        r = QRect(int(word.bounding_rect.x), int(word.bounding_rect.y),
+                                  int(word.bounding_rect.width), int(word.bounding_rect.height))
+                        lw.append((word.text, r))
+                    if lw:
+                        lines.append(lw)
+                return lines
+
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_do_scan())
+            finally:
+                loop.close()
+        except Exception:
+            return []
+
+
+class SmartCleanupEngine:
+    """선택 영역 주변 텍스처 분석 기반 배경 복원 및 스마트 지우개 인페인팅 엔진"""
+
+    @staticmethod
+    def inpaint_rect(pixmap: QPixmap, rect: QRect, radius: int = 3) -> QPixmap:
+        if not pixmap or pixmap.isNull() or rect.isEmpty():
+            return pixmap
+
+        r = rect.normalized().intersected(pixmap.rect())
+        if r.width() <= 0 or r.height() <= 0:
+            return pixmap
+
+        try:
+            import cv2
+            import numpy as np
+
+            qimg = pixmap.toImage().convertToFormat(QImage.Format_RGB888)
+            w, h = qimg.width(), qimg.height()
+            ptr = qimg.bits()
+            arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 3)).copy()
+
+            mask = np.zeros((h, w), dtype=np.uint8)
+            rx, ry, rw, rh = r.x(), r.y(), r.width(), r.height()
+            mask[ry:ry+rh, rx:rx+rw] = 255
+
+            inpainted = cv2.inpaint(arr, mask, inpaintRadius=max(3, radius), flags=cv2.INPAINT_TELEA)
+            out_img = QImage(inpainted.data, w, h, w * 3, QImage.Format_RGB888).copy()
+            return QPixmap.fromImage(out_img)
+
+        except Exception:
+            try:
+                from PIL import Image, ImageFilter
+                qimg = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+                w, h = qimg.width(), qimg.height()
+                ptr = qimg.bits()
+                pil_img = Image.frombuffer("RGBA", (w, h), ptr, "raw", "RGBA", 0, 1).copy()
+
+                rx, ry, rw, rh = r.x(), r.y(), r.width(), r.height()
+                pad = 4
+                bx1 = max(0, rx - pad)
+                by1 = max(0, ry - pad)
+                bx2 = min(w, rx + rw + pad)
+                by2 = min(h, ry + rh + pad)
+                crop = pil_img.crop((bx1, by1, bx2, by2))
+                blurred = crop.filter(ImageFilter.GaussianBlur(radius=8))
+                paste_crop = blurred.crop((rx - bx1, ry - by1, rx - bx1 + rw, ry - by1 + rh))
+                pil_img.paste(paste_crop, (rx, ry))
+
+                qimg_out = QImage(pil_img.tobytes(), w, h, w * 4, QImage.Format_RGBA8888).copy()
+                return QPixmap.fromImage(qimg_out)
+            except Exception:
+                return pixmap
+
+
+
+class MagneticSnapEngine:
+    """Windows 컨트롤 및 UI 요소 마그네틱 자석 스냅 엔진"""
+
+    @staticmethod
+    def get_element_rect(global_pt, exclude_hwnd=0):
+        try:
+            import win32gui
+            import win32con
+            gx, gy = int(global_pt.x()), int(global_pt.y())
+            top_hwnd = win32gui.WindowFromPoint((gx, gy))
+            if not top_hwnd or top_hwnd == exclude_hwnd:
+                return QRect()
+
+            curr_hwnd = top_hwnd
+            for _ in range(8):
+                pt_client = win32gui.ScreenToClient(curr_hwnd, (gx, gy))
+                child = win32gui.ChildWindowFromPointEx(
+                    curr_hwnd,
+                    pt_client,
+                    win32con.CWP_SKIPINVISIBLE | win32con.CWP_SKIPDISABLED
+                )
+                if not child or child == curr_hwnd or child == exclude_hwnd:
+                    break
+                curr_hwnd = child
+
+            r = win32gui.GetWindowRect(curr_hwnd)
+            rw = r[2] - r[0]
+            rh = r[3] - r[1]
+            if rw >= 12 and rh >= 12:
+                return QRect(r[0], r[1], rw, rh)
+
+            r_top = win32gui.GetWindowRect(top_hwnd)
+            return QRect(r_top[0], r_top[1], r_top[2] - r_top[0], r_top[3] - r_top[1])
+        except Exception:
+            return QRect()
+
+
+class ScrollStitchEngine:
+    """긴 웹페이지 및 ERP 테이블 수직 스크롤 프레임 자동 정합 및 파노라마 스티칭 엔진"""
+
+    @staticmethod
+    def stitch_images(image_list, template_ratio=0.20, min_score=0.70):
+        if not image_list:
+            return None
+        if len(image_list) == 1:
+            from PIL import Image
+            return image_list[0] if hasattr(image_list[0], "size") else Image.open(image_list[0])
+
+        from PIL import Image
+        import numpy as np
+
+        pil_frames = []
+        for img in image_list:
+            if isinstance(img, str):
+                pil_frames.append(Image.open(img).convert("RGB"))
+            elif hasattr(img, "convert"):
+                pil_frames.append(img.convert("RGB"))
+
+        if not pil_frames:
+            return None
+
+        try:
+            import cv2
+            stitched_np = np.array(pil_frames[0])
+
+            for next_pil in pil_frames[1:]:
+                next_np = np.array(next_pil)
+                sh, sw = stitched_np.shape[:2]
+                nh, nw = next_np.shape[:2]
+
+                if sw != nw:
+                    next_np = cv2.resize(next_np, (sw, int(nh * sw / nw)))
+                    nh, nw = next_np.shape[:2]
+
+                th = max(20, min(int(nh * template_ratio), 180, sh // 2))
+                template = stitched_np[-th:, :]
+
+                search_region = next_np[:min(nh, int(nh * 0.90)), :]
+                if search_region.shape[0] < th:
+                    stitched_np = np.vstack([stitched_np, next_np])
+                    continue
+
+                res = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+                if max_val >= min_score:
+                    overlap_y = max_loc[1]
+                    cut_y = overlap_y + th
+                    if cut_y < nh:
+                        revealed = next_np[cut_y:, :]
+                        stitched_np = np.vstack([stitched_np, revealed])
+                else:
+                    stitched_np = np.vstack([stitched_np, next_np])
+
+            return Image.fromarray(stitched_np)
+        except Exception:
+            total_h = sum(im.height for im in pil_frames)
+            max_w = max(im.width for im in pil_frames)
+            res_im = Image.new("RGB", (max_w, total_h), (255, 255, 255))
+            cur_y = 0
+            for im in pil_frames:
+                res_im.paste(im, (0, cur_y))
+                cur_y += im.height
+            return res_im
+
+
+class ActionRecorderThread(QThread):
+    """무인 연속 액션 레코더 스레드. 마우스 클릭 실시간 감지 및 자동 스탬프 캡처"""
+    sig_action_recorded = Signal(QPixmap, QPoint, int)
+    sig_finished = Signal(int)
+    signal_action_captured = sig_action_recorded
+    signal_stopped = sig_finished
+
+    def __init__(self, target_monitor=-1, parent=None):
+        super().__init__(parent)
+        self.target_monitor = target_monitor
+        self.is_running = False
+        self.step_count = 0
+
+    @property
+    def running(self):
+        return self.is_running
+
+    def run(self):
+        import time
+        import win32api
+        import win32con
+        import win32gui
+
+        self.is_running = True
+        self.step_count = 0
+        last_state = 0
+        last_click_time = 0.0
+
+        while self.is_running:
+            time.sleep(0.035)
+            state = win32api.GetAsyncKeyState(win32con.VK_LBUTTON)
+            is_down = bool(state & 0x8000)
+
+            if is_down and not last_state:
+                now = time.time()
+                if now - last_click_time >= 0.25:
+                    last_click_time = now
+                    try:
+                        cursor_pos = win32gui.GetCursorPos()
+                        time.sleep(0.05)
+                        screens = MultiMonitorManager.get_screens()
+                        if 0 <= self.target_monitor < len(screens):
+                            pix = screens[self.target_monitor].grabWindow(0)
+                        else:
+                            pix = MultiMonitorManager.grab_full_virtual_desktop()
+
+                        self.step_count += 1
+                        self.sig_action_recorded.emit(pix, QPoint(cursor_pos[0], cursor_pos[1]), self.step_count)
+                    except Exception:
+                        pass
+            last_state = is_down
+
+        self.sig_finished.emit(self.step_count)
+
+    def stop(self):
+        self.is_running = False
+
+
+class RecordingFloatWidget(QWidget):
+    """무인 연속 액션 녹화 중 화면 구석에 상시 노출되는 콤팩트 플로팅 제어 위젯"""
+    sig_stop_requested = Signal()
+    signal_stop_requested = sig_stop_requested
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(260, 48)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setSpacing(8)
+
+        self.container = QFrame(self)
+        self.container.setStyleSheet("""
+            QFrame {
+                background-color: #0F172A;
+                border: 1px solid #334155;
+                border-radius: 18px;
+            }
+        """)
+        c_layout = QHBoxLayout(self.container)
+        c_layout.setContentsMargins(10, 4, 10, 4)
+        c_layout.setSpacing(8)
+
+        self.lbl_rec = QLabel("🔴 REC", self.container)
+        self.lbl_rec.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 11px;")
+
+        self.lbl_steps = QLabel("0단계", self.container)
+        self.lbl_steps.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 11px;")
+
+        self.btn_stop = QPushButton(tr("btn_stop_recording", "완료"), self.container)
+        self.btn_stop.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                border-radius: 10px;
+                padding: 3px 10px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        self.btn_stop.clicked.connect(self.sig_stop_requested.emit)
+
+        c_layout.addWidget(self.lbl_rec)
+        c_layout.addWidget(self.lbl_steps)
+        c_layout.addStretch(1)
+        c_layout.addWidget(self.btn_stop)
+
+        layout.addWidget(self.container)
+        self._drag_pos = QPoint()
+
+    def update_steps(self, count):
+        self.lbl_steps.setText(f"{count}단계")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = get_mouse_global_pos(event) - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and not self._drag_pos.isNull():
+            self.move(get_mouse_global_pos(event) - self._drag_pos)
+            event.accept()
+
 # 주석 직렬화 레지스트리 및 팩토리 (Annotation Registry & Factory)
 # ------------------------------------------------------------------------------
 ITEM_REGISTRY = {
@@ -3546,6 +4011,8 @@ class CaptureOverlayWidget(QWidget):
         self.end_pos = QPoint()
         self.selected_rect = QRect()
         self.magnet_rect = QRect()
+        self.snap_enabled = True
+        self.snapped_rect = QRect()
 
         self.mouse_pos = QPoint()
         self.handle_size = 8
@@ -3593,18 +4060,13 @@ class CaptureOverlayWidget(QWidget):
 
     def get_window_under_cursor(self, global_pt):
         try:
-            hwnd = win32gui.WindowFromPoint((global_pt.x(), global_pt.y()))
-            if hwnd:
-                rect = win32gui.GetWindowRect(hwnd)
-                # 오버레이 자기 자신 창인 경우 건너뜀
-                if hwnd == int(self.winId()):
-                    return QRect()
-                # 가상 데스크톱 좌표계에 맞게 변환
-                rx = rect[0] - self.virtual_rect.x()
-                ry = rect[1] - self.virtual_rect.y()
-                rw = rect[2] - rect[0]
-                rh = rect[3] - rect[1]
-                if rw > 20 and rh > 20 and rw < self.virtual_rect.width() and rh < self.virtual_rect.height():
+            elem_r = MagneticSnapEngine.get_element_rect(global_pt, exclude_hwnd=int(self.winId()))
+            if not elem_r.isEmpty():
+                rx = elem_r.x() - self.virtual_rect.x()
+                ry = elem_r.y() - self.virtual_rect.y()
+                rw = elem_r.width()
+                rh = elem_r.height()
+                if rw > 12 and rh > 12 and rw <= self.virtual_rect.width() and rh <= self.virtual_rect.height():
                     return QRect(rx, ry, rw, rh)
         except Exception:
             pass
@@ -3762,8 +4224,8 @@ class CaptureOverlayWidget(QWidget):
 
         # 3. 자석 스냅 가이드 표시 (선택 전)
         if self.selected_rect.isEmpty() and not self.magnet_rect.isEmpty():
-            painter.setPen(QPen(QColor(0, 230, 118, 200), 2, Qt.DashLine))
-            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(6, 182, 212, 230), 2, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(6, 182, 212, 35)))
             painter.drawRect(self.magnet_rect)
 
         # 4. 선택된 영역 밝게 클리어
@@ -3942,6 +4404,11 @@ class StudioCanvasWidget(QWidget):
         self.box_dimension_end = QPoint()
         self.ocr_is_label_mode = False
 
+        # 스마트 지우개 그리기용
+        self.drawing_eraser = False
+        self.eraser_start = QPoint()
+        self.eraser_end = QPoint()
+
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -4073,7 +4540,8 @@ class StudioCanvasWidget(QWidget):
     def push_undo(self):
         state = {
             "items": [item.clone() for item in self.items],
-            "stamp_index": self.next_stamp_index
+            "stamp_index": self.next_stamp_index,
+            "pixmap": self.pixmap.copy() if (self.pixmap and not self.pixmap.isNull()) else None
         }
         self.history.append(state)
 
@@ -4083,6 +4551,8 @@ class StudioCanvasWidget(QWidget):
         last_state = self.history.pop()
         self.items = last_state["items"]
         self.next_stamp_index = last_state["stamp_index"]
+        if "pixmap" in last_state and last_state["pixmap"] is not None:
+            self.pixmap = last_state["pixmap"]
         self.selected_item = None
         self.sig_item_selected.emit(None)
         self.update()
@@ -4237,6 +4707,60 @@ class StudioCanvasWidget(QWidget):
         dlg = OcrResultDialog(text, self.window())
         dlg.exec()
 
+
+    def apply_auto_pii_redaction(self):
+        """현재 캔버스 화면의 민감 개인정보(전화번호, 주민번호, 이메일, 계좌번호 등)를 자동 탐지하여 모자이크 블러 박스 자동 부착"""
+        if self.pixmap is None or self.pixmap.isNull():
+            return
+        comp_img = self.get_composed_image()
+        if comp_img and not comp_img.isNull():
+            target_img = comp_img
+        else:
+            target_img = self.pixmap.toImage()
+
+        img_byte = QByteArray()
+        buf = QBuffer(img_byte)
+        buf.open(QIODevice.WriteOnly)
+        target_img.save(buf, "PNG")
+        buf.close()
+
+        from PIL import Image
+        import io
+        pil_img = Image.open(io.BytesIO(bytes(img_byte)))
+
+        try:
+            from i18n_manager import I18nManager
+            cur_locale = I18nManager.instance().current_locale if I18nManager._instance else "ko"
+        except Exception:
+            cur_locale = "ko"
+        lang_map = {
+            "ko": "ko", "ja": "ja", "zh": "zh-Hans", "zh_tw": "zh-Hant",
+            "en": "en", "de": "de", "es": "es", "fr": "fr", "it": "it",
+            "pt": "pt", "ru": "ru", "vi": "vi", "id": "id",
+        }
+        ocr_lang = lang_map.get(cur_locale, "en")
+
+        self.sig_request_toast.emit(tr("btn_auto_pii", "개인정보 마스킹") + "...")
+        self._pii_thread = PiiWorkerThread(pil_img, ocr_lang)
+        self._pii_thread.sig_result.connect(self._on_pii_result)
+        self._pii_thread.start()
+
+    def _on_pii_result(self, rect_list, summary):
+        if not rect_list:
+            self.sig_request_toast.emit(tr("toast_pii_none", "감지된 개인정보가 없습니다."))
+            return
+
+        self.push_undo()
+        blur_st = dict(self.config.get("blur_style", DEFAULT_CONFIG["blur_style"]))
+        for r in rect_list:
+            item = BlurMosaicItem(r, blur_st)
+            self.items.append(item)
+
+        self.update()
+        self.sig_content_changed.emit()
+        msg = tr("toast_pii_found", "민감 개인정보 {count}건 자동 마스킹 완료 (Ctrl+Z 취소 가능)").replace("{count}", str(len(rect_list)))
+        self.sig_request_toast.emit(msg)
+
     def export_project_data(self):
         return {
             "raw_pixmap": self.pixmap,
@@ -4308,6 +4832,11 @@ class StudioCanvasWidget(QWidget):
                 self.ocr_is_label_mode = (self.current_mode == "OCR_LABEL")
                 self.ocr_start = pt
                 self.ocr_end = pt
+
+            elif self.current_mode == "ERASER":
+                self.drawing_eraser = True
+                self.eraser_start = pt
+                self.eraser_end = pt
 
             elif self.current_mode == "DIMENSION":
                 self.drawing_dimension = True
@@ -4509,6 +5038,9 @@ class StudioCanvasWidget(QWidget):
         elif self.drawing_ocr:
             self.ocr_end = pt
             self.update()
+        elif self.drawing_eraser:
+            self.eraser_end = pt
+            self.update()
         elif self.drawing_dimension:
             cur_pt = QPointF(pt)
             modifiers = QGuiApplication.keyboardModifiers()
@@ -4629,6 +5161,16 @@ class StudioCanvasWidget(QWidget):
                     self.update()
                     self.sig_content_changed.emit()
                 self.set_mode("SELECT")
+            elif self.drawing_eraser:
+                self.drawing_eraser = False
+                r = QRect(self.eraser_start, self.eraser_end).normalized()
+                if r.width() >= 4 and r.height() >= 4 and self.pixmap and not self.pixmap.isNull():
+                    self.push_undo()
+                    self.pixmap = SmartCleanupEngine.inpaint_rect(self.pixmap, r)
+                    self.sig_content_changed.emit()
+                    self.sig_request_toast.emit(tr("toast_eraser_done", "배경 스마트 지우개 적용 완료 (Ctrl+Z 되돌리기 가능)"))
+                self.set_mode("SELECT")
+                self.update()
             elif self.drawing_ocr:
                 self.drawing_ocr = False
                 r = QRect(self.ocr_start, self.ocr_end).normalized()
@@ -4958,6 +5500,14 @@ class StudioCanvasWidget(QWidget):
                 temp_blur.render_mosaic(painter, self.pixmap)
                 painter.restore()
 
+            elif self.drawing_eraser:
+                painter.save()
+                r = QRect(self.eraser_start, self.eraser_end).normalized()
+                painter.setPen(QPen(QColor(236, 72, 153), 2, Qt.DashLine))
+                painter.setBrush(QBrush(QColor(236, 72, 153, 50)))
+                painter.drawRect(r)
+                painter.restore()
+
             elif self.drawing_ocr:
                 painter.save()
                 r = QRect(self.ocr_start, self.ocr_end).normalized()
@@ -5111,6 +5661,155 @@ class StudioCanvasWidget(QWidget):
 # 6. 내보내기 & 파워포인트 연동 엔진 (Export Engine)
 # ==============================================================================
 class ExportEngine:
+    @staticmethod
+    def apply_window_frame_and_shadow(
+        img: Image.Image,
+        include_header: bool = True,
+        corner_radius: int = 12,
+        shadow_radius: int = 20,
+        shadow_offset: tuple = (0, 6),
+        shadow_opacity: float = 0.35,
+        bg_color: tuple = (248, 250, 252, 255),
+        border_color: tuple = (203, 213, 225, 255),
+        header_height: int = 32,
+        title: str = ""
+    ) -> Image.Image:
+        """
+        Notion / CleanShot X / macOS 스타일의 모던 윈도우 창틀과 소프트 드롭 섀도우를 이미지에 합성합니다.
+        외곽은 투명 알파(RGBA)로 완벽 마스킹되어 슬라이드나 문서에 깔끔하게 안착됩니다.
+        """
+        src = img.convert("RGBA")
+        w, h = src.size
+
+        win_w = w
+        win_h = h + (header_height if include_header else 0)
+
+        # 1. 둥근 모서리 마스크 (4x 수퍼샘플링으로 안티에일리어싱 극대화)
+        mask = Image.new("L", (win_w * 4, win_h * 4), 0)
+        draw_mask = ImageDraw.Draw(mask)
+        draw_mask.rounded_rectangle([0, 0, win_w * 4, win_h * 4], radius=corner_radius * 4, fill=255)
+        mask = mask.resize((win_w, win_h), Image.Resampling.LANCZOS)
+
+        win_body = Image.new("RGBA", (win_w, win_h), bg_color)
+        win_body_draw = ImageDraw.Draw(win_body)
+
+        if include_header:
+            header_rect = [0, 0, win_w, header_height]
+            win_body_draw.rectangle(header_rect, fill=(241, 245, 249, 255))
+            win_body_draw.line([(0, header_height - 1), (win_w, header_height - 1)], fill=border_color, width=1)
+
+            # 3색 신호등 버튼 (빨/노/초)
+            dot_radius = 5
+            dot_y = header_height // 2
+            dots = [
+                (16, (255, 95, 86, 255), (224, 68, 62, 255)),
+                (32, (255, 189, 46, 255), (214, 158, 30, 255)),
+                (48, (39, 201, 63, 255), (26, 171, 46, 255))
+            ]
+            for cx, c_fill, c_stroke in dots:
+                win_body_draw.ellipse(
+                    [cx - dot_radius, dot_y - dot_radius, cx + dot_radius, dot_y + dot_radius],
+                    fill=c_fill,
+                    outline=c_stroke,
+                    width=1
+                )
+            win_body.paste(src, (0, header_height), src)
+        else:
+            win_body.paste(src, (0, 0), src)
+
+        win_body_draw.rounded_rectangle([0, 0, win_w - 1, win_h - 1], radius=corner_radius, outline=border_color, width=1)
+
+        window_surf = Image.new("RGBA", (win_w, win_h), (0, 0, 0, 0))
+        window_surf.paste(win_body, (0, 0), mask=mask)
+
+        # 2. 소프트 섀도우 패딩 및 블러
+        pad_x = shadow_radius * 2
+        pad_y = shadow_radius * 2 + abs(shadow_offset[1])
+        canvas_w = win_w + pad_x * 2
+        canvas_h = win_h + pad_y * 2
+
+        shadow_mask = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        s_draw = ImageDraw.Draw(shadow_mask)
+
+        sx1 = pad_x + shadow_offset[0]
+        sy1 = pad_y + shadow_offset[1]
+        sx2 = sx1 + win_w
+        sy2 = sy1 + win_h
+
+        alpha_val = int(255 * shadow_opacity)
+        s_draw.rounded_rectangle([sx1, sy1, sx2, sy2], radius=corner_radius, fill=(0, 0, 0, alpha_val))
+        shadow_blurred = shadow_mask.filter(ImageFilter.GaussianBlur(shadow_radius))
+
+        # 3. 그림자 + 윈도우 표면 결합
+        final_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        final_canvas.paste(shadow_blurred, (0, 0), shadow_blurred)
+        final_canvas.paste(window_surf, (pad_x, pad_y), window_surf)
+
+        return final_canvas
+
+    @staticmethod
+    def send_to_hwp(pil_img: Image.Image, step_title: str = None, hwp_layout: dict = None) -> dict:
+        """
+        열려 있는 한컴 한글(HWP) 문서에 이미지를 클립보드/COM으로 삽입하고,
+        선택 시 상단 단계 제목 텍스트를 자동 작성합니다.
+        """
+        if win32com is None:
+            return {"success": False, "error": "win32com is not available"}
+
+        try:
+            ExportEngine.copy_to_clipboard(pil_img)
+        except Exception as ce:
+            return {"success": False, "error": f"Clipboard error: {ce}"}
+
+        hwp = None
+        try:
+            hwp = win32com.client.GetActiveObject("HWPFrame.HwpObject")
+        except Exception:
+            try:
+                hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
+                hwp.XHwpWindows.Item(0).Visible = True
+                hwp.HAction.Run("FileNew")
+            except Exception as de:
+                return {"success": False, "error": f"HWP Launch Error: {de}"}
+
+        if not hwp:
+            return {"success": False, "error": "Cannot connect to HWP"}
+
+        try:
+            try:
+                hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+            except Exception:
+                pass
+
+            try:
+                hwp.XHwpWindows.Item(0).Visible = True
+            except Exception:
+                pass
+
+            layout_cfg = hwp_layout or {}
+            include_title = layout_cfg.get("include_title", True)
+            if include_title and step_title:
+                act = hwp.CreateAction("InsertText")
+                pset = act.CreateSet()
+                pset.SetItem("Text", step_title + "\n")
+                act.Execute(pset)
+
+            hwp.HAction.Run("Paste")
+            hwp.HAction.Run("BreakPara")
+
+            try:
+                hwnd = win32gui.FindWindow("HwpMainEditWnd", None)
+                if not hwnd:
+                    hwnd = win32gui.FindWindow("HWP", None)
+                if hwnd:
+                    ExportEngine.activate_window(hwnd)
+            except Exception:
+                pass
+
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     @staticmethod
     def qimage_to_pil(qimg: QImage) -> Image.Image:
         qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
@@ -5699,6 +6398,39 @@ class ExportEngine:
         return output_path
 
     @staticmethod
+    def export_to_animated_gif(pil_images: list, output_path: str, interval_sec: float = 1.5) -> str:
+        """
+        다단계 이미지들을 순차적으로 보여주는 초경량 루프 애니메이션 GIF를 생성합니다.
+        메신저(슬랙, 카카오톡), 노션, 위키 등에 바로 공유할 수 있습니다.
+        """
+        if not pil_images:
+            raise ValueError("No images provided for GIF export")
+
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        frames = []
+        for im in pil_images:
+            rgb = Image.new("RGB", im.size, (255, 255, 255))
+            if im.mode == "RGBA":
+                rgb.paste(im, mask=im.split()[3])
+            else:
+                rgb.paste(im)
+            frames.append(rgb)
+
+        duration_ms = max(200, int(interval_sec * 1000))
+        frames[0].save(
+            output_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration_ms,
+            loop=0,
+            optimize=True
+        )
+        return output_path
+
+    @staticmethod
     def export_to_html(steps: list, output_path: str, title: str = "Manual Studio Interactive Guide") -> str:
         """단일 독립 실행형 반응형 HTML 매뉴얼 파일 생성 (인쇄/PDF 최적화 내장)"""
         out_dir = os.path.dirname(os.path.abspath(output_path))
@@ -5708,26 +6440,35 @@ class ExportEngine:
         step_cards_html = []
         nav_items_html = []
         for i, step in enumerate(steps):
-            s_title = step.get("title", f"Step {i+1}")
+            num = step.get("step_num", i + 1)
+            s_title = step.get("title", f"Step {num}")
             s_desc = step.get("description", "")
+            img_b64 = step.get("image_b64", "")
             img_file = step.get("image_file", "")
-            if img_file and os.path.isabs(img_file) and out_dir:
-                try:
-                    rel_img = os.path.relpath(img_file, out_dir).replace("\\", "/")
-                except Exception:
+
+            if img_b64:
+                src_to_use = img_b64
+            elif img_file:
+                if os.path.isabs(img_file) and out_dir:
+                    try:
+                        rel_img = os.path.relpath(img_file, out_dir).replace("\\", "/")
+                    except Exception:
+                        rel_img = img_file.replace("\\", "/")
+                else:
                     rel_img = img_file.replace("\\", "/")
+                src_to_use = rel_img
             else:
-                rel_img = img_file.replace("\\", "/")
+                src_to_use = ""
 
-            nav_items_html.append(f'<li><a href="#step-{i+1}" class="nav-link"><span class="step-num">{i+1}</span> {s_title}</a></li>')
+            nav_items_html.append(f'<li><a href="#step-{num}" class="nav-link"><span class="step-num">{num}</span> {s_title}</a></li>')
 
-            img_tag = f'<div class="step-image-box"><img src="{rel_img}" alt="{s_title}" class="step-img" loading="lazy" /></div>' if rel_img else ''
+            img_tag = f'<div class="step-image-box"><img src="{src_to_use}" alt="{s_title}" class="step-img" loading="lazy" /></div>' if src_to_use else ''
             desc_tag = f'<p class="step-desc">{s_desc}</p>' if s_desc else ''
 
             step_cards_html.append(f"""
-            <section id="step-{i+1}" class="step-card">
+            <section id="step-{num}" class="step-card">
               <div class="step-header">
-                <span class="step-badge">STEP {i+1:02d}</span>
+                <span class="step-badge">STEP {num:02d}</span>
                 <h2 class="step-title">{s_title}</h2>
               </div>
               {desc_tag}
@@ -6209,6 +6950,218 @@ class RibbonIconProvider:
 
 
 # ==============================================================================
+# ==============================================================================
+# 7-2. 하단 타임라인 스토리보드 필름스트립 위젯 (StepCardWidget & FilmstripDockWidget)
+# ==============================================================================
+class StepCardWidget(QFrame):
+    sig_clicked = Signal(int)
+    sig_delete = Signal(int)
+    sig_duplicate = Signal(int)
+    sig_move_left = Signal(int)
+    sig_move_right = Signal(int)
+
+    def __init__(self, step_idx: int, step_data: dict, is_selected: bool = False, parent=None):
+        super().__init__(parent)
+        self.step_idx = step_idx
+        self.step_data = step_data
+        self.is_selected = is_selected
+        self.setFixedSize(110, 78)
+        self.setCursor(Qt.PointingHandCursor)
+        self.init_ui()
+
+    def init_ui(self):
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(4, 3, 4, 3)
+        vbox.setSpacing(2)
+
+        step_num = self.step_data.get("step_num", self.step_idx + 1)
+        self.lbl_num = QLabel(f"Step {step_num}", self)
+        self.lbl_num.setAlignment(Qt.AlignCenter)
+        self.lbl_num.setFixedHeight(16)
+
+        self.lbl_thumb = QLabel(self)
+        self.lbl_thumb.setAlignment(Qt.AlignCenter)
+        self.lbl_thumb.setFixedHeight(50)
+        thumb_pix = self.step_data.get("thumbnail")
+        if thumb_pix and not thumb_pix.isNull():
+            self.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.lbl_thumb.setText("빈 스텝")
+            self.lbl_thumb.setStyleSheet("color: #94A3B8; font-size: 10px;")
+
+        vbox.addWidget(self.lbl_num)
+        vbox.addWidget(self.lbl_thumb)
+        self.update_style()
+
+    def update_style(self):
+        if self.is_selected:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #EFF6FF;
+                    border: 2px solid #2563EB;
+                    border-radius: 6px;
+                }
+                QLabel {
+                    color: #1D4ED8;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #F8FAFC;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    border-color: #3B82F6;
+                    background-color: #F1F5F9;
+                }
+                QLabel {
+                    color: #475569;
+                    font-size: 10.5px;
+                    font-weight: 500;
+                }
+            """)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.sig_clicked.emit(self.step_idx)
+        elif event.button() == Qt.RightButton:
+            self.show_context_menu(get_mouse_global_pos(event))
+        super().mousePressEvent(event)
+
+    def show_context_menu(self, pos):
+        menu = QMenu(self)
+        act_select = menu.addAction(f"Step {self.step_idx + 1} 편집 전환")
+        act_dup = menu.addAction("스텝 복제")
+        menu.addSeparator()
+        act_left = menu.addAction("◀ 앞으로 이동")
+        act_right = menu.addAction("▶ 뒤로 이동")
+        menu.addSeparator()
+        act_del = menu.addAction("🗑️ 스텝 삭제")
+
+        act = menu.exec(pos)
+        if act == act_select:
+            self.sig_clicked.emit(self.step_idx)
+        elif act == act_dup:
+            self.sig_duplicate.emit(self.step_idx)
+        elif act == act_left:
+            self.sig_move_left.emit(self.step_idx)
+        elif act == act_right:
+            self.sig_move_right.emit(self.step_idx)
+        elif act == act_del:
+            self.sig_delete.emit(self.step_idx)
+
+
+class FilmstripDockWidget(QWidget):
+    sig_step_selected = Signal(int)
+    sig_add_step = Signal()
+    sig_delete_step = Signal(int)
+    sig_duplicate_step = Signal(int)
+    sig_move_step = Signal(int, int)
+    sig_export_all_ppt = Signal()
+    sig_export_all_hwp = Signal()
+    sig_export_webbook = Signal()
+    sig_export_gif = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.steps = []
+        self.active_idx = 0
+        self.setFixedHeight(115)
+        self.init_ui()
+
+    def init_ui(self):
+        root_lay = QVBoxLayout(self)
+        root_lay.setContentsMargins(6, 4, 6, 4)
+        root_lay.setSpacing(4)
+
+        header_bar = QHBoxLayout()
+        header_bar.setContentsMargins(2, 0, 2, 0)
+        header_bar.setSpacing(6)
+
+        self.lbl_title = QLabel("🎞️ 스토리보드 타임라인 (0단계)", self)
+        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E293B;")
+        header_bar.addWidget(self.lbl_title)
+
+        self.btn_add_step = QPushButton(tr("btn_add_step", "+ 새 단계"), self)
+        self.btn_add_step.setToolTip("현재 작업을 보존하고 새로운 빈 캡처 단계를 추가합니다.")
+        self.btn_add_step.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_add_step.clicked.connect(self.sig_add_step.emit)
+        header_bar.addWidget(self.btn_add_step)
+
+        self.btn_export_all_ppt = QPushButton(tr("btn_export_all_ppt", "전체 PPT 전송"), self)
+        self.btn_export_all_ppt.setToolTip("스토리보드의 모든 단계를 파워포인트 슬라이드로 일괄 생성합니다.")
+        self.btn_export_all_ppt.setStyleSheet("background-color: #FFF7ED; color: #C2410C; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_export_all_ppt.clicked.connect(self.sig_export_all_ppt.emit)
+        header_bar.addWidget(self.btn_export_all_ppt)
+
+        self.btn_export_all_hwp = QPushButton(tr("btn_export_all_hwp", "전체 한글 전송"), self)
+        self.btn_export_all_hwp.setToolTip("스토리보드의 모든 단계를 한컴 한글 문서에 순서대로 자동 삽입합니다.")
+        self.btn_export_all_hwp.setStyleSheet("background-color: #EFFDF5; color: #15803D; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_export_all_hwp.clicked.connect(self.sig_export_all_hwp.emit)
+        header_bar.addWidget(self.btn_export_all_hwp)
+
+        self.btn_export_webbook = QPushButton(tr("btn_export_webbook", "웹북 내보내기"), self)
+        self.btn_export_webbook.setToolTip(tr("tip_export_webbook", "목차, 실시간 검색, 라이트박스 뷰어가 내장된 단일 HTML 웹북 매뉴얼로 내보냅니다."))
+        self.btn_export_webbook.setStyleSheet("background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_export_webbook.clicked.connect(self.sig_export_webbook.emit)
+        header_bar.addWidget(self.btn_export_webbook)
+
+        self.btn_export_gif = QPushButton(tr("btn_export_gif", "숏클립 GIF"), self)
+        self.btn_export_gif.setToolTip(tr("tip_export_gif", "스토리보드 단계를 1.5초 간격으로 전환되는 애니메이션 GIF 파일로 일괄 변환합니다."))
+        self.btn_export_gif.setStyleSheet("background-color: #FAF5FF; color: #7E22CE; border: 1px solid #E9D5FF; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_export_gif.clicked.connect(self.sig_export_gif.emit)
+        header_bar.addWidget(self.btn_export_gif)
+
+        header_bar.addStretch(1)
+        root_lay.addLayout(header_bar)
+
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setFixedHeight(84)
+        self.scroll.setStyleSheet("QScrollArea { background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 6px; }")
+
+        self.cards_container = QWidget()
+        self.cards_layout = QHBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(4, 2, 4, 2)
+        self.cards_layout.setSpacing(6)
+        self.cards_layout.addStretch(1)
+
+        self.scroll.setWidget(self.cards_container)
+        root_lay.addWidget(self.scroll)
+
+    def set_steps(self, steps: list, active_idx: int = 0):
+        self.steps = steps
+        self.active_idx = max(0, min(active_idx, len(steps) - 1)) if steps else 0
+        self.rebuild_cards()
+
+    def rebuild_cards(self):
+        while self.cards_layout.count() > 0:
+            item = self.cards_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        count = len(self.steps)
+        self.lbl_title.setText(f"🎞️ 스토리보드 타임라인 ({count}단계)")
+
+        for idx, step_data in enumerate(self.steps):
+            is_sel = (idx == self.active_idx)
+            card = StepCardWidget(idx, step_data, is_selected=is_sel, parent=self.cards_container)
+            card.sig_clicked.connect(self.sig_step_selected.emit)
+            card.sig_delete.connect(self.sig_delete_step.emit)
+            card.sig_duplicate.connect(self.sig_duplicate_step.emit)
+            card.sig_move_left.connect(lambda i=idx: self.sig_move_step.emit(i, i - 1))
+            card.sig_move_right.connect(lambda i=idx: self.sig_move_step.emit(i, i + 1))
+            self.cards_layout.addWidget(card)
+
+        self.cards_layout.addStretch(1)
+
 # 8. 스튜디오 메인 윈도우 (ManualStudioWindow)
 # ==============================================================================
 class ManualStudioWindow(QMainWindow):
@@ -6219,6 +7172,8 @@ class ManualStudioWindow(QMainWindow):
         self.last_capture_rect = None
         self.overlay_window = None
         self.current_target_monitor = self.config.get("target_monitor", -1)
+        self.storyboard_steps = []
+        self.current_step_idx = 0
 
         loc = self.config.get("locale", "auto")
         if loc == "auto":
@@ -6231,10 +7186,10 @@ class ManualStudioWindow(QMainWindow):
         self.update_window_title()
         self.resize(1240, 780)
 
-        # 윈도우 및 작업표시줄 아이콘 설정 (DragonRPA CI)
-        ci_pix = get_dragon_rpa_ci_pixmap()
-        if not ci_pix.isNull():
-            self.setWindowIcon(QIcon(ci_pix))
+        # 윈도우 및 작업표시줄 아이콘 설정 (Manual Studio 전용 앱 아이콘)
+        app_icon = get_manual_studio_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
 
         # 폰트 매니저 초기화 및 등록된 폰트 로드
         CustomFontManager.instance().load_all_fonts(self.config.get("custom_fonts", []))
@@ -6415,6 +7370,19 @@ class ManualStudioWindow(QMainWindow):
         self.combo_tab_monitor.setFixedWidth(100)
         self.combo_tab_monitor.currentIndexChanged.connect(self.on_tab_monitor_changed)
 
+        self.btn_scroll_stitch = QPushButton(tr("btn_scroll_stitch", "스크롤 스티칭"), self)
+        self.btn_scroll_stitch.setToolTip(tr("tip_scroll_stitch", "긴 웹페이지나 ERP 테이블을 스크롤하여 1장의 파노라마 이미지로 합성"))
+        self.btn_scroll_stitch.setStyleSheet("background-color: #F0FDF4; color: #15803D; border-color: #BBF7D0; font-weight: bold;")
+        self.btn_scroll_stitch.clicked.connect(self.action_scroll_stitch)
+
+        self.btn_action_record = QPushButton(tr("btn_action_record", "액션 녹화"), self)
+        self.btn_action_record.setToolTip(tr("tip_action_record", "클릭할 때마다 화면 캡처 및 번호 스탬프를 스토리보드에 자동 생성"))
+        self.btn_action_record.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border-color: #FECACA; font-weight: bold;")
+        self.btn_action_record.clicked.connect(self.action_toggle_action_recorder)
+        self.btn_action_recorder = self.btn_action_record
+        self.toggle_action_recorder = self.action_toggle_action_recorder
+        self.start_scroll_stitch_capture = self.action_scroll_stitch
+
         cap_grid = QGridLayout()
         cap_grid.setContentsMargins(0, 0, 0, 0)
         cap_grid.setSpacing(2)
@@ -6422,6 +7390,8 @@ class ManualStudioWindow(QMainWindow):
         cap_grid.addWidget(self.btn_drag_capture, 1, 0)
         cap_grid.addWidget(self.btn_sub_capture, 0, 1)
         cap_grid.addWidget(self.create_stack_field(tr("lbl_screen_select", "화면"), self.combo_tab_monitor, "lbl_screen_select"), 1, 1)
+        cap_grid.addWidget(self.btn_scroll_stitch, 0, 2)
+        cap_grid.addWidget(self.btn_action_record, 1, 2)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture"))
         tools_layout.addWidget(self.create_separator())
 
@@ -6530,12 +7500,23 @@ class ManualStudioWindow(QMainWindow):
         self.btn_draft_stamp.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border-color: #FECACA; font-weight: bold;")
         self.btn_draft_stamp.clicked.connect(self.action_add_draft_stamp)
 
+        self.btn_mode_eraser = QPushButton(tr("btn_smart_eraser", "스마트 지우개"), self)
+        self.btn_mode_eraser.setCheckable(True)
+        self.btn_mode_eraser.setToolTip(tr("tip_smart_eraser", "[X] 불필요한 텍스트나 워터마크를 드래그하여 배경과 매끄럽게 지우기"))
+        self.btn_mode_eraser.clicked.connect(lambda: self.switch_mode("ERASER"))
+
+        self.btn_auto_pii = QPushButton(tr("btn_auto_pii", "개인정보 마스킹"), self)
+        self.btn_auto_pii.setToolTip(tr("tip_auto_pii", "[Shift+M] 화면 내 전화번호, 주민번호, 이메일, 계좌번호 자동 탐색 및 모자이크 마스킹"))
+        self.btn_auto_pii.clicked.connect(self.action_auto_pii)
+
         box_grid = QGridLayout()
         box_grid.setContentsMargins(0, 0, 0, 0)
         box_grid.setSpacing(2)
         box_grid.addWidget(self.btn_mode_box, 0, 0)
         box_grid.addWidget(self.btn_mode_blur, 1, 0)
-        box_grid.addWidget(self.btn_draft_stamp, 0, 1, 2, 1)
+        box_grid.addWidget(self.btn_mode_eraser, 0, 1)
+        box_grid.addWidget(self.btn_auto_pii, 1, 1)
+        box_grid.addWidget(self.btn_draft_stamp, 0, 2, 2, 1)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security"))
         tools_layout.addWidget(self.create_separator())
 
@@ -6666,15 +7647,85 @@ class ManualStudioWindow(QMainWindow):
         """)
         self.btn_send_slides.clicked.connect(self.action_send_to_google_slides)
 
+        self.btn_export_hwp = QPushButton(tr("btn_export_hwp", "한글 전송"), self)
+        self.btn_export_hwp.setObjectName("btn_export_hwp")
+        self.btn_export_hwp.setToolTip(f"{tr('tip_export_hwp', '한컴 한글(HWP) 문서에 이미지와 단계 제목을 자동 삽입합니다.')} (Shift+F10 / F12)")
+        self.btn_export_hwp.setStyleSheet('''
+            QPushButton {
+                background-color: #ECFDF5;
+                color: #047857;
+                border: 1px solid #A7F3D0;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QPushButton:hover {
+                background-color: #D1FAE5;
+                border-color: #10B981;
+                color: #065F46;
+            }
+        ''')
+        self.btn_export_hwp.clicked.connect(self.action_send_to_hwp)
+
+        self.btn_toggle_window_frame = QPushButton(tr("btn_window_frame", "액자 프레임"), self)
+        self.btn_toggle_window_frame.setObjectName("btn_toggle_window_frame")
+        self.btn_toggle_window_frame.setCheckable(True)
+        self.btn_toggle_window_frame.setChecked(bool(self.config.get("enable_window_frame", True)))
+        self.btn_toggle_window_frame.setToolTip(tr("tip_window_frame", "모던 윈도우 창틀 및 소프트 섀도우 액자 효과를 켜거나 끕니다. (기본값: 켜짐)"))
+        self.btn_toggle_window_frame.setStyleSheet('''
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QPushButton:checked {
+                background-color: #EDE9FE;
+                color: #6D28D9;
+                border-color: #C4B5FD;
+            }
+        ''')
+        self.btn_toggle_window_frame.clicked.connect(self.on_toggle_window_frame)
+
+        self.btn_filmstrip_toggle = QPushButton(tr("btn_filmstrip_toggle", "스토리보드"), self)
+        self.btn_filmstrip_toggle.setObjectName("btn_filmstrip_toggle")
+        self.btn_filmstrip_toggle.setCheckable(True)
+        self.btn_filmstrip_toggle.setChecked(bool(self.config.get("filmstrip_visible", True)))
+        self.btn_filmstrip_toggle.setToolTip(tr("tip_filmstrip_toggle", "하단 다단계 스토리보드 타임라인 독을 표시하거나 숨깁니다."))
+        self.btn_filmstrip_toggle.setStyleSheet('''
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QPushButton:checked {
+                background-color: #E0F2FE;
+                color: #0369A1;
+                border-color: #BAE6FD;
+            }
+        ''')
+        self.btn_filmstrip_toggle.clicked.connect(self.on_toggle_filmstrip)
+
         ppt_grid = QGridLayout()
         ppt_grid.setContentsMargins(0, 0, 0, 0)
         ppt_grid.setSpacing(2)
         ppt_grid.addWidget(self.btn_export, 0, 0)
         ppt_grid.addWidget(self.btn_send_slides, 0, 1)
-        ppt_grid.addWidget(self.btn_ppt_fit, 0, 2)
-        ppt_grid.addWidget(self.chk_ppt_title, 1, 0)
-        ppt_grid.addWidget(self.btn_renumber_steps, 1, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_export", "프레젠테이션 출력"), ppt_grid, "grp_ppt_export"))
+        ppt_grid.addWidget(self.btn_export_hwp, 0, 2)
+        ppt_grid.addWidget(self.btn_ppt_fit, 0, 3)
+        ppt_grid.addWidget(self.btn_toggle_window_frame, 1, 0)
+        ppt_grid.addWidget(self.chk_ppt_title, 1, 1)
+        ppt_grid.addWidget(self.btn_renumber_steps, 1, 2)
+        ppt_grid.addWidget(self.btn_filmstrip_toggle, 1, 3)
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_export", "문서·프레젠테이션 출력"), ppt_grid, "grp_ppt_export"))
 
         tools_layout.addStretch(1)
 
@@ -7258,6 +8309,20 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.sig_item_selected.connect(self.on_canvas_item_selected)
         self.scroll_area.setWidget(self.canvas)
         main_layout.addWidget(self.scroll_area, 1)
+
+        # 2-2. 하단 타임라인 스토리보드 독
+        self.filmstrip = FilmstripDockWidget(self)
+        self.filmstrip.setVisible(bool(self.config.get("filmstrip_visible", True)))
+        self.filmstrip.sig_step_selected.connect(self.on_filmstrip_step_selected)
+        self.filmstrip.sig_add_step.connect(self.on_filmstrip_add_step)
+        self.filmstrip.sig_delete_step.connect(self.on_filmstrip_delete_step)
+        self.filmstrip.sig_duplicate_step.connect(self.on_filmstrip_duplicate_step)
+        self.filmstrip.sig_move_step.connect(self.on_filmstrip_move_step)
+        self.filmstrip.sig_export_all_ppt.connect(self.action_export_all_ppt)
+        self.filmstrip.sig_export_all_hwp.connect(self.action_export_all_hwp)
+        self.filmstrip.sig_export_webbook.connect(self.action_export_webbook)
+        self.filmstrip.sig_export_gif.connect(self.action_export_gif)
+        main_layout.addWidget(self.filmstrip)
 
         # 3. 하단 상태바
         status_bar_widget = QWidget(self)
@@ -8158,6 +9223,15 @@ class ManualStudioWindow(QMainWindow):
         qimg = self.canvas.get_composed_image()
         if qimg:
             pil_img = ExportEngine.qimage_to_pil(qimg)
+            if self.config.get("enable_window_frame", True):
+                frame_cfg = self.config.get("window_frame_style", {})
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
             try:
                 ExportEngine.copy_to_clipboard(pil_img)
                 self.show_toast("클립보드에 이미지 복사 완료 (Ctrl+V)")
@@ -8177,6 +9251,7 @@ class ManualStudioWindow(QMainWindow):
             "ARROW": ("btn_mode_arrow", "직선 화살표"),
             "BOX": ("btn_mode_box", "사각 박스"),
             "BLUR": ("btn_mode_blur", "모자이크 블러"),
+            "ERASER": ("btn_smart_eraser", "스마트 지우개"),
             "CALLOUT": ("btn_mode_callout", "설명 말풍선"),
             "TEXT": ("btn_mode_text", "텍스트 라벨"),
             "HOTKEY": ("btn_mode_hotkey", "단축키 배지"),
@@ -8206,6 +9281,7 @@ class ManualStudioWindow(QMainWindow):
         self.hotkey_thread.sig_sub_capture.connect(self.start_sub_capture)
         self.hotkey_thread.sig_export.connect(self.export_to_ppt_and_clipboard)
         self.hotkey_thread.sig_slides_export.connect(self.action_send_to_google_slides)
+        self.hotkey_thread.sig_hwp_export.connect(self.action_send_to_hwp)
         self.hotkey_thread.start()
 
     def switch_mode(self, mode):
@@ -8220,6 +9296,8 @@ class ManualStudioWindow(QMainWindow):
         self.btn_mode_box.setChecked(mode == "BOX")
         if hasattr(self, "btn_mode_blur"):
             self.btn_mode_blur.setChecked(mode == "BLUR")
+        if hasattr(self, "btn_mode_eraser"):
+            self.btn_mode_eraser.setChecked(mode == "ERASER")
         if hasattr(self, "btn_mode_callout"):
             self.btn_mode_callout.setChecked(mode == "CALLOUT")
         self.btn_mode_text.setChecked(mode == "TEXT")
@@ -9432,6 +10510,26 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.next_stamp_index = 1
         self.canvas.history.clear()
 
+        # 스토리보드 동기화 (새 캡처 반영)
+        if len(self.storyboard_steps) == 0:
+            self.storyboard_steps.append({
+                "step_num": 1,
+                "title": "Step 1. [단계명 입력]",
+                "raw_pixmap": pixmap.copy(),
+                "items": [],
+                "next_stamp_index": 1,
+                "thumbnail": pixmap.copy()
+            })
+            self.current_step_idx = 0
+        else:
+            if 0 <= self.current_step_idx < len(self.storyboard_steps):
+                step = self.storyboard_steps[self.current_step_idx]
+                step["raw_pixmap"] = pixmap.copy()
+                step["items"] = []
+                step["thumbnail"] = pixmap.copy()
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+
         # 창 전면 활성화
         self._restore_window_after_capture(True)
 
@@ -9457,6 +10555,17 @@ class ManualStudioWindow(QMainWindow):
             return
 
         pil_img = ExportEngine.qimage_to_pil(qimg)
+
+        # 창틀 & 소프트 섀도우 액자 효과 (기본값 ON, 토글 가능)
+        if self.config.get("enable_window_frame", True):
+            frame_cfg = self.config.get("window_frame_style", {})
+            pil_img = ExportEngine.apply_window_frame_and_shadow(
+                pil_img,
+                include_header=frame_cfg.get("include_header", True),
+                corner_radius=frame_cfg.get("corner_radius", 12),
+                shadow_radius=frame_cfg.get("shadow_radius", 20),
+                shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+            )
 
         # 2. PPT 슬라이드 최적화 가로폭 리사이즈
         target_w = self.config.get("target_width", 960)
@@ -9895,11 +11004,18 @@ class ManualStudioWindow(QMainWindow):
             self.hide_keytips()
             return
         elif key == Qt.Key_F10:
-            self.export_to_ppt_and_clipboard()
+            if modifiers & Qt.ShiftModifier:
+                self.action_send_to_hwp()
+            else:
+                self.export_to_ppt_and_clipboard()
             self.hide_keytips()
             return
         elif key == Qt.Key_F11:
             self.action_send_to_google_slides()
+            self.hide_keytips()
+            return
+        elif key == Qt.Key_F12:
+            self.action_send_to_hwp()
             self.hide_keytips()
             return
 
@@ -9914,6 +11030,10 @@ class ManualStudioWindow(QMainWindow):
                     return
                 elif key == Qt.Key_D:
                     self.switch_mode("BOX_DIMENSION")
+                    self.hide_keytips()
+                    return
+                elif key == Qt.Key_M:
+                    self.canvas.apply_auto_pii_redaction()
                     self.hide_keytips()
                     return
 
@@ -9931,6 +11051,7 @@ class ManualStudioWindow(QMainWindow):
                 Qt.Key_R: "WORDART",
                 Qt.Key_O: "OCR",
                 Qt.Key_D: "DIMENSION",
+                Qt.Key_X: "ERASER",
             }
             if key in mode_map:
                 self.switch_mode(mode_map[key])
@@ -10143,6 +11264,502 @@ class ManualStudioWindow(QMainWindow):
                 except Exception:
                     pass
         event.accept()
+
+
+    def on_toggle_window_frame(self):
+        cur = self.btn_toggle_window_frame.isChecked()
+        self.config["enable_window_frame"] = cur
+        save_config(self.config)
+        status_text = "켜짐 (ON)" if cur else "꺼짐 (OFF)"
+        self.show_toast(f"창틀 & 소프트 섀도우 액자 효과: {status_text}")
+
+    def on_toggle_filmstrip(self):
+        cur = self.btn_filmstrip_toggle.isChecked()
+        self.config["filmstrip_visible"] = cur
+        save_config(self.config)
+        self.filmstrip.setVisible(cur)
+
+    def action_auto_pii(self):
+        if hasattr(self, "canvas") and self.canvas:
+            self.canvas.apply_auto_pii_redaction()
+
+    def action_scroll_stitch(self):
+        """현재 스토리보드의 스텝들을 스티칭하거나, 파일 선택을 통해 여러 이미지를 1장의 수직 파노라마로 합성"""
+        steps = self.filmstrip.get_all_steps() if hasattr(self, "filmstrip") else []
+        if len(steps) >= 2:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self,
+                tr("btn_scroll_stitch", "스크롤 스티칭"),
+                f"현재 스토리보드의 {len(steps)}개 단계를 1장의 긴 이미지로 합성하시겠습니까?\n('아니오' 선택 시 외부 이미지 파일 선택)",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Yes:
+                pil_imgs = []
+                for s in steps:
+                    qimg = s.get("composed_pixmap", s.get("raw_pixmap")).toImage()
+                    pil_imgs.append(ExportEngine.qimage_to_pil(qimg))
+                stitched = ScrollStitchEngine.stitch_images(pil_imgs)
+                if stitched:
+                    res_pixmap = ExportEngine.pil_to_qpixmap(stitched)
+                    self.canvas.push_undo()
+                    self.canvas.set_pixmap(res_pixmap)
+                    self.show_toast(tr("toast_stitch_success", "스크롤 스티칭 완료 ({count}개 프레임 합성)").replace("{count}", str(len(pil_imgs))))
+                return
+            elif reply == QMessageBox.Cancel:
+                return
+
+        from PySide6.QtWidgets import QFileDialog
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            tr("btn_scroll_stitch", "스크롤 스티칭") + " - 이미지 선택",
+            "",
+            "이미지 파일 (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if files and len(files) >= 2:
+            stitched = ScrollStitchEngine.stitch_images(files)
+            if stitched:
+                res_pixmap = ExportEngine.pil_to_qpixmap(stitched)
+                self.canvas.push_undo()
+                self.canvas.set_pixmap(res_pixmap)
+                self.show_toast(tr("toast_stitch_success", "스크롤 스티칭 완료 ({count}개 프레임 합성)").replace("{count}", str(len(files))))
+
+    def action_toggle_action_recorder(self):
+        """무인 연속 액션 레코더 시작/정지 토글"""
+        if hasattr(self, "_action_recorder_thread") and self._action_recorder_thread and self._action_recorder_thread.isRunning():
+            self._on_stop_action_recorder()
+            return
+
+        target_mon = getattr(self, "current_tab_monitor", -1)
+        self._action_recorder_thread = ActionRecorderThread(target_monitor=target_mon, parent=self)
+        self._action_recorder_thread.sig_action_recorded.connect(self._on_action_recorded)
+
+        if not hasattr(self, "_recording_float_widget") or not self._recording_float_widget:
+            self._recording_float_widget = RecordingFloatWidget()
+            self._recording_float_widget.sig_stop_requested.connect(self._on_stop_action_recorder)
+
+        v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+        self._recording_float_widget.move(v_rect.right() - 280, v_rect.top() + 40)
+        self._recording_float_widget.update_steps(0)
+        self._recording_float_widget.show()
+
+        self._action_recorder_thread.start()
+        self.showMinimized()
+        self.show_toast(tr("toast_recording_started", "무인 액션 녹화 시작! 화면을 클릭하면 스텝이 자동 생성됩니다."))
+
+    def _on_action_recorded(self, pixmap, click_pt, step_idx):
+        if not pixmap or pixmap.isNull():
+            return
+
+        stamp_st = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+        stamp_item = StampItem(step_idx, click_pt.x(), click_pt.y(), stamp_st)
+
+        comp_img = QImage(pixmap.size(), QImage.Format_ARGB32)
+        comp_img.fill(Qt.transparent)
+        p = QPainter(comp_img)
+        p.drawPixmap(0, 0, pixmap)
+        stamp_item.render(p)
+        p.end()
+
+        comp_pix = QPixmap.fromImage(comp_img)
+        self.filmstrip.add_step(
+            composed_pixmap=comp_pix,
+            raw_pixmap=pixmap,
+            items=[stamp_item]
+        )
+        if hasattr(self, "_recording_float_widget") and self._recording_float_widget:
+            self._recording_float_widget.update_steps(step_idx)
+
+    def _on_stop_action_recorder(self):
+        count = 0
+        if hasattr(self, "_action_recorder_thread") and self._action_recorder_thread:
+            count = self._action_recorder_thread.step_count
+            self._action_recorder_thread.stop()
+            self._action_recorder_thread.wait(500)
+            self._action_recorder_thread = None
+
+        if hasattr(self, "_recording_float_widget") and self._recording_float_widget:
+            self._recording_float_widget.hide()
+
+        self.showNormal()
+        self.activateWindow()
+        self.show_toast(tr("toast_recording_stopped", "녹화 완료! 총 {count}개의 스텝이 스토리보드에 생성되었습니다.").replace("{count}", str(count)))
+
+
+    def action_send_to_hwp(self):
+        if self.canvas.pixmap is None:
+            self.show_toast("내보낼 캡처 이미지가 없습니다. F9를 눌러 먼저 캡처하세요.")
+            return
+
+        qimg = self.canvas.get_composed_image()
+        if qimg is None:
+            return
+
+        pil_img = ExportEngine.qimage_to_pil(qimg)
+        if self.config.get("enable_window_frame", True):
+            frame_cfg = self.config.get("window_frame_style", {})
+            pil_img = ExportEngine.apply_window_frame_and_shadow(
+                pil_img,
+                include_header=frame_cfg.get("include_header", True),
+                corner_radius=frame_cfg.get("corner_radius", 12),
+                shadow_radius=frame_cfg.get("shadow_radius", 20),
+                shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+            )
+
+        target_w = self.config.get("target_width", 960)
+        if self.config.get("auto_resize", True):
+            pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+        try:
+            ExportEngine.copy_to_clipboard(pil_img)
+        except Exception:
+            pass
+
+        step_num = self.current_step_idx + 1 if hasattr(self, "current_step_idx") else 1
+        step_title = f"[Step {step_num}] 단계명 입력"
+        res = ExportEngine.send_to_hwp(pil_img, step_title=step_title)
+
+        if res.get("success"):
+            self.status_label.setText(f"한컴 한글(HWP) Step {step_num} 문서 삽입 완료!")
+            self.show_toast(f"한컴 한글(HWP) Step {step_num} 삽입 완료! (Shift+F10 / F12)")
+        else:
+            err = res.get("error", "Unknown error")
+            self.show_toast(f"한글 내보내기 실패: {err}")
+
+    def on_filmstrip_step_selected(self, target_idx: int):
+        if target_idx < 0 or target_idx >= len(self.storyboard_steps):
+            return
+        if target_idx == self.current_step_idx and self.canvas.pixmap is not None:
+            return
+
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [item.clone() for item in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+            comp_qimg = self.canvas.get_composed_image()
+            if comp_qimg:
+                curr_step["thumbnail"] = QPixmap.fromImage(comp_qimg)
+
+        self.current_step_idx = target_idx
+        target_step = self.storyboard_steps[target_idx]
+        raw_px = target_step.get("raw_pixmap")
+        if raw_px and not raw_px.isNull():
+            self.canvas.pixmap = raw_px.copy()
+        else:
+            self.canvas.pixmap = None
+
+        self.canvas.items = [item.clone() for item in target_step.get("items", [])]
+        self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
+        self.canvas.selected_item = None
+        self.canvas.history.clear()
+        self.canvas.update()
+
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.show_toast(f"Step {target_idx + 1} 작업대로 전환되었습니다.")
+
+    def on_filmstrip_add_step(self):
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [item.clone() for item in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+            comp_qimg = self.canvas.get_composed_image()
+            if comp_qimg:
+                curr_step["thumbnail"] = QPixmap.fromImage(comp_qimg)
+
+        new_idx = len(self.storyboard_steps)
+        new_step = {
+            "step_num": new_idx + 1,
+            "title": f"Step {new_idx + 1}. [단계명 입력]",
+            "raw_pixmap": None,
+            "items": [],
+            "next_stamp_index": 1,
+            "thumbnail": None
+        }
+        self.storyboard_steps.append(new_step)
+        self.current_step_idx = new_idx
+
+        self.canvas.pixmap = None
+        self.canvas.items.clear()
+        self.canvas.next_stamp_index = 1
+        self.canvas.history.clear()
+        self.canvas.update()
+
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.show_toast(f"새 Step {new_idx + 1} 생성됨. F9를 눌러 화면을 캡처하세요.")
+
+    def on_filmstrip_delete_step(self, del_idx: int):
+        if len(self.storyboard_steps) <= 1:
+            self.show_toast("스토리보드에는 최소 1개의 스텝이 유지되어야 합니다.")
+            return
+        if 0 <= del_idx < len(self.storyboard_steps):
+            self.storyboard_steps.pop(del_idx)
+            for i, s in enumerate(self.storyboard_steps):
+                s["step_num"] = i + 1
+            if self.current_step_idx >= len(self.storyboard_steps):
+                self.current_step_idx = len(self.storyboard_steps) - 1
+            target_step = self.storyboard_steps[self.current_step_idx]
+            self.canvas.pixmap = target_step.get("raw_pixmap")
+            self.canvas.items = [it.clone() for it in target_step.get("items", [])]
+            self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
+            self.canvas.update()
+            if hasattr(self, "filmstrip"):
+                self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+            self.show_toast(f"Step {del_idx + 1} 삭제 완료.")
+
+    def on_filmstrip_duplicate_step(self, dup_idx: int):
+        if 0 <= dup_idx < len(self.storyboard_steps):
+            src_step = self.storyboard_steps[dup_idx]
+            new_step = {
+                "step_num": len(self.storyboard_steps) + 1,
+                "title": src_step.get("title", "") + " (복사본)",
+                "raw_pixmap": src_step["raw_pixmap"].copy() if src_step.get("raw_pixmap") else None,
+                "items": [it.clone() for it in src_step.get("items", [])],
+                "next_stamp_index": src_step.get("next_stamp_index", 1),
+                "thumbnail": src_step["thumbnail"].copy() if src_step.get("thumbnail") else None
+            }
+            self.storyboard_steps.insert(dup_idx + 1, new_step)
+            for i, s in enumerate(self.storyboard_steps):
+                s["step_num"] = i + 1
+            self.on_filmstrip_step_selected(dup_idx + 1)
+
+    def on_filmstrip_move_step(self, from_idx: int, to_idx: int):
+        if 0 <= from_idx < len(self.storyboard_steps) and 0 <= to_idx < len(self.storyboard_steps):
+            item = self.storyboard_steps.pop(from_idx)
+            self.storyboard_steps.insert(to_idx, item)
+            for i, s in enumerate(self.storyboard_steps):
+                s["step_num"] = i + 1
+            self.current_step_idx = to_idx
+            if hasattr(self, "filmstrip"):
+                self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+            self.show_toast(f"Step 순서 변경: {from_idx + 1} ➔ {to_idx + 1}")
+
+    def action_export_all_ppt(self):
+        if not self.storyboard_steps:
+            self.show_toast("전송할 스토리보드 단계가 없습니다.")
+            return
+
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [it.clone() for it in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+
+        target_w = self.config.get("target_width", 960)
+        auto_resize = self.config.get("auto_resize", True)
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+        ppt_layout = self.config.get("ppt_layout", {}).copy()
+        temp_dir = os.path.join(get_app_dir(), "temp")
+
+        sent_count = 0
+        for idx, step in enumerate(self.storyboard_steps):
+            raw_px = step.get("raw_pixmap")
+            if raw_px is None or raw_px.isNull():
+                continue
+            step_canvas = StudioCanvasWidget(self)
+            step_canvas.pixmap = raw_px
+            step_canvas.items = step.get("items", [])
+            qimg = step_canvas.get_composed_image()
+            if qimg is None:
+                continue
+
+            pil_img = ExportEngine.qimage_to_pil(qimg)
+            if enable_frame:
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
+            if auto_resize:
+                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+            step_layout = ppt_layout.copy()
+            step_layout["title_template"] = f"Step {idx + 1}. [단계명 입력]"
+            ok = ExportEngine.send_to_powerpoint(pil_img, temp_dir, step_layout)
+            if ok:
+                sent_count += 1
+
+        self.show_toast(f"스토리보드 총 {sent_count}개 단계를 파워포인트로 일괄 전송 완료!")
+
+    def action_export_webbook(self):
+        if not self.storyboard_steps:
+            self.show_toast("내보낼 스토리보드 단계가 없습니다. 먼저 화면을 캡처하세요.")
+            return
+
+        # Snapshot current step
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [it.clone() for it in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+
+        default_name = os.path.join(os.path.expanduser("~"), "Desktop", "manual_guide.html")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "반응형 웹북 매뉴얼 저장",
+            default_name,
+            "HTML 파일 (*.html);;모든 파일 (*.*)"
+        )
+        if not file_path:
+            return
+
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+        target_w = self.config.get("target_width", 960)
+
+        steps_payload = []
+        for idx, step in enumerate(self.storyboard_steps):
+            raw_px = step.get("raw_pixmap")
+            if raw_px is None or raw_px.isNull():
+                continue
+
+            step_canvas = StudioCanvasWidget(self)
+            step_canvas.pixmap = raw_px
+            step_canvas.items = step.get("items", [])
+            qimg = step_canvas.get_composed_image()
+            if qimg is None:
+                continue
+
+            pil_img = ExportEngine.qimage_to_pil(qimg)
+            if enable_frame:
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
+
+            # Convert to base64 data URI
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            step_num = idx + 1
+            s_title = step.get("title", f"Step {step_num}. 단계 가이드")
+            s_desc = step.get("description", f"{step_num}번째 조작 화면입니다. 안내된 위치를 클릭하거나 항목을 입력하세요.")
+
+            steps_payload.append({
+                "step_num": step_num,
+                "title": s_title,
+                "description": s_desc,
+                "image_b64": f"data:image/png;base64,{b64_str}"
+            })
+
+        doc_title = os.path.splitext(os.path.basename(file_path))[0]
+        ExportEngine.export_to_html(steps_payload, file_path, title=doc_title)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+        self.show_toast(f"웹북 매뉴얼 생성 완료! 기본 브라우저에서 열렸습니다.")
+
+    def action_export_gif(self):
+        if not self.storyboard_steps:
+            self.show_toast("내보낼 스토리보드 단계가 없습니다. 먼저 화면을 캡처하세요.")
+            return
+
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [it.clone() for it in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+
+        default_name = os.path.join(os.path.expanduser("~"), "Desktop", "tutorial_short.gif")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "숏클립 튜토리얼 GIF 저장",
+            default_name,
+            "GIF 애니메이션 (*.gif);;모든 파일 (*.*)"
+        )
+        if not file_path:
+            return
+
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+        target_w = self.config.get("target_width", 960)
+
+        pil_frames = []
+        for step in self.storyboard_steps:
+            raw_px = step.get("raw_pixmap")
+            if raw_px is None or raw_px.isNull():
+                continue
+
+            step_canvas = StudioCanvasWidget(self)
+            step_canvas.pixmap = raw_px
+            step_canvas.items = step.get("items", [])
+            qimg = step_canvas.get_composed_image()
+            if qimg is None:
+                continue
+
+            pil_img = ExportEngine.qimage_to_pil(qimg)
+            if enable_frame:
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
+            pil_frames.append(pil_img)
+
+        if not pil_frames:
+            self.show_toast("유효한 단계 이미지가 없습니다.")
+            return
+
+        ExportEngine.export_to_animated_gif(pil_frames, file_path, interval_sec=1.5)
+        self.show_toast(f"숏클립 튜토리얼 GIF 저장 완료! (총 {len(pil_frames)}단계)")
+
+    def action_export_all_hwp(self):
+        if not self.storyboard_steps:
+            self.show_toast("전송할 스토리보드 단계가 없습니다.")
+            return
+
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [it.clone() for it in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+
+        target_w = self.config.get("target_width", 960)
+        auto_resize = self.config.get("auto_resize", True)
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+
+        sent_count = 0
+        for idx, step in enumerate(self.storyboard_steps):
+            raw_px = step.get("raw_pixmap")
+            if raw_px is None or raw_px.isNull():
+                continue
+            step_canvas = StudioCanvasWidget(self)
+            step_canvas.pixmap = raw_px
+            step_canvas.items = step.get("items", [])
+            qimg = step_canvas.get_composed_image()
+            if qimg is None:
+                continue
+
+            pil_img = ExportEngine.qimage_to_pil(qimg)
+            if enable_frame:
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
+            if auto_resize:
+                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+            step_title = f"[매뉴얼 스튜디오] Step {idx + 1}. [단계명 입력]"
+            res = ExportEngine.send_to_hwp(pil_img, step_title=step_title)
+            if res.get("success"):
+                sent_count += 1
+
+        self.show_toast(f"스토리보드 총 {sent_count}개 단계를 한컴 한글(HWP)로 일괄 전송 완료!")
+
 
 
 # ==============================================================================
@@ -11375,10 +12992,10 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("ManualCaptureStudio")
 
-    # 애플리케이션 및 작업표시줄 아이콘 설정 (DragonRPA CI)
-    ci_pix = get_dragon_rpa_ci_pixmap()
-    if not ci_pix.isNull():
-        app.setWindowIcon(QIcon(ci_pix))
+    # 애플리케이션 및 작업표시줄 아이콘 설정 (Manual Studio 전용 앱 아이콘)
+    app_icon = get_manual_studio_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
 
     # 기본 폰트 설정
     app.setFont(QFont("Malgun Gothic", 10))

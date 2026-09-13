@@ -585,6 +585,41 @@ def cli_export_doc(input_files: list, output_path: str, doc_format: str = "md", 
     }
 
 
+def cli_stitch(input_files: list, output_path: str = None) -> dict:
+    """수직 스크롤 프레임 이미지 목록을 파노라마로 자동 스티칭하여 저장"""
+    get_or_create_app()
+    if not input_files:
+        return {"status": "error", "message": "No input files provided for stitching"}
+
+    valid_files = [p for p in input_files if os.path.exists(p)]
+    if not valid_files:
+        return {"status": "error", "message": "None of the specified input files exist"}
+
+    from manual_capture_studio import ScrollStitchEngine
+    stitched = ScrollStitchEngine.stitch_images(valid_files)
+    if stitched is None:
+        return {"status": "error", "message": "Stitching failed"}
+
+    if not output_path:
+        out_dir = "captures"
+        os.makedirs(out_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(out_dir, f"stitched_{ts}.png")
+    else:
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+    stitched.save(output_path, "PNG")
+    return {
+        "status": "ok",
+        "output_file": os.path.abspath(output_path),
+        "width": stitched.width,
+        "height": stitched.height,
+        "frames_count": len(valid_files)
+    }
+
+
 def handle_cli(argv: list) -> int:
     """CLI 명령어 파싱 및 실행 메인 핸들러"""
     parser = argparse.ArgumentParser(
@@ -645,6 +680,11 @@ def handle_cli(argv: list) -> int:
     p_doc.add_argument("--format", type=str, default="md", choices=["md", "html", "markdown"])
     p_doc.add_argument("--title", type=str, help="Document title")
 
+    # 8. stitch (Phase 4 Scroll Stitching)
+    p_st = subparsers.add_parser("stitch", help="Vertically stitch sequential scroll frame images into panorama")
+    p_st.add_argument("--input", "-i", nargs="+", required=True, help="List of scroll frame image paths in top-to-bottom order")
+    p_st.add_argument("--output", "-o", type=str, help="Output stitched PNG path")
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "status":
@@ -667,6 +707,8 @@ def handle_cli(argv: list) -> int:
         res = cli_batch(args.input, args.output_dir, args.format, args.title)
     elif args.subcommand == "export-doc":
         res = cli_export_doc(args.input, args.output, args.format, args.title)
+    elif args.subcommand == "stitch":
+        res = cli_stitch(args.input, args.output)
     else:
         parser.print_help()
         return 1

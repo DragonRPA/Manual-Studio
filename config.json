@@ -123,5 +123,17 @@
   "export_target": "powerpoint",
   "slides_auto_slide": true,
   "slides_return_focus": true,
-  "ui_style": "windows"
+  "ui_style": "windows",
+  "enable_window_frame": true,
+  "window_frame_style": {
+    "include_header": true,
+    "corner_radius": 12,
+    "shadow_radius": 20,
+    "shadow_opacity": 0.35,
+    "bg_color": "#F8FAFC",
+    "border_color": "#CBD5E1",
+    "header_height": 32
+  },
+  "hotkey_hwp": "Shift+F10",
+  "filmstrip_visible": true
 }
