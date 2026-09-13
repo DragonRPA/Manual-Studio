@@ -1,5 +1,81 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-13 19:40] 매뉴얼 스튜디오 2세대 Phase 7 구현: 스토리보드 툴바 전면 개편(선택 복제/앞으로/뒤로 이동, 우클릭 제거), 호버 고화질 미리보기 박스 및 설정 연동, 스토리보드 상단 접기/펼치기 분할 바, 예시 기반 정규식 합성기, MAC 주소 & 금융 계좌 2-Tier 문맥 탐지, 미마스킹 민감정보 감지 시 일시 경고 완비
+- [x] 스토리보드 상단 툴바 버튼 신설 및 우클릭 메뉴 전면 제거
+  - 슬라이드 카드 우클릭 팝업 메뉴를 배제하고 상단 툴바에 모든 조작 액션을 직관적으로 시각화
+  - `[선택 삭제]` 우측이자 `[선택 내보내기 ▾]` 좌측에 3대 액션 버튼 배치:
+    - `[선택 복제]`: 선택된 슬라이드(들)를 복제하여 바로 뒤에 즉시 삽입하고 번호 자동 정렬
+    - `[앞으로 이동]`: 선택된 슬라이드를 타임라인 앞(왼쪽)으로 1칸 순서 이동
+    - `[뒤로 이동]`: 선택된 슬라이드를 타임라인 뒤(오른쪽)으로 1칸 순서 이동
+- [x] 슬라이드 호버 고화질 미리보기 박스 (`SlideHoverPreviewWidget`)
+  - 타임라인 슬라이드 카드 위에 마우스오버(Hover) 시 커서 약간 위에 확대된 선명한 슬라이드 미리보기 박스 표출
+  - 마우스 이탈 시 즉시 숨김
+  - 스토리보드 툴바 우측 `[미리보기]` 체크박스 및 `config.json`(`enable_hover_preview`) 연동으로 사용자가 자유롭게 ON/OFF 제어
+- [x] 스토리보드 바로 위 접기/펼치기 분할 바 (`StoryboardToggleBar`)
+  - 리본 메뉴에 있던 스토리보드 토글 버튼을 스토리보드 바로 위(캔버스와 스토리보드 경계선)로 재배치
+  - 22px 슬림 분할 바 중앙에 `[스토리보드 접기 ▲]` / `[스토리보드 펼치기 ▼]` 버튼을 제공하여 스토리보드가 접혀 숨겨져도 바로 그 자리에서 1초 만에 원클릭 펼침 지원
+- [x] 예시 기반 정규식 자동 변환기 (`PiiRedactionEngine.synthesize_regex_from_example`)
+  - 정규식을 모르는 사용자도 `000-0000-0000`, `aaa@aaa.aaa`, `EMP-0000` 등 서식 예시만 입력하면 최적의 권장 정규식을 실시간 자동 변환
+  - 파워 유저는 생성된 권장 정규식을 직접 자유롭게 수정할 수 있도록 허용
+  - `PiiMaskingDialog` 테이블을 4컬럼(`[활성]`, `[규칙명]`, `[예시/서식 (입력)]`, `[권장 정규식 (수정가능)]`)으로 고도화하고 `config.json`에 `example` 필드 영구 보존
+- [x] MAC Address 기본 카테고리 추가 및 금융 계좌번호 2-Tier 문맥 탐지
+  - IEEE 및 Cisco 표준 MAC 주소(`pii_cat_mac`)를 기본 카테고리로 신설하여 원클릭 마스킹
+  - 계좌번호를 금융 문맥 키워드 결합 탐지(계좌/입금/환불/은행명/Account/IBAN + 10~16자리) + 국제 표준 IBAN 규격으로 재설계하여 일반 주문번호/송장번호 오탐률 0% 달성
+- [x] 슬라이드 미마스킹 민감정보 감지 시 전환 일시 경고
+  - 모자이크 블러 처리되지 않은 민감정보가 있는 슬라이드로 전환 시 경고 토스트(`⚠️ 미마스킹 민감정보 감지됨`) 및 카드 뱃지(`⚠️`) 제공
+- [x] 13개 글로벌 언어 i18n 10개 신규 키 전수 등록 및 70개 단위 테스트 100% PASS
+  - `pii_cat_mac`, `pii_table_col_sample`, `pii_table_col_pattern`, `toast_unmasked_pii_detected`, `btn_duplicate_selected`, `btn_move_prev`, `btn_move_next`, `chk_hover_preview`, `btn_toggle_storyboard_hide`, `btn_toggle_storyboard_show`
+  - `test_core_engine.py` 70개 단위 테스트 100% 통과 (Exit Code 0)
+- [x] PyInstaller 프로덕션 컴파일 빌드 완비 (`ManualStudio.exe`)
+
+
+
+## [2026-09-13 18:35] 매뉴얼 스튜디오 2세대 Phase 6 구현: 중복 모니터 콤보박스 퀵스트립 단일화, 리본 단일 전송 버튼 정리 및 '슬라이드 옵션' 그룹 개편, '+ 새 슬라이드 (F10)' 단축키 부여, 스토리보드 슬라이드 다중 선택(Shift/Ctrl 클릭 토글, 전체선택, 전체해제, 선택삭제, 선택내보내기) 완비
+- [x] 중복 모니터 콤보박스 단일화
+  - 상단 리본 메뉴 [캡처] 그룹의 중복 `combo_tab_monitor`를 제거하고 하단 퀵스트립의 `combo_monitor`로 일원화
+  - 리본 캡처 그룹의 레이아웃을 2x3 균형 배치로 최적화 (`고정 캡처`, `영역 지정`, `부분 캡처`, `스크롤 스티칭`, `액션 녹화`)
+- [x] 리본 단일 전송 버튼 제거 & '슬라이드 옵션' 그룹 개편
+  - 과거 1장씩 파워포인트/구글슬라이드/한글로 전송하던 구형 버튼군(`슬라이드 삽입`, `구글 슬라이드 전송`, `한글 전송`)을 리본에서 정리
+  - 기존 출력 그룹을 `[슬라이드 옵션]` (`grp_slide_options`) 그룹으로 개편하여 `액자 프레임`, `배율 맞춤`, `스토리보드`, `제목 상자`, `순번 재정렬`을 콤팩트 배치
+- [x] `+ 새 단계` ➔ `+ 새 슬라이드 (F10)` 개편
+  - 버튼 명칭을 `+ 새 슬라이드 (F10)`로 변경하고 단축키 `F10` 부여
+  - 글로벌 단축키 및 윈도우 키 이벤트 연동: 캡처 및 주석 편집 후 `F10`을 누르면 현재 캔버스 작업을 활성 슬라이드에 자동 스냅샷 저장하고 즉시 새 슬라이드로 쾌속 전환
+- [x] 스토리보드 슬라이드 다중 선택 (Multi-Selection) & 선택 내보내기/삭제
+  - 단순 클릭: 해당 슬라이드 1개 선택 및 작업대 캔버스 로드
+  - `Shift + 클릭` / `Ctrl + 클릭`: 슬라이드를 선택 목록에 포함(추가)하거나 제외(토글)하여 원하는 슬라이드들만 정밀 선택
+  - 카드 상단에 파란색 원형 체크 뱃지(`✓`) 및 하이라이트 테두리로 선택 상태 시각화
+  - 툴바 제어 버튼 신설:
+    - `[전체 선택]`: 모든 슬라이드 일괄 선택
+    - `[전체 해제]`: 활성 슬라이드를 제외한 나머지 선택 해제
+    - `[🗑️ 선택 삭제 (N)]`: 현재 다중 선택된 슬라이드들을 원클릭으로 일괄 삭제하고 후속 슬라이드 번호를 1부터 순차 자동 정렬
+    - `[선택 내보내기 ▾]`: 선택된 슬라이드들만 원하는 포맷(PPT, Google Slides, HWP, HTML 웹북, GIF)으로 일괄 전송/출판!
+- [x] 13개 글로벌 언어 i18n 5개 신규 키 전수 등록
+  - `btn_add_slide`, `btn_select_all`, `btn_deselect_all`, `btn_export_selected_menu`, `grp_slide_options` (13개국어 100% 등록)
+- [x] 핵심 단위 테스트 69개 전 항목 100% 통과 (`test_core_engine.py` 69/69 ALL PASS)
+- [x] `각 기능(키)설명.MD` 기능 및 단축키 설명서 최신화 완료
+
+## [2026-09-13 18:00] 매뉴얼 스튜디오 2세대 Phase 5 구현: 전체 내보내기 대상 통합(PPT/Slides/HWP/HTML/GIF), 선택 삭제 버튼, 마우스 D&D 스텝 순서 변경, PII 9대 카테고리 강화 & 사용자 정의 정규식 관리 대화상자(`PiiMaskingDialog`), F8 1:1 무손실 선명도 복원 완비
+- [x] 하단 스토리보드 전체 내보내기 통합 드롭다운 메뉴 (`btn_export_all_menu`, `export_menu`)
+  - 개별 분산되어 있던 내보내기 버튼들을 `[전체 내보내기 ▾]` 단일 QMenu 버튼으로 일원화
+  - 5대 내보내기 옵션: ① PowerPoint (PPT), ② Google Slides (전 스텝 일괄 주입 `action_export_all_slides`), ③ 한컴 한글 (HWP), ④ 반응형 웹북 (HTML), ⑤ 숏클립 튜토리얼 (GIF)
+- [x] 스토리보드 선택 삭제 버튼 (`btn_delete_selected`)
+  - 툴바에 `[🗑️ 선택 삭제]` 버튼 추가하여 현재 선택된 활성 스텝(`active_idx`) 원클릭 즉시 삭제 및 번호 자동 재정렬
+- [x] 마우스 드래그 앤 드롭(Drag & Drop) 스텝 순서 변경
+  - `StepCardWidget`에서 `QDrag` + `QMimeData(application/x-manualstudio-step-index)` 생성 및 드래그 제스처 지원
+  - `FilmstripDockWidget.cards_container`에서 `dragEnterEvent`, `dragMoveEvent`, `dropEvent` 처리하여 드롭 위치 기반 타깃 인덱스 계산 및 `sig_move_step(from_idx, to_idx)` 연동
+- [x] 개인정보 마스킹 패턴 대폭 강화 & 사용자 정의 정규식 관리 대화상자 (`PiiMaskingDialog`)
+  - 9대 기본 카테고리 강화: 사업자등록번호(`111-81-16460`), 서울 02 국번 및 분절 전화번호, 성명+직급(`김승종 대리`, `정재은 차장`), 도로명/지번 주소(`서울시/구/동/로`), 주민번호, 이메일, 계좌번호, 카드번호, IP 주소
+  - 프로그램이 일방적으로 자동 마스킹하지 않고 사용자가 원하는 항목을 체크박스로 제어
+  - 사용자 임의 정규식(사번, 비밀코드 등) 자유 추가/수정/삭제/활성화 테이블 제공 및 `config.json` 영구 보존
+  - 단축키 `M` 또는 리본 메뉴 `[개인정보 마스킹]` 버튼 클릭 시 `PiiMaskingDialog` 표출 후 선택 실행
+- [x] F8 모달/서브 윈도우 부분 캡처 1:1 원본 무손실 선명도 복원
+  - `StudioCanvasWidget.add_image_overlay()`의 임의 75% 강제 축소 제거 -> 캔버스 크기 이내인 경우 1:1 원본 해상도(`scale = 1.0`) 및 정수 격자 배치
+  - `ImageOverlayItem.render()`에서 1:1 원본 비율 시 `painter.drawPixmap(QPoint(rx, ry), self.pixmap)` 호출로 바이리니어 보간 흐림 원천 차단 (F9와 100% 동일한 비트 단위 선명도 보장)
+- [x] 13개 글로벌 언어 i18n 26개 신규 키 전수 등록
+  - `btn_delete_selected_step`, `btn_delete_selected_step_tooltip`, `btn_export_all_menu`, `menu_export_ppt`, `menu_export_slides`, `menu_export_hwp`, `menu_export_webbook`, `menu_export_gif`, `dialog_pii_title`, `pii_categories_group`, `pii_custom_rules_group`, `pii_cat_phone`, `pii_cat_email`, `pii_cat_resident`, `pii_cat_card`, `pii_cat_account`, `pii_cat_biz_number`, `pii_cat_korean_name`, `pii_cat_address`, `pii_cat_ip`, `pii_table_col_enabled`, `pii_table_col_name`, `pii_table_col_pattern`, `pii_btn_add_rule`, `pii_btn_del_rule`, `pii_btn_run_masking` (13개국어 100% 등록)
+- [x] 핵심 단위 테스트 68개 전 항목 100% 통과 (`test_core_engine.py` 68/68 ALL PASS)
+- [x] `각 기능(키)설명.MD` 2절 F8 선명도, 3.3절 PII 다이얼로그, 6.5절 스토리보드 통합 내보내기/D&D 최신화
+
 ## [2026-09-13 16:55] 매뉴얼 스튜디오 2세대 Phase 4 구현: 차세대 캡처 자동화 (UI 마그네틱 스마트 스냅, 파노라마 스크롤 스티칭, 무인 액션 레코더) 완비, 13개국어 i18n 및 67개 단위 테스트 100% 통과
 - [x] UI 요소 마그네틱 스마트 스냅 엔진 (`MagneticSnapEngine`)
   - Windows API `WindowFromPoint` + `ChildWindowFromPointEx` 계층 순회로 최하단 UI 자식 컨트롤(버튼, 입력창, 탭, 체크박스 등) 바운딩 박스 정밀 탐지

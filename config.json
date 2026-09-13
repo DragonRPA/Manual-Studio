@@ -8,19 +8,19 @@
   "save_directory": "captures",
   "include_cursor": false,
   "stamp_style": {
-    "size": 32,
+    "size": 40,
     "bg_color": "#E53935",
     "text_color": "#FFFFFF",
     "font_family": "Malgun Gothic",
     "font_bold": true,
     "border_color": "#FFFFFF",
     "border_width": 2,
-    "shape": "circle",
+    "shape": "rounded_rect",
     "corner_radius": 6
   },
   "text_style": {
     "font_family": "Malgun Gothic",
-    "font_size": 14,
+    "font_size": 13,
     "font_bold": true,
     "text_color": "#FFFFFF",
     "bg_color": "#212121",
@@ -46,7 +46,7 @@
     "bg_color": "#212121",
     "bg_opacity": 230,
     "border_color": "#E53935",
-    "border_width": 3,
+    "border_width": 2,
     "border_radius": 6
   },
   "elbow_style": {
@@ -79,7 +79,7 @@
   },
   "dimension_style": {
     "color": "#007AFF",
-    "width": 2,
+    "width": 4,
     "tick_size": 8,
     "font_size": 11,
     "font_family": "Malgun Gothic",
@@ -93,25 +93,25 @@
   "target_monitor": 0,
   "fixed_rect_enabled": true,
   "fixed_rect": {
-    "x": 3,
-    "y": 74,
-    "width": 347,
-    "height": 691
+    "x": 100,
+    "y": 100,
+    "width": 960,
+    "height": 540
   },
   "ppt_auto_slide": true,
   "ppt_layout": {
-    "left": 85,
-    "top": 60,
-    "scale": 79,
-    "include_title": false,
-    "title_left": 105,
-    "title_top": 18,
-    "title_width": 650,
-    "title_height": 40,
+    "left": 50,
+    "top": 80,
+    "scale": 90,
+    "include_title": true,
+    "title_left": 50,
+    "title_top": 20,
+    "title_width": 500,
+    "title_height": 35,
     "title_font_family": "Malgun Gothic",
-    "title_font_size": 22,
-    "title_font_bold": false,
-    "title_font_color": "#1E88E5",
+    "title_font_size": 18,
+    "title_font_bold": true,
+    "title_font_color": "#000000",
     "title_template": "Step {n}. [단계명 입력]"
   },
   "locale": "ko",
@@ -123,7 +123,7 @@
   "export_target": "powerpoint",
   "slides_auto_slide": true,
   "slides_return_focus": true,
-  "ui_style": "windows",
+  "ui_style": "auto",
   "enable_window_frame": true,
   "window_frame_style": {
     "include_header": true,
@@ -135,5 +135,25 @@
     "header_height": 32
   },
   "hotkey_hwp": "Shift+F10",
-  "filmstrip_visible": true
+  "filmstrip_visible": true,
+  "pii_categories": {
+    "phone": true,
+    "email": true,
+    "resident": true,
+    "card": true,
+    "account": true,
+    "biz_number": true,
+    "korean_name": true,
+    "address": true,
+    "ip": false,
+    "mac": true
+  },
+  "custom_pii_rules": [
+    {
+      "enabled": true,
+      "name": "테스트사번",
+      "example": "EMP-0000",
+      "pattern": "(?<![A-Za-z0-9])EMP\\-\\d{4}(?!\\d)"
+    }
+  ]
 }

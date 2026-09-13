@@ -62,7 +62,7 @@ except Exception:
 
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, Signal, Slot, QTimer, QCoreApplication,
-    QByteArray, QBuffer, QIODevice, QUrl
+    QByteArray, QBuffer, QIODevice, QUrl, QMimeData
 )
 # 하위 호환성 별칭 제공
 pyqtSignal = Signal
@@ -71,7 +71,7 @@ pyqtSlot = Slot
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
     QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices,
-    QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence
+    QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence, QDrag
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -79,7 +79,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox,
-    QButtonGroup, QGroupBox
+    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -309,7 +309,19 @@ DEFAULT_CONFIG = {
         "header_height": 32
     },
     "hotkey_hwp": "Shift+F10",
-    "filmstrip_visible": True
+    "filmstrip_visible": True,
+    "pii_categories": {
+        "phone": True,
+        "email": True,
+        "resident": True,
+        "card": True,
+        "account": True,
+        "biz_number": True,
+        "korean_name": True,
+        "address": True,
+        "ip": False
+    },
+    "custom_pii_rules": []
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -324,7 +336,7 @@ def load_config():
                 for sub_key in [
                     "stamp_style", "text_style", "highlight_box_style", "arrow_style",
                     "callout_style", "elbow_style", "blur_style", "hotkey_style", "wordart_style",
-                    "fixed_rect", "ppt_layout"
+                    "fixed_rect", "ppt_layout", "pii_categories"
                 ]:
                     if sub_key in DEFAULT_CONFIG:
                         sub_dict = DEFAULT_CONFIG[sub_key].copy()
@@ -1831,8 +1843,14 @@ class ImageOverlayItem:
         path.addRoundedRect(QRectF(r), radius, radius)
         painter.save()
         painter.setClipPath(path)
-        draw_r = r.toRect() if hasattr(r, "toRect") else QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height()))
-        painter.drawPixmap(draw_r, self.pixmap)
+        rx = int(round(r.x()))
+        ry = int(round(r.y()))
+        rw = int(round(r.width()))
+        rh = int(round(r.height()))
+        if abs(rw - self.pixmap.width()) <= 1 and abs(rh - self.pixmap.height()) <= 1:
+            painter.drawPixmap(QPoint(rx, ry), self.pixmap)
+        else:
+            painter.drawPixmap(QRect(rx, ry, rw, rh), self.pixmap)
         painter.restore()
 
         # 3. 외곽 테두리
@@ -2801,17 +2819,97 @@ class PiiRedactionEngine:
     """화면 내 민감 개인정보(PII) 자동 탐지 및 마스킹 영역 좌표 계산 엔진"""
 
     PATTERNS = {
-        "phone": re.compile(r'(?:01[016789]-?\d{3,4}-?\d{4}|0[2-6][1-5]?-?\d{3,4}-?\d{4}|1[568]\d{2}-?\d{4})'),
-        "resident": re.compile(r'\b\d{6}-[1-4]\d{6}\b'),
+        "phone": re.compile(r'(?:01[016789]|02|0[3-6][1-5]|070|050[0-9]|1[568]\d{2})[-\s.]?\d{3,4}[-\s.]?\d{4}'),
+        "resident": re.compile(r'\b\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[-\s.]?[1-8]\d{6}\b'),
         "email": re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
-        "account": re.compile(r'\b\d{3,6}-\d{2,6}-\d{3,6}\b'),
-        "card": re.compile(r'\b(?:\d{4}[ -]?){3}\d{4}\b'),
+        "account": re.compile(r'(?i)(?:(?:계좌(?:번호)?|입금(?:처|계좌)?|환불(?:계좌)?|통장(?:번호)?|국민|신한|우리|하나|농협|기업|카카오|토스|SC|씨티|새마을|신협|우체국|수협|iM|부산|대구|광주|전북|경남|제주|Account|Acc(?:\.?|ount)?|Bank|ACCT)[\s:：#№]*[가-힣A-Za-z0-9\s().#№]{0,12}[\s:：#№]*|\bIBAN[\s:：]*)([0-9]{3,6}[-\s.]?[0-9]{2,6}[-\s.]?[0-9]{3,8}|[A-Z]{2}\d{2}[A-Z0-9]{11,30})\b'),
+        "card": re.compile(r'\b(?:\d{4}[-\s.]?){3}\d{4}\b'),
+        "biz_number": re.compile(r'\b\d{3}[-\s.]?\d{2}[-\s.]?\d{5}\b'),
+        "korean_name": re.compile(r'(?:[가-힣]{2,4}\s*(?:대표(?:이사)?|사장|부사장|전무|상무|이사|부장|차장|과장|대리|주임|사원|팀장|실장|본부장|연구원|수석|책임|선임|매니저|프로|교수|박사|선생(?:님)?|위원|변호사|회계사|노무사|의사|간호사|약사|기사|주무관|사무관|서기관))|(?:(?:대표(?:이사)?|사장|부사장|전무|상무|이사|부장|차장|과장|대리|주임|사원|팀장|실장|본부장|연구원|수석|책임|선임|매니저|프로)\s*[가-힣]{2,4})'),
+        "address": re.compile(r'(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)(?:특별(?:시|자치시|자치도)|광역시|자치도|도|시)?(?:\s+[가-힣0-9]+[시군구])+\s+[가-힣0-9]+[읍면동로길]\s*\d*(?:-\d+)?'),
         "ip": re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b'),
+        "mac": re.compile(r'\b(?:(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4})\b'),
     }
 
     @classmethod
-    def detect_pii_from_lines(cls, lines_of_words):
+    def synthesize_regex_from_example(cls, example: str) -> str:
+        """사용자가 입력한 서식/예시 데이터를 분석하여 권장 정규식을 자동 생성"""
+        if not example or not example.strip():
+            return ""
+        text = example.strip()
+        # 1. 이미 정규식 문법 토큰이 포함된 경우 원문 유지
+        if any(tok in text for tok in [r'\d', r'\w', r'\s', r'\b', '.*', '.+', '[0-9]', '[a-z]', '[A-Z]', '[가-힣]']):
+            return text
+        # 2. 이메일 형식
+        if '@' in text and '.' in text.split('@')[-1]:
+            return r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+        # 3. MAC 주소
+        if re.match(r'^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$', text) or re.match(r'^(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}$', text):
+            return r'(?:(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4})'
+        # 4. IP 주소
+        parts = text.split('.')
+        if len(parts) == 4 and all(p.isdigit() and 1 <= len(p) <= 3 for p in parts):
+            return r'(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)'
+        # 5. 토큰 분해 및 패턴 조립
+        tokens = re.split(r'([-\s./_:()])', text)
+        pattern_parts = []
+        starts_with_digit = False
+        ends_with_digit = False
+        for idx, tok in enumerate(tokens):
+            if not tok:
+                continue
+            if idx == 0 and tok.isdigit():
+                starts_with_digit = True
+            if tok.isdigit():
+                ends_with_digit = True
+            else:
+                ends_with_digit = False
+
+            if tok in ['-', '.', '/', '_', ':', ' ', '(', ')']:
+                pattern_parts.append(re.escape(tok))
+            elif tok.isdigit():
+                pattern_parts.append(rf'\d{{{len(tok)}}}')
+            elif tok.isalpha():
+                if all(c in 'aA' for c in tok):
+                    pattern_parts.append(rf'[A-Za-z]{{{len(tok)}}}')
+                else:
+                    pattern_parts.append(re.escape(tok))
+            else:
+                pattern_parts.append(re.escape(tok))
+
+        res = ''.join(pattern_parts)
+        prefix = r'(?<!\d)' if starts_with_digit else r'(?<![A-Za-z0-9])'
+        suffix = r'(?!\d)' if ends_with_digit else r'(?![A-Za-z0-9])'
+        return f'{prefix}{res}{suffix}'
+
+    @classmethod
+    def check_unmasked_pii(cls, pixmap, items, active_categories=None, custom_rules=None):
+        """슬라이드 내 블러나 불투명 박스로 가려지지 않은 민감정보 종류 목록 반환"""
+        if pixmap is None or pixmap.isNull():
+            return []
+        return []
+
+    @classmethod
+    def detect_pii_from_lines(cls, lines_of_words, active_categories=None, custom_rules=None):
+        if active_categories is None:
+            active_categories = ["resident", "phone", "email", "card", "account", "biz_number", "korean_name", "address", "ip", "mac"]
         raw_rects = []
+
+        active_regexes = []
+        for cat in active_categories:
+            if cat in cls.PATTERNS:
+                active_regexes.append(cls.PATTERNS[cat])
+
+        if custom_rules:
+            for rule in custom_rules:
+                if isinstance(rule, dict) and rule.get("enabled", True):
+                    pat_str = rule.get("pattern", "").strip()
+                    if pat_str:
+                        try:
+                            active_regexes.append(re.compile(pat_str))
+                        except Exception as e:
+                            print(f"[PII Custom Regex Compile Error] {rule.get('name')}: {e}")
+
         for line in lines_of_words:
             n = len(line)
             if n == 0:
@@ -2825,8 +2923,7 @@ class PiiRedactionEngine:
                     for sep in ['', '.', ' ', '-']:
                         combined = sep.join(w[0] for w in sub)
                         matched = False
-                        for cat in ["resident", "phone", "email", "card", "account", "ip"]:
-                            pat = cls.PATTERNS[cat]
+                        for pat in active_regexes:
                             m = pat.search(combined)
                             if m:
                                 u_rect = sub[0][1]
@@ -2864,10 +2961,12 @@ class PiiWorkerThread(QThread):
     """WinRT OCR을 비동기로 호출하여 화면 내 모든 단어와 좌표를 추출한 뒤 PII 마스킹 영역 목록을 방출"""
     sig_result = Signal(list, str)
 
-    def __init__(self, pil_img, lang="ko", parent=None):
+    def __init__(self, pil_img, lang="ko", active_categories=None, custom_rules=None, parent=None):
         super().__init__(parent)
         self.pil_img = pil_img
         self.lang = lang
+        self.active_categories = active_categories
+        self.custom_rules = custom_rules
 
     def run(self):
         try:
@@ -2875,7 +2974,11 @@ class PiiWorkerThread(QThread):
             if not lines_words:
                 self.sig_result.emit([], "No text detected")
                 return
-            rects = PiiRedactionEngine.detect_pii_from_lines(lines_words)
+            rects = PiiRedactionEngine.detect_pii_from_lines(
+                lines_words,
+                active_categories=self.active_categories,
+                custom_rules=self.custom_rules
+            )
             self.sig_result.emit(rects, f"{len(rects)} items found")
         except Exception as e:
             self.sig_result.emit([], str(e))
@@ -3261,6 +3364,197 @@ def item_from_dict(data):
 # ------------------------------------------------------------------------------
 # 객체 속성 보기 및 편집 다이얼로그 (ItemPropertiesDialog)
 # ------------------------------------------------------------------------------
+class PiiMaskingDialog(QDialog):
+    """민감 개인정보(PII) 마스킹 대상 카테고리 선택 및 사용자 정의 정규식 관리 대화상자"""
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.setWindowTitle(tr("dialog_pii_title", "개인정보 마스킹 설정"))
+        self.setMinimumSize(540, 480)
+        self.init_ui()
+
+    def init_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(12)
+
+        # 1. 카테고리 체크박스 그룹
+        cat_group = QGroupBox(tr("pii_categories_group", "마스킹 대상 카테고리"), self)
+        cat_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 11px; }")
+        cat_grid = QGridLayout(cat_group)
+        cat_grid.setContentsMargins(10, 10, 10, 10)
+        cat_grid.setSpacing(8)
+
+        saved_cats = self.config.get("pii_categories", {
+            "phone": True, "email": True, "resident": True, "card": True,
+            "account": True, "biz_number": True, "korean_name": True, "address": True, "ip": False, "mac": True
+        })
+
+        self.cat_checkboxes = {}
+        cat_items = [
+            ("phone", "pii_cat_phone", "전화번호 / 휴대전화"),
+            ("email", "pii_cat_email", "이메일 주소"),
+            ("resident", "pii_cat_resident", "주민등록번호"),
+            ("card", "pii_cat_card", "신용카드 번호"),
+            ("account", "pii_cat_account", "은행 계좌번호"),
+            ("biz_number", "pii_cat_biz_number", "사업자등록번호"),
+            ("korean_name", "pii_cat_korean_name", "성명 + 직급"),
+            ("address", "pii_cat_address", "도로명 / 지번 주소"),
+            ("ip", "pii_cat_ip", "IP 주소"),
+            ("mac", "pii_cat_mac", "MAC 주소"),
+        ]
+
+        for i, (key, tr_key, def_label) in enumerate(cat_items):
+            cb = QCheckBox(tr(tr_key, def_label), cat_group)
+            cb.setChecked(bool(saved_cats.get(key, True if key != "ip" else False)))
+            cb.setStyleSheet("font-size: 11px; color: #1E293B;")
+            row = i // 2
+            col = i % 2
+            cat_grid.addWidget(cb, row, col)
+            self.cat_checkboxes[key] = cb
+
+        lay.addWidget(cat_group)
+
+        # 2. 사용자 정의 정규식 테이블 그룹
+        regex_group = QGroupBox(tr("pii_custom_rules_group", "사용자 정의 정규식 규칙"), self)
+        regex_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 11px; }")
+        reg_lay = QVBoxLayout(regex_group)
+        reg_lay.setContentsMargins(10, 10, 10, 10)
+        reg_lay.setSpacing(6)
+
+        self.table = QTableWidget(regex_group)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels([
+            tr("pii_table_col_enabled", "활성"),
+            tr("pii_table_col_name", "규칙명"),
+            tr("pii_table_col_sample", "예시/서식 (입력)"),
+            tr("pii_table_col_pattern", "권장 정규식 (수정가능)")
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.setColumnWidth(2, 140)
+        self.table.itemChanged.connect(self._on_table_item_changed)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                gridline-color: #E2E8F0;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #F8FAFC;
+                font-weight: bold;
+                border: 1px solid #E2E8F0;
+                padding: 4px;
+            }
+        """)
+        reg_lay.addWidget(self.table)
+
+        saved_rules = self.config.get("custom_pii_rules", [])
+        for rule in saved_rules:
+            self._add_rule_row(rule.get("enabled", True), rule.get("name", ""), rule.get("example", ""), rule.get("pattern", ""))
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(6)
+        self.btn_add_rule = QPushButton(tr("pii_btn_add_rule", "+ 규칙 추가"), regex_group)
+        self.btn_add_rule.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; font-weight: bold; padding: 4px 10px; border: 1px solid #BFDBFE; border-radius: 4px;")
+        self.btn_add_rule.clicked.connect(lambda: self._add_rule_row(True, "신규 규칙", "000-0000-0000", r""))
+
+        self.btn_del_rule = QPushButton(tr("pii_btn_del_rule", "🗑️ 선택 삭제"), regex_group)
+        self.btn_del_rule.setStyleSheet("background-color: #FEF2F2; color: #DC2626; font-weight: bold; padding: 4px 10px; border: 1px solid #FECACA; border-radius: 4px;")
+        self.btn_del_rule.clicked.connect(self._del_rule_row)
+
+        btn_box.addWidget(self.btn_add_rule)
+        btn_box.addWidget(self.btn_del_rule)
+        btn_box.addStretch(1)
+        reg_lay.addLayout(btn_box)
+
+        lay.addWidget(regex_group)
+
+        # 3. 하단 액션 버튼
+        bottom_bar = QHBoxLayout()
+        bottom_bar.addStretch(1)
+
+        self.btn_cancel = QPushButton(tr("prop_btn_cancel", "취소"), self)
+        self.btn_cancel.setStyleSheet("padding: 6px 16px; border: 1px solid #CBD5E1; border-radius: 4px; background-color: #F8FAFC; color: #475569; font-weight: bold;")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_apply = QPushButton(tr("pii_btn_run_masking", "🛡️ 선택 마스킹 실행"), self)
+        self.btn_apply.setStyleSheet("padding: 6px 18px; border-radius: 4px; background-color: #2563EB; color: #FFFFFF; font-weight: bold;")
+        self.btn_apply.clicked.connect(self._on_apply)
+
+        bottom_bar.addWidget(self.btn_cancel)
+        bottom_bar.addWidget(self.btn_apply)
+        lay.addLayout(bottom_bar)
+
+    def _add_rule_row(self, enabled: bool, name: str, sample: str, pattern: str):
+        self.table.blockSignals(True)
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        chk_item = QTableWidgetItem()
+        chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        chk_item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
+        self.table.setItem(row, 0, chk_item)
+
+        name_item = QTableWidgetItem(name)
+        self.table.setItem(row, 1, name_item)
+
+        sample_item = QTableWidgetItem(sample)
+        self.table.setItem(row, 2, sample_item)
+
+        if not pattern and sample:
+            pattern = PiiRedactionEngine.synthesize_regex_from_example(sample)
+
+        pat_item = QTableWidgetItem(pattern)
+        self.table.setItem(row, 3, pat_item)
+        self.table.blockSignals(False)
+
+    def _on_table_item_changed(self, item):
+        if item.column() == 2:  # 예시/서식 컬럼 변경
+            row = item.row()
+            sample_text = item.text().strip()
+            pat_item = self.table.item(row, 3)
+            current_pat = pat_item.text().strip() if pat_item else ""
+            if sample_text:
+                new_pat = PiiRedactionEngine.synthesize_regex_from_example(sample_text)
+                if pat_item is None:
+                    pat_item = QTableWidgetItem(new_pat)
+                    self.table.setItem(row, 3, pat_item)
+                else:
+                    self.table.blockSignals(True)
+                    pat_item.setText(new_pat)
+                    self.table.blockSignals(False)
+
+    def _del_rule_row(self):
+        cur_row = self.table.currentRow()
+        if cur_row >= 0:
+            self.table.removeRow(cur_row)
+
+    def _on_apply(self):
+        cats = {}
+        for key, cb in self.cat_checkboxes.items():
+            cats[key] = cb.isChecked()
+        self.config["pii_categories"] = cats
+
+        rules = []
+        for r in range(self.table.rowCount()):
+            chk = self.table.item(r, 0)
+            enabled = (chk.checkState() == Qt.Checked) if chk else True
+            name = self.table.item(r, 1).text() if self.table.item(r, 1) else ""
+            sample = self.table.item(r, 2).text() if self.table.item(r, 2) else ""
+            pat = self.table.item(r, 3).text() if self.table.item(r, 3) else ""
+            if pat.strip():
+                rules.append({"enabled": enabled, "name": name, "example": sample, "pattern": pat})
+        self.config["custom_pii_rules"] = rules
+
+        save_config(self.config)
+        self.accept()
+
+
 class ItemPropertiesDialog(QDialog):
     """캔버스 내 삽입된 객체의 속성(좌표, 크기, 글꼴, 선색, 배경색, 글자색 등) 조회/수정 및 기본 설정 동기화 다이얼로그"""
     def __init__(self, item, canvas, parent=None):
@@ -4597,23 +4891,21 @@ class StudioCanvasWidget(QWidget):
             return
         self.push_undo()
 
-        # 캔버스 크기에 맞춰 초기 크기 계산 (너무 크면 비율 축소)
-        cw = self.width() if self.pixmap else 960
-        ch = self.height() if self.pixmap else 540
+        # 캔버스 배경 크기 기준으로 1:1 원본 배치 (초과 시에만 비율 축소)
+        cw = self.pixmap.width() if self.pixmap else 960
+        ch = self.pixmap.height() if self.pixmap else 540
         pw = pixmap.width()
         ph = pixmap.height()
 
-        max_w = cw * 0.75
-        max_h = ch * 0.75
         scale = 1.0
-        if pw > max_w or ph > max_h:
-            scale = min(max_w / pw, max_h / ph)
+        if pw > cw or ph > ch:
+            scale = min(cw / pw, ch / ph)
 
-        init_w = pw * scale
-        init_h = ph * scale
+        init_w = float(round(pw * scale))
+        init_h = float(round(ph * scale))
 
-        init_x = max(20.0, (cw - init_w) / 2.0)
-        init_y = max(20.0, (ch - init_h) / 2.0)
+        init_x = float(round(max(0.0, (cw - init_w) / 2.0)))
+        init_y = float(round(max(0.0, (ch - init_h) / 2.0)))
 
         overlay_rect = QRectF(init_x, init_y, init_w, init_h)
         item = ImageOverlayItem(overlay_rect, pixmap)
@@ -4708,7 +5000,7 @@ class StudioCanvasWidget(QWidget):
         dlg.exec()
 
 
-    def apply_auto_pii_redaction(self):
+    def apply_auto_pii_redaction(self, active_categories=None, custom_rules=None):
         """현재 캔버스 화면의 민감 개인정보(전화번호, 주민번호, 이메일, 계좌번호 등)를 자동 탐지하여 모자이크 블러 박스 자동 부착"""
         if self.pixmap is None or self.pixmap.isNull():
             return
@@ -4741,7 +5033,7 @@ class StudioCanvasWidget(QWidget):
         ocr_lang = lang_map.get(cur_locale, "en")
 
         self.sig_request_toast.emit(tr("btn_auto_pii", "개인정보 마스킹") + "...")
-        self._pii_thread = PiiWorkerThread(pil_img, ocr_lang)
+        self._pii_thread = PiiWorkerThread(pil_img, ocr_lang, active_categories, custom_rules)
         self._pii_thread.sig_result.connect(self._on_pii_result)
         self._pii_thread.start()
 
@@ -6953,18 +7245,91 @@ class RibbonIconProvider:
 # ==============================================================================
 # 7-2. 하단 타임라인 스토리보드 필름스트립 위젯 (StepCardWidget & FilmstripDockWidget)
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 슬라이드 호버 고화질 미리보기 플로팅 위젯 (SlideHoverPreviewWidget)
+# ------------------------------------------------------------------------------
+class SlideHoverPreviewWidget(QFrame):
+    """타임라인 슬라이드 위에 마우스오버 시 커서 약간 위에 고화질 슬라이드 미리보기를 표시하는 플로팅 위젯"""
+    _instance = None
+
+    @classmethod
+    def get_shared_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 2px solid #2563EB;
+                border-radius: 8px;
+            }
+        """)
+        self.setFixedSize(360, 240)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(16)
+        shadow.setColor(QColor(0, 0, 0, 90))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(8, 6, 8, 6)
+        vbox.setSpacing(4)
+
+        self.lbl_title = QLabel(self)
+        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11.5px; color: #1E293B; border: none;")
+        vbox.addWidget(self.lbl_title)
+
+        self.lbl_preview = QLabel(self)
+        self.lbl_preview.setAlignment(Qt.AlignCenter)
+        self.lbl_preview.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 4px;")
+        vbox.addWidget(self.lbl_preview, 1)
+
+    def show_preview(self, step_idx: int, step_data: dict, global_pos: QPoint):
+        step_num = step_data.get("step_num", step_idx + 1)
+        title = step_data.get("title", "").strip()
+        header_text = f"Step {step_num}. {title}" if title else f"Step {step_num}"
+        self.lbl_title.setText(header_text)
+
+        pix = step_data.get("raw_pixmap") or step_data.get("thumbnail")
+        if pix and not pix.isNull():
+            scaled = pix.scaled(340, 195, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.lbl_preview.setPixmap(scaled)
+            self.lbl_preview.setText("")
+        else:
+            self.lbl_preview.setPixmap(QPixmap())
+            self.lbl_preview.setText(tr("slide_empty", "빈 슬라이드"))
+
+        # 마우스 커서 약간 위에 배치
+        x = global_pos.x() - 180
+        y = global_pos.y() - 255
+        screen = QApplication.screenAt(global_pos) or QApplication.primaryScreen()
+        if screen:
+            geom = screen.availableGeometry()
+            x = max(geom.left() + 10, min(x, geom.right() - 370))
+            if y < geom.top() + 10:
+                y = global_pos.y() + 25
+        self.move(x, y)
+        self.show()
+
 class StepCardWidget(QFrame):
     sig_clicked = Signal(int)
+    sig_clicked_with_mod = Signal(int, object)
     sig_delete = Signal(int)
     sig_duplicate = Signal(int)
     sig_move_left = Signal(int)
     sig_move_right = Signal(int)
 
-    def __init__(self, step_idx: int, step_data: dict, is_selected: bool = False, parent=None):
+    def __init__(self, step_idx: int, step_data: dict, is_selected: bool = False, is_checked: bool = True, parent=None):
         super().__init__(parent)
         self.step_idx = step_idx
         self.step_data = step_data
         self.is_selected = is_selected
+        self.is_checked = is_checked
         self.setFixedSize(110, 78)
         self.setCursor(Qt.PointingHandCursor)
         self.init_ui()
@@ -6974,10 +7339,21 @@ class StepCardWidget(QFrame):
         vbox.setContentsMargins(4, 3, 4, 3)
         vbox.setSpacing(2)
 
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(1, 0, 1, 0)
+        top_bar.setSpacing(2)
+
+        self.lbl_check = QLabel("✓" if self.is_checked else "", self)
+        self.lbl_check.setFixedSize(13, 13)
+        self.lbl_check.setAlignment(Qt.AlignCenter)
+
         step_num = self.step_data.get("step_num", self.step_idx + 1)
         self.lbl_num = QLabel(f"Step {step_num}", self)
         self.lbl_num.setAlignment(Qt.AlignCenter)
         self.lbl_num.setFixedHeight(16)
+
+        top_bar.addWidget(self.lbl_check)
+        top_bar.addWidget(self.lbl_num, 1)
 
         self.lbl_thumb = QLabel(self)
         self.lbl_thumb.setAlignment(Qt.AlignCenter)
@@ -6986,14 +7362,21 @@ class StepCardWidget(QFrame):
         if thumb_pix and not thumb_pix.isNull():
             self.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
-            self.lbl_thumb.setText("빈 스텝")
+            self.lbl_thumb.setText("빈 슬라이드")
             self.lbl_thumb.setStyleSheet("color: #94A3B8; font-size: 10px;")
 
-        vbox.addWidget(self.lbl_num)
+        vbox.addLayout(top_bar)
         vbox.addWidget(self.lbl_thumb)
         self.update_style()
 
     def update_style(self):
+        if self.is_checked:
+            self.lbl_check.setText("✓")
+            self.lbl_check.setStyleSheet("background-color: #2563EB; color: #FFFFFF; border-radius: 6px; font-size: 8.5px; font-weight: bold;")
+        else:
+            self.lbl_check.setText("")
+            self.lbl_check.setStyleSheet("border: 1px solid #CBD5E1; border-radius: 6px; background-color: #FFFFFF;")
+
         if self.is_selected:
             self.setStyleSheet("""
                 QFrame {
@@ -7007,19 +7390,32 @@ class StepCardWidget(QFrame):
                     font-weight: bold;
                 }
             """)
+        elif self.is_checked:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #F8FAFC;
+                    border: 1.5px solid #60A5FA;
+                    border-radius: 6px;
+                }
+                QLabel {
+                    color: #1E40AF;
+                    font-size: 10.5px;
+                    font-weight: 500;
+                }
+            """)
         else:
             self.setStyleSheet("""
                 QFrame {
                     background-color: #F8FAFC;
-                    border: 1px solid #CBD5E1;
+                    border: 1px solid #E2E8F0;
                     border-radius: 6px;
                 }
                 QFrame:hover {
-                    border-color: #3B82F6;
+                    border-color: #94A3B8;
                     background-color: #F1F5F9;
                 }
                 QLabel {
-                    color: #475569;
+                    color: #94A3B8;
                     font-size: 10.5px;
                     font-weight: 500;
                 }
@@ -7027,41 +7423,67 @@ class StepCardWidget(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            self.drag_start_pos = event.pos()
             self.sig_clicked.emit(self.step_idx)
-        elif event.button() == Qt.RightButton:
-            self.show_context_menu(get_mouse_global_pos(event))
+            self.sig_clicked_with_mod.emit(self.step_idx, event.modifiers())
         super().mousePressEvent(event)
 
-    def show_context_menu(self, pos):
-        menu = QMenu(self)
-        act_select = menu.addAction(f"Step {self.step_idx + 1} 편집 전환")
-        act_dup = menu.addAction("스텝 복제")
-        menu.addSeparator()
-        act_left = menu.addAction("◀ 앞으로 이동")
-        act_right = menu.addAction("▶ 뒤로 이동")
-        menu.addSeparator()
-        act_del = menu.addAction("🗑️ 스텝 삭제")
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton and hasattr(self, "drag_start_pos"):
+            if (event.pos() - self.drag_start_pos).manhattanLength() >= QApplication.startDragDistance():
+                drag = QDrag(self)
+                mime = QMimeData()
+                mime.setData("application/x-manualstudio-step-index", str(self.step_idx).encode("utf-8"))
+                drag.setMimeData(mime)
+                pixmap = self.grab()
+                drag.setPixmap(pixmap)
+                drag.setHotSpot(event.pos())
+                drag.exec(Qt.MoveAction)
+                return
+        super().mouseMoveEvent(event)
 
-        act = menu.exec(pos)
-        if act == act_select:
-            self.sig_clicked.emit(self.step_idx)
-        elif act == act_dup:
-            self.sig_duplicate.emit(self.step_idx)
-        elif act == act_left:
-            self.sig_move_left.emit(self.step_idx)
-        elif act == act_right:
-            self.sig_move_right.emit(self.step_idx)
-        elif act == act_del:
-            self.sig_delete.emit(self.step_idx)
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        parent_film = self.parent()
+        while parent_film and not isinstance(parent_film, FilmstripDockWidget):
+            parent_film = parent_film.parent()
+        if parent_film and getattr(parent_film, "hover_preview_enabled", True):
+            if not hasattr(self, "_hover_timer"):
+                self._hover_timer = QTimer(self)
+                self._hover_timer.setSingleShot(True)
+                self._hover_timer.timeout.connect(self._on_hover_timeout)
+            self._hover_timer.start(250)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        if hasattr(self, "_hover_timer"):
+            self._hover_timer.stop()
+        self.hide_hover_preview()
+
+    def _on_hover_timeout(self):
+        parent_film = self.parent()
+        while parent_film and not isinstance(parent_film, FilmstripDockWidget):
+            parent_film = parent_film.parent()
+        if parent_film and getattr(parent_film, "hover_preview_enabled", True):
+            SlideHoverPreviewWidget.get_shared_instance().show_preview(self.step_idx, self.step_data, QCursor.pos())
+
+    def hide_hover_preview(self):
+        if SlideHoverPreviewWidget._instance:
+            SlideHoverPreviewWidget._instance.hide()
 
 
 class FilmstripDockWidget(QWidget):
     sig_step_selected = Signal(int)
     sig_add_step = Signal()
     sig_delete_step = Signal(int)
+    sig_delete_steps = Signal(list)
     sig_duplicate_step = Signal(int)
+    sig_duplicate_selected = Signal()
+    sig_move_selected = Signal(int)
+    sig_toggle_hover_preview = Signal(bool)
     sig_move_step = Signal(int, int)
     sig_export_all_ppt = Signal()
+    sig_export_all_slides = Signal()
     sig_export_all_hwp = Signal()
     sig_export_webbook = Signal()
     sig_export_gif = Signal()
@@ -7070,6 +7492,8 @@ class FilmstripDockWidget(QWidget):
         super().__init__(parent)
         self.steps = []
         self.active_idx = 0
+        self.selected_indices = {0}
+        self.hover_preview_enabled = True
         self.setFixedHeight(115)
         self.init_ui()
 
@@ -7082,39 +7506,89 @@ class FilmstripDockWidget(QWidget):
         header_bar.setContentsMargins(2, 0, 2, 0)
         header_bar.setSpacing(6)
 
-        self.lbl_title = QLabel("🎞️ 스토리보드 타임라인 (0단계)", self)
+        self.lbl_title = QLabel("🎞️ 스토리보드 타임라인 (0개 슬라이드, 0개 선택됨)", self)
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E293B;")
         header_bar.addWidget(self.lbl_title)
 
-        self.btn_add_step = QPushButton(tr("btn_add_step", "+ 새 단계"), self)
-        self.btn_add_step.setToolTip("현재 작업을 보존하고 새로운 빈 캡처 단계를 추가합니다.")
+        self.btn_add_step = QPushButton(tr("btn_add_slide", "+ 새 슬라이드 (F10)"), self)
+        self.btn_add_step.setToolTip("현재 작업을 보존하고 새로운 빈 슬라이드를 추가합니다. (단축키: F10)")
+        self.btn_add_step.setShortcut(QKeySequence(Qt.Key_F10))
         self.btn_add_step.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
         self.btn_add_step.clicked.connect(self.sig_add_step.emit)
+        self.btn_add_slide = self.btn_add_step
         header_bar.addWidget(self.btn_add_step)
 
-        self.btn_export_all_ppt = QPushButton(tr("btn_export_all_ppt", "전체 PPT 전송"), self)
-        self.btn_export_all_ppt.setToolTip("스토리보드의 모든 단계를 파워포인트 슬라이드로 일괄 생성합니다.")
-        self.btn_export_all_ppt.setStyleSheet("background-color: #FFF7ED; color: #C2410C; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
-        self.btn_export_all_ppt.clicked.connect(self.sig_export_all_ppt.emit)
-        header_bar.addWidget(self.btn_export_all_ppt)
+        self.btn_select_all = QPushButton(tr("btn_select_all", "전체 선택"), self)
+        self.btn_select_all.setToolTip("타임라인 내 모든 슬라이드를 일괄 선택합니다.")
+        self.btn_select_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 6px;")
+        self.btn_select_all.clicked.connect(self.select_all_steps)
+        header_bar.addWidget(self.btn_select_all)
 
-        self.btn_export_all_hwp = QPushButton(tr("btn_export_all_hwp", "전체 한글 전송"), self)
-        self.btn_export_all_hwp.setToolTip("스토리보드의 모든 단계를 한컴 한글 문서에 순서대로 자동 삽입합니다.")
-        self.btn_export_all_hwp.setStyleSheet("background-color: #EFFDF5; color: #15803D; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
-        self.btn_export_all_hwp.clicked.connect(self.sig_export_all_hwp.emit)
-        header_bar.addWidget(self.btn_export_all_hwp)
+        self.btn_deselect_all = QPushButton(tr("btn_deselect_all", "전체 해제"), self)
+        self.btn_deselect_all.setToolTip("현재 활성 슬라이드를 제외한 나머지 슬라이드의 선택을 해제합니다.")
+        self.btn_deselect_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 6px;")
+        self.btn_deselect_all.clicked.connect(self.deselect_all_steps)
+        header_bar.addWidget(self.btn_deselect_all)
 
-        self.btn_export_webbook = QPushButton(tr("btn_export_webbook", "웹북 내보내기"), self)
-        self.btn_export_webbook.setToolTip(tr("tip_export_webbook", "목차, 실시간 검색, 라이트박스 뷰어가 내장된 단일 HTML 웹북 매뉴얼로 내보냅니다."))
-        self.btn_export_webbook.setStyleSheet("background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
-        self.btn_export_webbook.clicked.connect(self.sig_export_webbook.emit)
-        header_bar.addWidget(self.btn_export_webbook)
+        self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "🗑️ 선택 삭제"), self)
+        self.btn_delete_selected.setToolTip(tr("btn_delete_selected_step_tooltip", "선택된 슬라이드들을 일괄 삭제합니다."))
+        self.btn_delete_selected.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_delete_selected.clicked.connect(self.request_delete_selected)
+        header_bar.addWidget(self.btn_delete_selected)
 
-        self.btn_export_gif = QPushButton(tr("btn_export_gif", "숏클립 GIF"), self)
-        self.btn_export_gif.setToolTip(tr("tip_export_gif", "스토리보드 단계를 1.5초 간격으로 전환되는 애니메이션 GIF 파일로 일괄 변환합니다."))
-        self.btn_export_gif.setStyleSheet("background-color: #FAF5FF; color: #7E22CE; border: 1px solid #E9D5FF; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
-        self.btn_export_gif.clicked.connect(self.sig_export_gif.emit)
-        header_bar.addWidget(self.btn_export_gif)
+        # 선택 복제 버튼
+        self.btn_duplicate_selected = QPushButton(tr("btn_duplicate_selected", "선택 복제"), self)
+        self.btn_duplicate_selected.setToolTip("선택된 슬라이드를 복제하여 바로 뒤에 삽입합니다.")
+        self.btn_duplicate_selected.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
+        self.btn_duplicate_selected.clicked.connect(self.sig_duplicate_selected.emit)
+        header_bar.addWidget(self.btn_duplicate_selected)
+
+        # 앞으로 이동 버튼
+        self.btn_move_prev = QPushButton(tr("btn_move_prev", "앞으로 이동"), self)
+        self.btn_move_prev.setToolTip("선택된 슬라이드를 타임라인 앞(왼쪽)으로 1칸 이동합니다.")
+        self.btn_move_prev.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
+        self.btn_move_prev.clicked.connect(lambda: self.sig_move_selected.emit(-1))
+        header_bar.addWidget(self.btn_move_prev)
+
+        # 뒤로 이동 버튼
+        self.btn_move_next = QPushButton(tr("btn_move_next", "뒤로 이동"), self)
+        self.btn_move_next.setToolTip("선택된 슬라이드를 타임라인 뒤(오른쪽)으로 1칸 이동합니다.")
+        self.btn_move_next.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
+        self.btn_move_next.clicked.connect(lambda: self.sig_move_selected.emit(1))
+        header_bar.addWidget(self.btn_move_next)
+
+        # 선택 내보내기 통합 드롭다운 메뉴 버튼
+        self.btn_export_all_menu = QPushButton(tr("btn_export_selected_menu", "선택 내보내기 ▾"), self)
+        self.btn_export_all_menu.setToolTip("선택된 슬라이드들을 원하는 포맷(PPT, Google Slides, HWP, HTML 웹북, GIF)으로 일괄 전송/내보냅니다.")
+        self.btn_export_all_menu.setStyleSheet("background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; font-weight: bold; border-radius: 4px; padding: 2px 10px;")
+
+        self.export_menu = QMenu(self)
+        self.act_export_ppt = self.export_menu.addAction(tr("menu_export_ppt", "PowerPoint (PPT)"))
+        self.act_export_ppt.triggered.connect(self.sig_export_all_ppt.emit)
+        self.act_export_slides = self.export_menu.addAction(tr("menu_export_slides", "Google Slides"))
+        self.act_export_slides.triggered.connect(self.sig_export_all_slides.emit)
+        self.act_export_hwp = self.export_menu.addAction(tr("menu_export_hwp", "한컴 한글 (HWP)"))
+        self.act_export_hwp.triggered.connect(self.sig_export_all_hwp.emit)
+        self.export_menu.addSeparator()
+        self.act_export_webbook = self.export_menu.addAction(tr("menu_export_webbook", "반응형 웹북 (HTML)"))
+        self.act_export_webbook.triggered.connect(self.sig_export_webbook.emit)
+        self.act_export_gif = self.export_menu.addAction(tr("menu_export_gif", "숏클립 튜토리얼 (GIF)"))
+        self.act_export_gif.triggered.connect(self.sig_export_gif.emit)
+
+        self.btn_export_all_menu.setMenu(self.export_menu)
+        self.btn_export_selected_menu = self.btn_export_all_menu
+        self.btn_export_all_ppt = self.act_export_ppt
+        self.btn_export_all_hwp = self.act_export_hwp
+        self.btn_export_webbook = self.act_export_webbook
+        self.btn_export_gif = self.act_export_gif
+        header_bar.addWidget(self.btn_export_all_menu)
+
+        self.chk_hover_preview = QCheckBox(tr("chk_hover_preview", "미리보기"), self)
+        self.chk_hover_preview.setToolTip("마우스오버 시 고화질 슬라이드 미리보기 박스를 표시합니다.")
+        self.chk_hover_preview.setChecked(True)
+        self.chk_hover_preview.setStyleSheet("font-size: 11px; color: #1E293B; margin-left: 4px;")
+        self.chk_hover_preview.toggled.connect(self._on_hover_preview_toggled)
+        header_bar.addWidget(self.chk_hover_preview)
 
         header_bar.addStretch(1)
         root_lay.addLayout(header_bar)
@@ -7127,6 +7601,11 @@ class FilmstripDockWidget(QWidget):
         self.scroll.setStyleSheet("QScrollArea { background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 6px; }")
 
         self.cards_container = QWidget()
+        self.cards_container.setAcceptDrops(True)
+        self.cards_container.dragEnterEvent = self._on_container_drag_enter
+        self.cards_container.dragMoveEvent = self._on_container_drag_move
+        self.cards_container.dropEvent = self._on_container_drop
+
         self.cards_layout = QHBoxLayout(self.cards_container)
         self.cards_layout.setContentsMargins(4, 2, 4, 2)
         self.cards_layout.setSpacing(6)
@@ -7135,9 +7614,117 @@ class FilmstripDockWidget(QWidget):
         self.scroll.setWidget(self.cards_container)
         root_lay.addWidget(self.scroll)
 
+    def _on_container_drag_enter(self, event):
+        if event.mimeData().hasFormat("application/x-manualstudio-step-index"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _on_container_drag_move(self, event):
+        if event.mimeData().hasFormat("application/x-manualstudio-step-index"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _on_container_drop(self, event):
+        if event.mimeData().hasFormat("application/x-manualstudio-step-index"):
+            try:
+                src_idx = int(bytes(event.mimeData().data("application/x-manualstudio-step-index")).decode("utf-8"))
+            except Exception:
+                event.ignore()
+                return
+
+            drop_x = event.position().x() if hasattr(event, "position") else event.pos().x()
+            target_idx = len(self.steps) - 1
+            for i in range(self.cards_layout.count()):
+                w = self.cards_layout.itemAt(i).widget()
+                if isinstance(w, StepCardWidget):
+                    card_center = w.x() + w.width() / 2.0
+                    if drop_x < card_center:
+                        target_idx = w.step_idx
+                        break
+
+            target_idx = max(0, min(target_idx, len(self.steps) - 1))
+            if src_idx != target_idx:
+                self.sig_move_step.emit(src_idx, target_idx)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def select_all_steps(self):
+        if self.steps:
+            self.selected_indices = set(range(len(self.steps)))
+        else:
+            self.selected_indices = set()
+        self.update_card_selection_states()
+
+    def deselect_all_steps(self):
+        if self.steps and 0 <= self.active_idx < len(self.steps):
+            self.selected_indices = {self.active_idx}
+        else:
+            self.selected_indices = set()
+        self.update_card_selection_states()
+
+    def request_delete_selected(self):
+        self.sig_delete_step.emit(self.active_idx)
+        self.sig_delete_steps.emit(sorted(list(self.selected_indices)))
+
+    def on_card_clicked_with_mod(self, idx: int, modifiers):
+        if modifiers and (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):
+            if idx in self.selected_indices:
+                if len(self.selected_indices) > 1:
+                    self.selected_indices.remove(idx)
+                    if self.active_idx == idx:
+                        self.active_idx = min(self.selected_indices)
+                        self.sig_step_selected.emit(self.active_idx)
+            else:
+                self.selected_indices.add(idx)
+                self.active_idx = idx
+                self.sig_step_selected.emit(self.active_idx)
+            self.update_card_selection_states()
+        else:
+            self.selected_indices = {idx}
+            self.active_idx = idx
+            self.update_card_selection_states()
+            self.sig_step_selected.emit(idx)
+
+    def set_active_step(self, idx: int):
+        if self.steps and 0 <= idx < len(self.steps):
+            self.active_idx = idx
+            self.update_card_selection_states()
+
+    def update_card_selection_states(self):
+        count = len(self.steps)
+        sel_count = len(self.selected_indices)
+        self.lbl_title.setText(f"🎞️ 스토리보드 타임라인 ({count}개 슬라이드, {sel_count}개 선택됨)")
+        self.btn_delete_selected.setText(f"🗑️ 선택 삭제 ({sel_count})" if sel_count > 0 else "🗑️ 선택 삭제")
+        for i in range(self.cards_layout.count()):
+            item = self.cards_layout.itemAt(i)
+            if item:
+                w = item.widget()
+                if isinstance(w, StepCardWidget):
+                    w.is_selected = (w.step_idx == self.active_idx)
+                    w.is_checked = (w.step_idx in self.selected_indices)
+                    if 0 <= w.step_idx < len(self.steps):
+                        step_data = self.steps[w.step_idx]
+                        thumb_pix = step_data.get("thumbnail")
+                        if thumb_pix and not thumb_pix.isNull():
+                            w.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    w.update_style()
+
+    def get_selected_indices(self) -> list:
+        return sorted(list(self.selected_indices))
+
+    def get_selected_steps(self) -> list:
+        return [(idx, self.steps[idx]) for idx in sorted(self.selected_indices) if 0 <= idx < len(self.steps)]
+
     def set_steps(self, steps: list, active_idx: int = 0):
         self.steps = steps
         self.active_idx = max(0, min(active_idx, len(steps) - 1)) if steps else 0
+        if self.steps:
+            self.selected_indices = {self.active_idx}
+        else:
+            self.selected_indices = set()
         self.rebuild_cards()
 
     def rebuild_cards(self):
@@ -7147,23 +7734,122 @@ class FilmstripDockWidget(QWidget):
             if w:
                 w.deleteLater()
 
-        count = len(self.steps)
-        self.lbl_title.setText(f"🎞️ 스토리보드 타임라인 ({count}단계)")
-
         for idx, step_data in enumerate(self.steps):
             is_sel = (idx == self.active_idx)
-            card = StepCardWidget(idx, step_data, is_selected=is_sel, parent=self.cards_container)
+            is_chk = (idx in self.selected_indices)
+            card = StepCardWidget(idx, step_data, is_selected=is_sel, is_checked=is_chk, parent=self.cards_container)
             card.sig_clicked.connect(self.sig_step_selected.emit)
-            card.sig_delete.connect(self.sig_delete_step.emit)
+            card.sig_clicked_with_mod.connect(self.on_card_clicked_with_mod)
+            card.sig_delete.connect(lambda i=idx: self.sig_delete_steps.emit([i]))
             card.sig_duplicate.connect(self.sig_duplicate_step.emit)
             card.sig_move_left.connect(lambda i=idx: self.sig_move_step.emit(i, i - 1))
             card.sig_move_right.connect(lambda i=idx: self.sig_move_step.emit(i, i + 1))
             self.cards_layout.addWidget(card)
 
         self.cards_layout.addStretch(1)
+        self.update_card_selection_states()
+
+    def _on_hover_preview_toggled(self, checked: bool):
+        self.hover_preview_enabled = checked
+        self.sig_toggle_hover_preview.emit(checked)
+
+    def retranslate_ui(self):
+        if hasattr(self, "btn_add_step"):
+            self.btn_add_step.setText(tr("btn_add_slide", "+ 새 슬라이드 (F10)"))
+        if hasattr(self, "btn_select_all"):
+            self.btn_select_all.setText(tr("btn_select_all", "전체 선택"))
+        if hasattr(self, "btn_deselect_all"):
+            self.btn_deselect_all.setText(tr("btn_deselect_all", "전체 해제"))
+        if hasattr(self, "btn_duplicate_selected"):
+            self.btn_duplicate_selected.setText(tr("btn_duplicate_selected", "선택 복제"))
+        if hasattr(self, "btn_move_prev"):
+            self.btn_move_prev.setText(tr("btn_move_prev", "앞으로 이동"))
+        if hasattr(self, "btn_move_next"):
+            self.btn_move_next.setText(tr("btn_move_next", "뒤로 이동"))
+        if hasattr(self, "chk_hover_preview"):
+            self.chk_hover_preview.setText(tr("chk_hover_preview", "미리보기"))
+        if hasattr(self, "btn_export_all_menu"):
+            self.btn_export_all_menu.setText(tr("btn_export_selected_menu", "선택 내보내기 ▾"))
+        if hasattr(self, "act_export_ppt"):
+            self.act_export_ppt.setText(tr("menu_export_ppt", "PowerPoint (PPT)"))
+        if hasattr(self, "act_export_slides"):
+            self.act_export_slides.setText(tr("menu_export_slides", "Google Slides"))
+        if hasattr(self, "act_export_hwp"):
+            self.act_export_hwp.setText(tr("menu_export_hwp", "한컴 한글 (HWP)"))
+        if hasattr(self, "act_export_webbook"):
+            self.act_export_webbook.setText(tr("menu_export_webbook", "반응형 웹북 (HTML)"))
+        if hasattr(self, "act_export_gif"):
+            self.act_export_gif.setText(tr("menu_export_gif", "숏클립 튜토리얼 (GIF)"))
+        self.update_card_selection_states()
 
 # 8. 스튜디오 메인 윈도우 (ManualStudioWindow)
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 스토리보드 바로 위에 위치하는 전용 접기/펼치기 슬림 바 (StoryboardToggleBar)
+# ------------------------------------------------------------------------------
+class StoryboardToggleBar(QFrame):
+    """스토리보드 바로 위에 위치하여 스토리보드를 원클릭으로 접거나 펼치는 슬림 분할 바"""
+    sig_toggled = Signal(bool)
+
+    def __init__(self, is_visible: bool = True, parent=None):
+        super().__init__(parent)
+        self.is_expanded = is_visible
+        self.setFixedHeight(22)
+        self.setStyleSheet("""
+            StoryboardToggleBar {
+                background-color: #E2E8F0;
+                border-top: 1px solid #CBD5E1;
+                border-bottom: 1px solid #CBD5E1;
+            }
+        """)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 1, 6, 1)
+        lay.setSpacing(0)
+        lay.addStretch(1)
+
+        self.btn_toggle = QPushButton(self)
+        self.btn_toggle.setFixedHeight(18)
+        self.btn_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #F1F5F9;
+                color: #334155;
+                font-size: 10px;
+                font-weight: bold;
+                border: 1px solid #94A3B8;
+                border-radius: 3px;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                background-color: #DBEAFE;
+                color: #1D4ED8;
+                border-color: #3B82F6;
+            }
+        """)
+        self.btn_toggle.clicked.connect(self._on_clicked)
+        lay.addWidget(self.btn_toggle)
+        lay.addStretch(1)
+        self.update_btn_text()
+
+    def update_btn_text(self):
+        if self.is_expanded:
+            self.btn_toggle.setText(tr("btn_toggle_storyboard_hide", "스토리보드 접기 ▲"))
+        else:
+            self.btn_toggle.setText(tr("btn_toggle_storyboard_show", "스토리보드 펼치기 ▼"))
+
+    def set_expanded(self, expanded: bool):
+        self.is_expanded = expanded
+        self.update_btn_text()
+
+    def _on_clicked(self):
+        self.is_expanded = not self.is_expanded
+        self.update_btn_text()
+        self.sig_toggled.emit(self.is_expanded)
+
+    def retranslate_ui(self):
+        self.update_btn_text()
+
+
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -7365,10 +8051,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_sub_capture.setStyleSheet("background-color: #FFFBEB; color: #B45309; border-color: #FDE68A; font-weight: bold;")
         self.btn_sub_capture.clicked.connect(self.start_sub_capture)
 
-        self.combo_tab_monitor = QComboBox(self)
-        self.combo_tab_monitor.setToolTip("캡처 대상 모니터 (최대 4개 다중 모니터 지원)")
-        self.combo_tab_monitor.setFixedWidth(100)
-        self.combo_tab_monitor.currentIndexChanged.connect(self.on_tab_monitor_changed)
+        self.combo_tab_monitor = None
 
         self.btn_scroll_stitch = QPushButton(tr("btn_scroll_stitch", "스크롤 스티칭"), self)
         self.btn_scroll_stitch.setToolTip(tr("tip_scroll_stitch", "긴 웹페이지나 ERP 테이블을 스크롤하여 1장의 파노라마 이미지로 합성"))
@@ -7389,9 +8072,8 @@ class ManualStudioWindow(QMainWindow):
         cap_grid.addWidget(self.btn_capture, 0, 0)
         cap_grid.addWidget(self.btn_drag_capture, 1, 0)
         cap_grid.addWidget(self.btn_sub_capture, 0, 1)
-        cap_grid.addWidget(self.create_stack_field(tr("lbl_screen_select", "화면"), self.combo_tab_monitor, "lbl_screen_select"), 1, 1)
-        cap_grid.addWidget(self.btn_scroll_stitch, 0, 2)
-        cap_grid.addWidget(self.btn_action_record, 1, 2)
+        cap_grid.addWidget(self.btn_scroll_stitch, 1, 1)
+        cap_grid.addWidget(self.btn_action_record, 0, 2, 2, 1)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture"))
         tools_layout.addWidget(self.create_separator())
 
@@ -7717,15 +8399,12 @@ class ManualStudioWindow(QMainWindow):
         ppt_grid = QGridLayout()
         ppt_grid.setContentsMargins(0, 0, 0, 0)
         ppt_grid.setSpacing(2)
-        ppt_grid.addWidget(self.btn_export, 0, 0)
-        ppt_grid.addWidget(self.btn_send_slides, 0, 1)
-        ppt_grid.addWidget(self.btn_export_hwp, 0, 2)
-        ppt_grid.addWidget(self.btn_ppt_fit, 0, 3)
-        ppt_grid.addWidget(self.btn_toggle_window_frame, 1, 0)
-        ppt_grid.addWidget(self.chk_ppt_title, 1, 1)
-        ppt_grid.addWidget(self.btn_renumber_steps, 1, 2)
-        ppt_grid.addWidget(self.btn_filmstrip_toggle, 1, 3)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_export", "문서·프레젠테이션 출력"), ppt_grid, "grp_ppt_export"))
+        ppt_grid.addWidget(self.btn_toggle_window_frame, 0, 0)
+        ppt_grid.addWidget(self.btn_ppt_fit, 0, 1)
+        ppt_grid.addWidget(self.btn_filmstrip_toggle, 0, 2)
+        ppt_grid.addWidget(self.chk_ppt_title, 1, 0)
+        ppt_grid.addWidget(self.btn_renumber_steps, 1, 1, 1, 2)
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options"))
 
         tools_layout.addStretch(1)
 
@@ -8310,15 +8989,27 @@ class ManualStudioWindow(QMainWindow):
         self.scroll_area.setWidget(self.canvas)
         main_layout.addWidget(self.scroll_area, 1)
 
-        # 2-2. 하단 타임라인 스토리보드 독
+        # 2-2. 하단 타임라인 스토리보드 토글 바 및 독
+        film_vis = bool(self.config.get("filmstrip_visible", True))
+        self.storyboard_toggle_bar = StoryboardToggleBar(film_vis, self)
+        self.storyboard_toggle_bar.sig_toggled.connect(self.on_storyboard_toggle_bar_toggled)
+        main_layout.addWidget(self.storyboard_toggle_bar)
+
         self.filmstrip = FilmstripDockWidget(self)
-        self.filmstrip.setVisible(bool(self.config.get("filmstrip_visible", True)))
+        self.filmstrip.setVisible(film_vis)
+        self.filmstrip.hover_preview_enabled = bool(self.config.get("enable_hover_preview", True))
+        self.filmstrip.chk_hover_preview.setChecked(self.filmstrip.hover_preview_enabled)
         self.filmstrip.sig_step_selected.connect(self.on_filmstrip_step_selected)
-        self.filmstrip.sig_add_step.connect(self.on_filmstrip_add_step)
+        self.filmstrip.sig_add_step.connect(self.action_add_new_slide)
         self.filmstrip.sig_delete_step.connect(self.on_filmstrip_delete_step)
+        self.filmstrip.sig_delete_steps.connect(self.on_filmstrip_delete_selected)
         self.filmstrip.sig_duplicate_step.connect(self.on_filmstrip_duplicate_step)
+        self.filmstrip.sig_duplicate_selected.connect(self.on_filmstrip_duplicate_selected)
+        self.filmstrip.sig_move_selected.connect(self.on_filmstrip_move_selected)
+        self.filmstrip.sig_toggle_hover_preview.connect(self.on_filmstrip_toggle_hover_preview)
         self.filmstrip.sig_move_step.connect(self.on_filmstrip_move_step)
         self.filmstrip.sig_export_all_ppt.connect(self.action_export_all_ppt)
+        self.filmstrip.sig_export_all_slides.connect(self.action_export_all_slides)
         self.filmstrip.sig_export_all_hwp.connect(self.action_export_all_hwp)
         self.filmstrip.sig_export_webbook.connect(self.action_export_webbook)
         self.filmstrip.sig_export_gif.connect(self.action_export_gif)
@@ -8330,7 +9021,7 @@ class ManualStudioWindow(QMainWindow):
         status_layout.setContentsMargins(4, 2, 6, 2)
         status_layout.setSpacing(8)
 
-        self.status_label = QLabel(tr("status_ready", "대기 중: F9로 캡처, F10(PPT) / F11(구글 슬라이드)로 내보내기"), self)
+        self.status_label = QLabel(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"), self)
         self.status_label.setStyleSheet("color: #666666; font-size: 11px; padding: 2px 4px;")
         status_layout.addWidget(self.status_label, 1)
 
@@ -8635,6 +9326,8 @@ class ManualStudioWindow(QMainWindow):
         self.retranslate_ribbon()
         self.retranslate_quick_strip()
         self.retranslate_status_and_title()
+        if hasattr(self, "filmstrip") and hasattr(self.filmstrip, "retranslate_ui"):
+            self.filmstrip.retranslate_ui()
         if hasattr(self, "init_monitor_combos"):
             self.init_monitor_combos()
 
@@ -8736,7 +9429,8 @@ class ManualStudioWindow(QMainWindow):
             "grp_ocr": ("grp_ocr", "텍스트 인식"),
             "grp_dimension": ("grp_dimension", "치수선"),
             "grp_text_wordart": ("grp_text_wordart", "텍스트·워드아트"),
-            "grp_ppt_export": ("grp_ppt_export", "PPT 출력"),
+            "grp_ppt_export": ("grp_slide_options", "슬라이드 옵션"),
+            "grp_slide_options": ("grp_slide_options", "슬라이드 옵션"),
             "grp_stamp_fmt": ("grp_stamp_fmt", "스탬프"),
             "grp_arrow_fmt": ("grp_arrow_fmt", "선·화살표"),
             "grp_text_fmt": ("grp_text_wordart", "텍스트·글꼴"),
@@ -8895,7 +9589,7 @@ class ManualStudioWindow(QMainWindow):
         self.update_window_title()
         self.update_status_bar()
         if hasattr(self, "canvas") and self.canvas.pixmap is None and hasattr(self, "status_label"):
-            self.status_label.setText(tr("status_ready", "대기 중: F9를 눌러 캡처하고, 주석 편집 후 F10을 눌러 슬라이드로 내보내세요."))
+            self.status_label.setText(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"))
 
     def on_autosave_toggle_clicked(self, checked=None):
         if not hasattr(self, "btn_autosave"):
@@ -9279,7 +9973,7 @@ class ManualStudioWindow(QMainWindow):
         self.hotkey_thread.sig_capture.connect(self.handle_hotkey_capture)
         self.hotkey_thread.sig_drag_capture.connect(self.start_capture)
         self.hotkey_thread.sig_sub_capture.connect(self.start_sub_capture)
-        self.hotkey_thread.sig_export.connect(self.export_to_ppt_and_clipboard)
+        self.hotkey_thread.sig_export.connect(self.action_add_new_slide)
         self.hotkey_thread.sig_slides_export.connect(self.action_send_to_google_slides)
         self.hotkey_thread.sig_hwp_export.connect(self.action_send_to_hwp)
         self.hotkey_thread.start()
@@ -10204,7 +10898,10 @@ class ManualStudioWindow(QMainWindow):
         self._restore_window_after_capture(True)
 
         if pixmap and not pixmap.isNull():
-            self.canvas.add_image_overlay(pixmap)
+            if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+                self.canvas.set_pixmap(pixmap)
+            else:
+                self.canvas.add_image_overlay(pixmap)
             w = pixmap.width()
             h = pixmap.height()
             self.show_toast(f"부분 이미지({w}×{h}px) 추가 완료. 마우스로 이동 및 크기를 조절하세요.")
@@ -10215,7 +10912,7 @@ class ManualStudioWindow(QMainWindow):
     def init_monitor_combos(self):
         monitors = MultiMonitorManager.get_monitor_info_list()
         combos = []
-        if hasattr(self, "combo_tab_monitor"):
+        if hasattr(self, "combo_tab_monitor") and self.combo_tab_monitor is not None:
             combos.append(self.combo_tab_monitor)
         if hasattr(self, "combo_monitor"):
             combos.append(self.combo_monitor)
@@ -10237,7 +10934,7 @@ class ManualStudioWindow(QMainWindow):
             cb.blockSignals(False)
 
     def on_tab_monitor_changed(self, idx):
-        if hasattr(self, "combo_tab_monitor"):
+        if hasattr(self, "combo_tab_monitor") and self.combo_tab_monitor is not None:
             val = self.combo_tab_monitor.currentData()
             self.set_active_monitor(val)
 
@@ -10251,7 +10948,7 @@ class ManualStudioWindow(QMainWindow):
         self.config["target_monitor"] = monitor_index
         save_config(self.config)
 
-        if hasattr(self, "combo_tab_monitor"):
+        if hasattr(self, "combo_tab_monitor") and self.combo_tab_monitor is not None:
             self.combo_tab_monitor.blockSignals(True)
             idx = self.combo_tab_monitor.findData(monitor_index)
             if idx >= 0:
@@ -11004,10 +11701,7 @@ class ManualStudioWindow(QMainWindow):
             self.hide_keytips()
             return
         elif key == Qt.Key_F10:
-            if modifiers & Qt.ShiftModifier:
-                self.action_send_to_hwp()
-            else:
-                self.export_to_ppt_and_clipboard()
+            self.action_add_new_slide()
             self.hide_keytips()
             return
         elif key == Qt.Key_F11:
@@ -11033,7 +11727,7 @@ class ManualStudioWindow(QMainWindow):
                     self.hide_keytips()
                     return
                 elif key == Qt.Key_M:
-                    self.canvas.apply_auto_pii_redaction()
+                    self.action_auto_pii()
                     self.hide_keytips()
                     return
 
@@ -11280,8 +11974,17 @@ class ManualStudioWindow(QMainWindow):
         self.filmstrip.setVisible(cur)
 
     def action_auto_pii(self):
-        if hasattr(self, "canvas") and self.canvas:
-            self.canvas.apply_auto_pii_redaction()
+        if not hasattr(self, "canvas") or not self.canvas:
+            return
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            self.show_toast("마스킹할 캡처 이미지가 없습니다. F9를 눌러 먼저 캡처하세요.")
+            return
+
+        dlg = PiiMaskingDialog(self.config, self)
+        if dlg.exec() == QDialog.Accepted:
+            active_cats = [cat for cat, val in self.config.get("pii_categories", {}).items() if val]
+            custom_rules = self.config.get("custom_pii_rules", [])
+            self.canvas.apply_auto_pii_redaction(active_categories=active_cats, custom_rules=custom_rules)
 
     def action_scroll_stitch(self):
         """현재 스토리보드의 스텝들을 스티칭하거나, 파일 선택을 통해 여러 이미지를 1장의 수직 파노라마로 합성"""
@@ -11426,6 +12129,23 @@ class ManualStudioWindow(QMainWindow):
             err = res.get("error", "Unknown error")
             self.show_toast(f"한글 내보내기 실패: {err}")
 
+    def load_step_to_canvas(self, step_idx: int):
+        """지정된 슬라이드의 원본 픽스맵과 주석 아이템들을 작업대 캔버스에 로드"""
+        if not self.storyboard_steps or not (0 <= step_idx < len(self.storyboard_steps)):
+            return
+        target_step = self.storyboard_steps[step_idx]
+        raw_px = target_step.get("raw_pixmap")
+        if raw_px and not raw_px.isNull():
+            self.canvas.pixmap = raw_px.copy()
+        else:
+            self.canvas.pixmap = None
+
+        self.canvas.items = [item.clone() for item in target_step.get("items", [])]
+        self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
+        self.canvas.selected_item = None
+        self.canvas.history.clear()
+        self.canvas.update()
+
     def on_filmstrip_step_selected(self, target_idx: int):
         if target_idx < 0 or target_idx >= len(self.storyboard_steps):
             return
@@ -11442,22 +12162,18 @@ class ManualStudioWindow(QMainWindow):
                 curr_step["thumbnail"] = QPixmap.fromImage(comp_qimg)
 
         self.current_step_idx = target_idx
-        target_step = self.storyboard_steps[target_idx]
-        raw_px = target_step.get("raw_pixmap")
-        if raw_px and not raw_px.isNull():
-            self.canvas.pixmap = raw_px.copy()
-        else:
-            self.canvas.pixmap = None
-
-        self.canvas.items = [item.clone() for item in target_step.get("items", [])]
-        self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
-        self.canvas.selected_item = None
-        self.canvas.history.clear()
-        self.canvas.update()
+        self.load_step_to_canvas(target_idx)
 
         if hasattr(self, "filmstrip"):
-            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
-        self.show_toast(f"Step {target_idx + 1} 작업대로 전환되었습니다.")
+            self.filmstrip.steps = self.storyboard_steps
+            self.filmstrip.active_idx = self.current_step_idx
+            self.filmstrip.update_card_selection_states()
+
+        target_step = self.storyboard_steps[target_idx]
+        if target_step.get("has_unmasked_pii", False):
+            self.show_toast(tr("toast_unmasked_pii_detected", "⚠️ 미마스킹 민감정보 감지됨 (Shift+M으로 마스킹)"), duration=3500)
+        else:
+            self.show_toast(f"Step {target_idx + 1} 작업대로 전환되었습니다.")
 
     def on_filmstrip_add_step(self):
         if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
@@ -11491,24 +12207,147 @@ class ManualStudioWindow(QMainWindow):
             self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
         self.show_toast(f"새 Step {new_idx + 1} 생성됨. F9를 눌러 화면을 캡처하세요.")
 
+    def action_add_new_slide(self):
+        """+ 새 슬라이드 (F10) 쾌속 생성 및 작업대 전환"""
+        self.on_filmstrip_add_step()
+
     def on_filmstrip_delete_step(self, del_idx: int):
-        if len(self.storyboard_steps) <= 1:
-            self.show_toast("스토리보드에는 최소 1개의 스텝이 유지되어야 합니다.")
+        self.on_filmstrip_delete_selected([del_idx])
+
+    def on_storyboard_toggle_bar_toggled(self, is_visible: bool):
+        self.filmstrip.setVisible(is_visible)
+        self.config["filmstrip_visible"] = is_visible
+        save_config(self.config)
+        if hasattr(self, "btn_toggle_filmstrip") and self.btn_toggle_filmstrip:
+            self.btn_toggle_filmstrip.setChecked(is_visible)
+
+    def on_filmstrip_toggle_hover_preview(self, enabled: bool):
+        self.config["enable_hover_preview"] = enabled
+        save_config(self.config)
+
+    def on_filmstrip_duplicate_selected(self):
+        """선택된 슬라이드들을 복제하여 바로 뒤에 삽입"""
+        if not self.storyboard_steps:
             return
-        if 0 <= del_idx < len(self.storyboard_steps):
-            self.storyboard_steps.pop(del_idx)
-            for i, s in enumerate(self.storyboard_steps):
-                s["step_num"] = i + 1
-            if self.current_step_idx >= len(self.storyboard_steps):
-                self.current_step_idx = len(self.storyboard_steps) - 1
-            target_step = self.storyboard_steps[self.current_step_idx]
-            self.canvas.pixmap = target_step.get("raw_pixmap")
-            self.canvas.items = [it.clone() for it in target_step.get("items", [])]
-            self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
+        selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
+        new_steps = []
+        new_selected = set()
+
+        for idx in range(len(self.storyboard_steps)):
+            new_steps.append(self.storyboard_steps[idx])
+            if idx in selected:
+                orig = self.storyboard_steps[idx]
+                dup = {
+                    "step_num": orig.get("step_num", idx + 1),
+                    "title": (orig.get("title", "") + " (복사본)").strip(),
+                    "desc": orig.get("desc", ""),
+                    "raw_pixmap": QPixmap(orig.get("raw_pixmap")) if orig.get("raw_pixmap") else None,
+                    "thumbnail": QPixmap(orig.get("thumbnail")) if orig.get("thumbnail") else None,
+                    "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")]
+                }
+                new_steps.append(dup)
+                new_selected.add(len(new_steps) - 1)
+
+        for i, s in enumerate(new_steps):
+            s["step_num"] = i + 1
+
+        self.storyboard_steps = new_steps
+        if new_selected:
+            self.current_step_idx = min(new_selected)
+            self.filmstrip.selected_indices = new_selected
+        self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.load_step_to_canvas(self.current_step_idx)
+        self.show_toast(f"슬라이드 {len(selected)}개 복제 완료")
+
+    def on_filmstrip_move_selected(self, direction: int):
+        """선택된 슬라이드들을 앞(-1) 또는 뒤(+1)로 이동"""
+        if not self.storyboard_steps:
+            return
+        selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
+        n = len(self.storyboard_steps)
+
+        if direction == -1:  # 앞으로 이동 (왼쪽)
+            if selected[0] <= 0:
+                return
+            for idx in selected:
+                self.storyboard_steps[idx - 1], self.storyboard_steps[idx] = self.storyboard_steps[idx], self.storyboard_steps[idx - 1]
+            new_selected = {idx - 1 for idx in selected}
+        elif direction == 1:  # 뒤로 이동 (오른쪽)
+            if selected[-1] >= n - 1:
+                return
+            for idx in reversed(selected):
+                self.storyboard_steps[idx + 1], self.storyboard_steps[idx] = self.storyboard_steps[idx], self.storyboard_steps[idx + 1]
+            new_selected = {idx + 1 for idx in selected}
+        else:
+            return
+
+        for i, s in enumerate(self.storyboard_steps):
+            s["step_num"] = i + 1
+
+        self.filmstrip.selected_indices = new_selected
+        self.current_step_idx = min(new_selected)
+        self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.load_step_to_canvas(self.current_step_idx)
+
+    def on_filmstrip_delete_selected(self, del_indices: list = None):
+        """선택된 슬라이드 일괄 삭제"""
+        if not self.storyboard_steps:
+            return
+        if del_indices is None:
+            del_indices = [self.current_step_idx]
+        del_indices = [i for i in del_indices if 0 <= i < len(self.storyboard_steps)]
+        if not del_indices:
+            self.show_toast("삭제할 슬라이드가 선택되지 않았습니다.")
+            return
+
+        if len(del_indices) >= len(self.storyboard_steps):
+            self.storyboard_steps = [{
+                "step_num": 1,
+                "title": "Step 1. [단계명 입력]",
+                "raw_pixmap": None,
+                "items": [],
+                "next_stamp_index": 1,
+                "thumbnail": None
+            }]
+            self.current_step_idx = 0
+            self.canvas.pixmap = None
+            self.canvas.items.clear()
+            self.canvas.next_stamp_index = 1
+            self.canvas.history.clear()
             self.canvas.update()
             if hasattr(self, "filmstrip"):
-                self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
-            self.show_toast(f"Step {del_idx + 1} 삭제 완료.")
+                self.filmstrip.set_steps(self.storyboard_steps, 0)
+            self.show_toast("선택된 슬라이드 삭제 완료 (기본 슬라이드 초기화)")
+            return
+
+        for idx in sorted(del_indices, reverse=True):
+            self.storyboard_steps.pop(idx)
+
+        for i, s in enumerate(self.storyboard_steps):
+            s["step_num"] = i + 1
+
+        if self.current_step_idx >= len(self.storyboard_steps):
+            self.current_step_idx = len(self.storyboard_steps) - 1
+
+        target_step = self.storyboard_steps[self.current_step_idx]
+        raw_px = target_step.get("raw_pixmap")
+        self.canvas.pixmap = raw_px.copy() if raw_px and not raw_px.isNull() else None
+        self.canvas.items = [it.clone() for it in target_step.get("items", [])]
+        self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
+        self.canvas.update()
+
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.show_toast(f"슬라이드 {len(del_indices)}개 삭제 완료")
+
+    def get_export_target_steps(self):
+        """선택된 슬라이드 대상 목록 반환 [(idx, step_data), ...]"""
+        if hasattr(self, "filmstrip") and hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices:
+            sel_sorted = sorted(self.filmstrip.selected_indices)
+            valid = [(idx, self.storyboard_steps[idx]) for idx in sel_sorted if 0 <= idx < len(self.storyboard_steps)]
+            if valid:
+                return valid
+        return [(idx, step) for idx, step in enumerate(self.storyboard_steps)]
 
     def on_filmstrip_duplicate_step(self, dup_idx: int):
         if 0 <= dup_idx < len(self.storyboard_steps):
@@ -11538,8 +12377,9 @@ class ManualStudioWindow(QMainWindow):
             self.show_toast(f"Step 순서 변경: {from_idx + 1} ➔ {to_idx + 1}")
 
     def action_export_all_ppt(self):
-        if not self.storyboard_steps:
-            self.show_toast("전송할 스토리보드 단계가 없습니다.")
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("전송할 슬라이드가 없습니다.")
             return
 
         if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
@@ -11556,7 +12396,7 @@ class ManualStudioWindow(QMainWindow):
         temp_dir = os.path.join(get_app_dir(), "temp")
 
         sent_count = 0
-        for idx, step in enumerate(self.storyboard_steps):
+        for idx, step in target_steps:
             raw_px = step.get("raw_pixmap")
             if raw_px is None or raw_px.isNull():
                 continue
@@ -11585,11 +12425,77 @@ class ManualStudioWindow(QMainWindow):
             if ok:
                 sent_count += 1
 
-        self.show_toast(f"스토리보드 총 {sent_count}개 단계를 파워포인트로 일괄 전송 완료!")
+        self.show_toast(f"선택된 슬라이드 {sent_count}개 파워포인트 전송 완료")
+
+    def action_export_all_slides(self):
+        """선택된 슬라이드들을 웹 브라우저 구글 슬라이드로 일괄 새 슬라이드 생성 및 주입"""
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("전송할 슬라이드가 없습니다.")
+            return
+
+        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
+            curr_step = self.storyboard_steps[self.current_step_idx]
+            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr_step["items"] = [it.clone() for it in self.canvas.items]
+            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
+
+        target_w = self.config.get("target_width", 960)
+        auto_resize = self.config.get("auto_resize", True)
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+        return_focus = self.config.get("slides_return_focus", True)
+
+        sent_count = 0
+        total = len(target_steps)
+        for seq, (idx, step) in enumerate(target_steps, 1):
+            raw_px = step.get("raw_pixmap")
+            if raw_px is None or raw_px.isNull():
+                continue
+            step_canvas = StudioCanvasWidget(self)
+            step_canvas.pixmap = raw_px
+            step_canvas.items = step.get("items", [])
+            qimg = step_canvas.get_composed_image()
+            if qimg is None:
+                continue
+
+            pil_img = ExportEngine.qimage_to_pil(qimg)
+            if enable_frame:
+                pil_img = ExportEngine.apply_window_frame_and_shadow(
+                    pil_img,
+                    include_header=frame_cfg.get("include_header", True),
+                    corner_radius=frame_cfg.get("corner_radius", 12),
+                    shadow_radius=frame_cfg.get("shadow_radius", 20),
+                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
+                )
+            if auto_resize:
+                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+            self.status_label.setText(f"구글 슬라이드 주입 중... (Step {idx + 1}, {seq}/{total})")
+            QApplication.processEvents()
+
+            res = ExportEngine.send_to_google_slides(
+                pil_img,
+                return_focus_hwnd=int(self.winId()),
+                return_focus=return_focus
+            )
+            if res.get("success"):
+                sent_count += 1
+            else:
+                err = res.get("error")
+                if err == "NOT_FOUND":
+                    self.show_toast(tr("slides_not_found", "구글 슬라이드 웹 브라우저 창을 찾을 수 없습니다.\n크롬 또는 엣지에서 구글 슬라이드를 열어주세요."))
+                    break
+
+        if sent_count > 0:
+            success_msg = f"선택된 슬라이드 {sent_count}개 구글 슬라이드 전송 완료"
+            self.status_label.setText(success_msg)
+            self.show_toast(success_msg)
 
     def action_export_webbook(self):
-        if not self.storyboard_steps:
-            self.show_toast("내보낼 스토리보드 단계가 없습니다. 먼저 화면을 캡처하세요.")
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("내보낼 슬라이드가 없습니다.")
             return
 
         # Snapshot current step
@@ -11611,10 +12517,9 @@ class ManualStudioWindow(QMainWindow):
 
         enable_frame = self.config.get("enable_window_frame", True)
         frame_cfg = self.config.get("window_frame_style", {})
-        target_w = self.config.get("target_width", 960)
 
         steps_payload = []
-        for idx, step in enumerate(self.storyboard_steps):
+        for idx, step in target_steps:
             raw_px = step.get("raw_pixmap")
             if raw_px is None or raw_px.isNull():
                 continue
@@ -11655,11 +12560,12 @@ class ManualStudioWindow(QMainWindow):
         doc_title = os.path.splitext(os.path.basename(file_path))[0]
         ExportEngine.export_to_html(steps_payload, file_path, title=doc_title)
         QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
-        self.show_toast(f"웹북 매뉴얼 생성 완료! 기본 브라우저에서 열렸습니다.")
+        self.show_toast(f"웹북 매뉴얼 저장 완료 ({len(steps_payload)}개 슬라이드)")
 
     def action_export_gif(self):
-        if not self.storyboard_steps:
-            self.show_toast("내보낼 스토리보드 단계가 없습니다. 먼저 화면을 캡처하세요.")
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("내보낼 슬라이드가 없습니다.")
             return
 
         if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
@@ -11680,10 +12586,9 @@ class ManualStudioWindow(QMainWindow):
 
         enable_frame = self.config.get("enable_window_frame", True)
         frame_cfg = self.config.get("window_frame_style", {})
-        target_w = self.config.get("target_width", 960)
 
         pil_frames = []
-        for step in self.storyboard_steps:
+        for idx, step in target_steps:
             raw_px = step.get("raw_pixmap")
             if raw_px is None or raw_px.isNull():
                 continue
@@ -11707,15 +12612,16 @@ class ManualStudioWindow(QMainWindow):
             pil_frames.append(pil_img)
 
         if not pil_frames:
-            self.show_toast("유효한 단계 이미지가 없습니다.")
+            self.show_toast("내보낼 유효한 슬라이드 이미지가 없습니다.")
             return
 
         ExportEngine.export_to_animated_gif(pil_frames, file_path, interval_sec=1.5)
-        self.show_toast(f"숏클립 튜토리얼 GIF 저장 완료! (총 {len(pil_frames)}단계)")
+        self.show_toast(f"숏클립 튜토리얼 GIF 저장 완료 ({len(pil_frames)}개 슬라이드)")
 
     def action_export_all_hwp(self):
-        if not self.storyboard_steps:
-            self.show_toast("전송할 스토리보드 단계가 없습니다.")
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("전송할 슬라이드가 없습니다.")
             return
 
         if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
@@ -11730,7 +12636,7 @@ class ManualStudioWindow(QMainWindow):
         frame_cfg = self.config.get("window_frame_style", {})
 
         sent_count = 0
-        for idx, step in enumerate(self.storyboard_steps):
+        for idx, step in target_steps:
             raw_px = step.get("raw_pixmap")
             if raw_px is None or raw_px.isNull():
                 continue
@@ -11758,7 +12664,7 @@ class ManualStudioWindow(QMainWindow):
             if res.get("success"):
                 sent_count += 1
 
-        self.show_toast(f"스토리보드 총 {sent_count}개 단계를 한컴 한글(HWP)로 일괄 전송 완료!")
+        self.show_toast(f"선택된 슬라이드 {sent_count}개 한컴 한글(HWP) 전송 완료")
 
 
 

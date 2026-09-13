@@ -2935,7 +2935,7 @@ def test_phase1_filmstrip_storyboard_and_i18n():
     from manual_capture_studio import FilmstripDockWidget, StepCardWidget
     from i18n_manager import I18nManager
     dock = FilmstripDockWidget()
-    assert dock.lbl_title.text() == "🎞️ 스토리보드 타임라인 (0단계)"
+    assert "스토리보드 타임라인" in dock.lbl_title.text()
 
     new_keys = ["btn_export_hwp", "tip_export_hwp", "btn_window_frame", "tip_window_frame", "btn_filmstrip_toggle", "tip_filmstrip_toggle", "btn_add_step", "btn_export_all_ppt", "btn_export_all_hwp"]
     for k in new_keys:
@@ -3236,6 +3236,358 @@ def test_phase4_action_recorder_and_i18n():
 
     print("[PASS] test_phase4_action_recorder_and_i18n (ActionRecorderThread, RecordingFloatWidget, Ribbon triggers & 13-locale i18n valid)")
 
+def test_phase5_export_menu_storyboard_and_pii_custom_rules():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt, QPointF, QRect, QRectF, QMimeData
+    from PySide6.QtGui import QPixmap, QColor, QImage, QPainter, QDropEvent
+    from manual_capture_studio import (
+        load_config, FilmstripDockWidget, StepCardWidget,
+        PiiRedactionEngine, PiiMaskingDialog, StudioCanvasWidget, ImageOverlayItem
+    )
+    from i18n_manager import I18nManager
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    cfg = load_config()
+
+    # 1. PII New Patterns & Custom Regex Verification
+    biz_text = [("사업자번호:", QRect(0, 0, 50, 20)), ("111-81-16460", QRect(55, 0, 100, 20))]
+    rects_biz = PiiRedactionEngine.detect_pii_from_lines([biz_text], active_categories=["biz_number"])
+    assert len(rects_biz) >= 1, "Failed to detect biz_number"
+
+    phone_text = [("대표전화:", QRect(0, 0, 50, 20)), ("02-555-1234", QRect(55, 0, 80, 20))]
+    rects_phone = PiiRedactionEngine.detect_pii_from_lines([phone_text], active_categories=["phone"])
+    assert len(rects_phone) >= 1, "Failed to detect 02 phone number"
+
+    name_text = [("담당자:", QRect(0, 0, 50, 20)), ("김승종", QRect(55, 0, 40, 20)), ("대리", QRect(100, 0, 30, 20))]
+    rects_name = PiiRedactionEngine.detect_pii_from_lines([name_text], active_categories=["korean_name"])
+    assert len(rects_name) >= 1, "Failed to detect korean name + title"
+
+    addr_text = [("주소:", QRect(0, 0, 40, 20)), ("서울시", QRect(45, 0, 40, 20)), ("강남구", QRect(90, 0, 40, 20)), ("테헤란로", QRect(135, 0, 50, 20)), ("123", QRect(190, 0, 30, 20))]
+    rects_addr = PiiRedactionEngine.detect_pii_from_lines([addr_text], active_categories=["address"])
+    assert len(rects_addr) >= 1, "Failed to detect address"
+
+    custom_rules = [
+        {"enabled": True, "name": "EMP", "pattern": r"EMP-\d{4}"},
+        {"enabled": False, "name": "SECRET", "pattern": r"SECRET-\d+"}
+    ]
+    custom_text = [("사번:", QRect(0, 0, 40, 20)), ("EMP-1234", QRect(45, 0, 60, 20)), ("코드:", QRect(110, 0, 40, 20)), ("SECRET-99", QRect(155, 0, 60, 20))]
+    rects_custom = PiiRedactionEngine.detect_pii_from_lines([custom_text], active_categories=[], custom_rules=custom_rules)
+    assert len(rects_custom) == 1, "Expected 1 custom rule match"
+
+    # 2. PiiMaskingDialog Verification
+    dlg = PiiMaskingDialog(cfg)
+    assert "biz_number" in dlg.cat_checkboxes
+    assert "korean_name" in dlg.cat_checkboxes
+    assert "mac" in dlg.cat_checkboxes
+    assert dlg.table.columnCount() == 4
+    init_rows = dlg.table.rowCount()
+    dlg._add_rule_row(True, "새규칙", "000-0000-0000", r"")
+    assert dlg.table.rowCount() == init_rows + 1
+    assert dlg.table.item(init_rows, 3).text() != ""  # 자동 합성 권장 정규식 확인
+    dlg._on_apply()
+    assert any(r["name"] == "새규칙" for r in cfg.get("custom_pii_rules", []))
+    dlg.close()
+
+    # 3. Filmstrip Buttons, Menu & D&D Reorder
+    film = FilmstripDockWidget()
+    assert hasattr(film, "btn_delete_selected")
+    assert hasattr(film, "btn_export_all_menu")
+    assert hasattr(film, "export_menu")
+
+    signals_received = {}
+    film.sig_delete_step.connect(lambda idx: signals_received.setdefault("del", []).append(idx))
+    film.sig_export_all_ppt.connect(lambda: signals_received.setdefault("ppt", True))
+    film.sig_export_all_slides.connect(lambda: signals_received.setdefault("slides", True))
+    film.sig_export_all_hwp.connect(lambda: signals_received.setdefault("hwp", True))
+    film.sig_export_webbook.connect(lambda: signals_received.setdefault("webbook", True))
+    film.sig_export_gif.connect(lambda: signals_received.setdefault("gif", True))
+
+    film.active_idx = 1
+    film.btn_delete_selected.click()
+    assert signals_received.get("del") == [1]
+
+    film.act_export_ppt.trigger()
+    film.act_export_slides.trigger()
+    film.act_export_hwp.trigger()
+    film.act_export_webbook.trigger()
+    film.act_export_gif.trigger()
+    for k in ["ppt", "slides", "hwp", "webbook", "gif"]:
+        assert signals_received.get(k) is True
+
+    dummy_steps = [
+        {"step_num": 1, "thumbnail": None, "raw_pixmap": None, "items": []},
+        {"step_num": 2, "thumbnail": None, "raw_pixmap": None, "items": []}
+    ]
+    film.set_steps(dummy_steps, active_idx=0)
+    move_events = []
+    film.sig_move_step.connect(lambda s, d: move_events.append((s, d)))
+    mime = QMimeData()
+    mime.setData("application/x-manualstudio-step-index", b"0")
+    drop_ev = QDropEvent(QPointF(400, 30), Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)
+    film._on_container_drop(drop_ev)
+    assert len(move_events) == 1
+    film.close()
+
+    # 4. F8 1:1 Pixel-Perfect Native Sharpness
+    canvas = StudioCanvasWidget()
+    bg_pix = QPixmap(1920, 1080)
+    bg_pix.fill(Qt.white)
+    canvas.set_pixmap(bg_pix)
+    sub_pix = QPixmap(500, 350)
+    sub_pix.fill(QColor(0, 120, 255))
+    canvas.add_image_overlay(sub_pix)
+    assert len(canvas.items) == 1
+    ov_item = canvas.items[0]
+    assert ov_item.rect.width() == 500.0
+    assert ov_item.rect.height() == 350.0
+
+    # 5. 13-Locale i18n Completeness for 26 New Keys
+    phase5_keys = [
+        "btn_delete_selected_step", "btn_delete_selected_step_tooltip",
+        "btn_export_all_menu", "menu_export_ppt", "menu_export_slides",
+        "menu_export_hwp", "menu_export_webbook", "menu_export_gif",
+        "dialog_pii_title", "pii_categories_group", "pii_custom_rules_group",
+        "pii_cat_phone", "pii_cat_email", "pii_cat_resident", "pii_cat_card",
+        "pii_cat_account", "pii_cat_biz_number", "pii_cat_korean_name",
+        "pii_cat_address", "pii_cat_ip", "pii_table_col_enabled",
+        "pii_table_col_name", "pii_table_col_pattern", "pii_btn_add_rule",
+        "pii_btn_del_rule", "pii_btn_run_masking"
+    ]
+    for k in phase5_keys:
+        assert k in I18nManager.CATALOG, f"Missing Phase 5 key: {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            val = I18nManager.CATALOG[k].get(loc, "")
+            assert val, f"Missing locale {loc} for key {k}"
+
+    print("[PASS] test_phase5_export_menu_storyboard_and_pii_custom_rules (Integrated Export Menu, Delete Step, D&D, PII Patterns & Custom Rules, F8 1:1 Sharpness & 13-Lang i18n valid)")
+
+def test_phase6_multi_selection_and_f10_slide():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap, QColor
+    from manual_capture_studio import ManualStudioWindow, FilmstripDockWidget, StepCardWidget
+    from i18n_manager import I18nManager
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = ManualStudioWindow()
+    film = win.filmstrip
+
+    # 1. UI Labels & Attributes
+    assert film.btn_add_step.text() == "+ 새 슬라이드 (F10)"
+    assert film.btn_select_all.text() == "전체 선택"
+    assert film.btn_deselect_all.text() == "전체 해제"
+    assert "선택 삭제" in film.btn_delete_selected.text()
+    assert film.btn_export_all_menu.text() == "선택 내보내기 ▾"
+
+    # 2. F10 Add Slide & State
+    assert len(win.storyboard_steps) == 0
+    win.action_add_new_slide()
+    assert len(win.storyboard_steps) == 1
+    assert win.current_step_idx == 0
+    assert film.selected_indices == {0}
+
+    px1 = QPixmap(200, 100)
+    px1.fill(QColor(255, 0, 0))
+    win.canvas.pixmap = px1
+
+    win.action_add_new_slide()
+    assert len(win.storyboard_steps) == 2
+    assert win.current_step_idx == 1
+    assert film.selected_indices == {1}
+    assert win.storyboard_steps[0]["raw_pixmap"] is not None
+
+    film.btn_add_step.click()
+    assert len(win.storyboard_steps) == 3
+    assert win.current_step_idx == 2
+    assert film.selected_indices == {2}
+
+    # 3. Multi-Selection: Select All / Deselect All
+    film.btn_select_all.click()
+    assert film.selected_indices == {0, 1, 2}
+    assert "3개 선택됨" in film.lbl_title.text()
+    assert "3" in film.btn_delete_selected.text()
+
+    targets = win.get_export_target_steps()
+    assert len(targets) == 3
+    assert [t[0] for t in targets] == [0, 1, 2]
+
+    film.btn_deselect_all.click()
+    assert film.selected_indices == {2}
+    assert "1개 선택됨" in film.lbl_title.text()
+    assert "1" in film.btn_delete_selected.text()
+
+    targets = win.get_export_target_steps()
+    assert len(targets) == 1
+    assert targets[0][0] == 2
+
+    # 4. Shift-Click Inclusion / Exclusion Toggle
+    film.on_card_clicked_with_mod(0, Qt.ShiftModifier)
+    assert film.selected_indices == {0, 2}
+    assert "2개 선택됨" in film.lbl_title.text()
+    targets = win.get_export_target_steps()
+    assert len(targets) == 2
+    assert [t[0] for t in targets] == [0, 2]
+
+    film.on_card_clicked_with_mod(2, Qt.ShiftModifier)
+    assert film.selected_indices == {0}
+    assert "1개 선택됨" in film.lbl_title.text()
+
+    film.on_card_clicked_with_mod(1, Qt.NoModifier)
+    assert film.selected_indices == {1}
+    assert win.current_step_idx == 1
+
+    film.on_card_clicked_with_mod(0, Qt.ControlModifier)
+    film.on_card_clicked_with_mod(2, Qt.ShiftModifier)
+    assert film.selected_indices == {0, 1, 2}
+
+    # 5. Multi-Delete: Delete selected steps (0 and 2)
+    win.on_filmstrip_delete_selected([0, 2])
+    assert len(win.storyboard_steps) == 1
+    assert win.storyboard_steps[0]["step_num"] == 1
+    assert win.current_step_idx == 0
+    assert film.selected_indices == {0}
+
+    # 6. Delete all remaining -> Clean blank reset
+    win.on_filmstrip_delete_selected([0])
+    assert len(win.storyboard_steps) == 1
+    assert win.storyboard_steps[0]["step_num"] == 1
+    assert win.canvas.pixmap is None
+
+    # 7. Ribbon Cleanliness
+    assert getattr(win, "combo_tab_monitor", None) is None
+    assert hasattr(win, "combo_monitor")
+    assert win.combo_monitor is not None
+    assert hasattr(win, "btn_send_slides")
+    assert hasattr(win, "btn_export_hwp")
+    assert hasattr(win, "btn_export")
+
+    # 8. 13-Locale i18n Completeness for Phase 6
+    phase6_keys = [
+        "btn_add_slide", "btn_select_all", "btn_deselect_all",
+        "btn_export_selected_menu", "grp_slide_options"
+    ]
+    for k in phase6_keys:
+        assert k in I18nManager.CATALOG, f"Missing Phase 6 key: {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            val = I18nManager.CATALOG[k].get(loc, "")
+            assert val, f"Missing locale {loc} for key {k}"
+
+    if hasattr(win, 'hotkey_thread') and win.hotkey_thread:
+        win.hotkey_thread.stop()
+    win.close()
+    print("[PASS] test_phase6_multi_selection_and_f10_slide (Ribbon Cleanliness, + New Slide F10, Multi-Selection, Shift-Click Toggle, Batch Delete & Filtered Export valid)")
+
+def test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt, QPoint
+    from PySide6.QtGui import QPixmap, QColor
+    from manual_capture_studio import (
+        ManualStudioWindow, FilmstripDockWidget, StepCardWidget,
+        PiiRedactionEngine, PiiMaskingDialog, StoryboardToggleBar, SlideHoverPreviewWidget
+    )
+    from i18n_manager import I18nManager
+    import re
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # 1. PiiRedactionEngine Pattern-by-Example Synthesizer
+    r_phone = PiiRedactionEngine.synthesize_regex_from_example("000-0000-0000")
+    assert re.search(r_phone, "연락처: 010-9876-5432입니다") is not None
+    assert re.search(r_phone, "9010-9876-5432") is None  # 4자리 앞번호 오탐 방지
+
+    r_mail = PiiRedactionEngine.synthesize_regex_from_example("aaa@aaa.aaa")
+    assert re.search(r_mail, "문의: support@dragonrpa.com") is not None
+
+    r_emp = PiiRedactionEngine.synthesize_regex_from_example("EMP-0000")
+    assert re.search(r_emp, "사번: EMP-7788") is not None
+
+    r_mac = PiiRedactionEngine.synthesize_regex_from_example("00:1A:2B:3C:4D:5E")
+    assert re.search(r_mac, "물리주소: 00:1A:2B:3C:4D:5E") is not None
+
+    r_custom = PiiRedactionEngine.synthesize_regex_from_example(r"\b[A-Z]{3}_\d{5}\b")
+    assert r_custom == r"\b[A-Z]{3}_\d{5}\b"
+
+    # 2. MAC Address & 2-Tier Account Logic
+    assert "mac" in PiiRedactionEngine.PATTERNS
+    mac_pat = PiiRedactionEngine.PATTERNS["mac"]
+    assert mac_pat.search("HW Addr: AA-BB-CC-11-22-33") is not None
+    assert mac_pat.search("Cisco Mac: 001a.2b3c.4d5e") is not None
+
+    acc_pat = PiiRedactionEngine.PATTERNS["account"]
+    assert acc_pat.search("환불계좌: 국민 123-456-789012") is not None
+    assert acc_pat.search("일반 주문번호 123-456-789012 및 송장") is None  # 금융문맥 없는 일반번호 오탐 방지
+
+    # 3. PiiMaskingDialog 4 Columns & Real-time Synthesis
+    cfg = {"pii_categories": {"mac": True}, "custom_pii_rules": []}
+    dlg = PiiMaskingDialog(cfg)
+    assert dlg.table.columnCount() == 4
+    dlg._add_rule_row(True, "테스트사번", "EMP-0000", "")
+    assert dlg.table.item(0, 3).text() != ""  # 권장 정규식 자동 완성
+    dlg._on_apply()
+    assert cfg["custom_pii_rules"][0]["example"] == "EMP-0000"
+    dlg.close()
+
+    # 4. Storyboard Toolbar New Buttons (Duplicate, Move Prev, Move Next, Preview Check)
+    film = FilmstripDockWidget()
+    assert hasattr(film, "btn_duplicate_selected")
+    assert film.btn_duplicate_selected.text() == "선택 복제"
+    assert hasattr(film, "btn_move_prev")
+    assert film.btn_move_prev.text() == "앞으로 이동"
+    assert hasattr(film, "btn_move_next")
+    assert film.btn_move_next.text() == "뒤로 이동"
+    assert hasattr(film, "chk_hover_preview")
+    assert film.chk_hover_preview.text() == "미리보기"
+    assert film.chk_hover_preview.isChecked() is True
+
+    # 5. StoryboardToggleBar
+    toggle_bar = StoryboardToggleBar(is_visible=True)
+    assert "접기" in toggle_bar.btn_toggle.text()
+    toggle_bar.btn_toggle.click()
+    assert "펼치기" in toggle_bar.btn_toggle.text()
+    assert toggle_bar.is_expanded is False
+
+    # 6. ManualStudioWindow Duplicate & Move Selected
+    win = ManualStudioWindow()
+    win.action_add_new_slide()
+    win.action_add_new_slide()
+    assert len(win.storyboard_steps) == 2
+
+    # 슬라이드 0번 선택 복제 -> 총 3개로 증가
+    win.filmstrip.selected_indices = {0}
+    win.on_filmstrip_duplicate_selected()
+    assert len(win.storyboard_steps) == 3
+    assert win.storyboard_steps[0]["step_num"] == 1
+    assert win.storyboard_steps[1]["step_num"] == 2
+    assert win.storyboard_steps[2]["step_num"] == 3
+
+    # 뒤로 이동
+    win.filmstrip.selected_indices = {0}
+    win.on_filmstrip_move_selected(1)
+    assert win.filmstrip.selected_indices == {1}
+
+    # 앞으로 이동
+    win.on_filmstrip_move_selected(-1)
+    assert win.filmstrip.selected_indices == {0}
+
+    # 7. 13-Locale i18n Completeness for Phase 7 (10 Keys)
+    phase7_keys = [
+        "pii_cat_mac", "pii_table_col_sample", "pii_table_col_pattern",
+        "toast_unmasked_pii_detected", "btn_duplicate_selected", "btn_move_prev",
+        "btn_move_next", "chk_hover_preview", "btn_toggle_storyboard_hide",
+        "btn_toggle_storyboard_show"
+    ]
+    for k in phase7_keys:
+        assert k in I18nManager.CATALOG, f"Missing Phase 7 key: {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            val = I18nManager.CATALOG[k].get(loc, "")
+            assert val, f"Missing locale {loc} for key {k}"
+
+    if hasattr(win, "hotkey_thread") and win.hotkey_thread:
+        win.hotkey_thread.stop()
+    win.close()
+    film.close()
+    print("[PASS] test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul (PII Synthesizer, MAC, Account Context, 4-Col Dialog, Storyboard Toolbar Buttons, StoryboardToggleBar & 13-Lang i18n valid)")
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -3304,5 +3656,8 @@ if __name__ == "__main__":
     test_phase4_magnetic_snap_engine()
     test_phase4_scroll_stitch_engine()
     test_phase4_action_recorder_and_i18n()
-    print("\nALL 67 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING & ACTION RECORDER TESTS PASSED 100%!")
+    test_phase5_export_menu_storyboard_and_pii_custom_rules()
+    test_phase6_multi_selection_and_f10_slide()
+    test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul()
+    print("\nALL 70 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION & PHASE 7 PII/STORYBOARD OVERHAUL TESTS PASSED 100%!")
     os._exit(0)

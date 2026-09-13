@@ -5,8 +5,8 @@ a = Analysis(
     ['manual_capture_studio.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets'), ('config.json', '.')],
-    hiddenimports=[],
+    datas=[('assets', 'assets'), ('fonts', 'fonts'), ('config.json', '.'), ('version.json', '.'), ('AGENTS.md', '.')],
+    hiddenimports=['i18n_manager', 'manual_cli', 'mcp_server', 'license_engine', 'updater_engine'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets/dragon_rpa.ico'],
+    icon=['assets/manual_studio.ico'],
 )
