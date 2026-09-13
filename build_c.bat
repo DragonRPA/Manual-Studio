@@ -31,8 +31,8 @@ python -m nuitka ^
   --windows-icon-from-ico="assets/dragon_rpa.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^
-  --windows-file-version=1.4.0.22 ^
-  --windows-product-version=1.4.0.22 ^
+  --windows-file-version=1.4.0.23 ^
+  --windows-product-version=1.4.0.23 ^
   --windows-file-description="DragonRPA Manual Studio" ^
   --assume-yes-for-downloads ^
   --output-dir="C:\ManualStudioBuild" ^

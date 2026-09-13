@@ -2871,6 +2871,39 @@ def test_box_dimension_and_ocr_labels_and_ghost_fix():
     print("[PASS] test_box_dimension_and_ocr_labels_and_ghost_fix (BoxDimensionItem, 13-Lang i18n & Vector Icons 100% verified)")
 
 
+def test_ocr_smart_preprocessing():
+    """OCR 스마트 전처리(16px 패딩 + 적응형 Lanczos 업스케일링) 및 13개국어 i18n 무결성 검증"""
+    from manual_capture_studio import OcrWorkerThread
+    from i18n_manager import I18nManager
+    from PIL import Image, ImageDraw
+
+    # 1. 작은 버튼 모의 이미지 (28x15, 단색 배경)
+    raw = Image.new("RGB", (28, 15), color=(240, 240, 240))
+    d = ImageDraw.Draw(raw)
+    d.text((2, 0), "저장", fill=(0, 0, 0))
+
+    # 2. 전처리 파이프라인 통과 검증 (외곽 16px 패딩 + 2배 업스케일링)
+    proc = OcrWorkerThread.preprocess_image_for_ocr(raw, scale=2.0, pad=16)
+    assert proc.width > raw.width, "패딩 및 업스케일링 적용 실패"
+    assert proc.height > raw.height, "패딩 및 업스케일링 적용 실패"
+    assert proc.width == int((28 + 32) * 2.0), f"Expected width {(28+32)*2}, got {proc.width}"
+    assert proc.height == int((15 + 32) * 2.0), f"Expected height {(15+32)*2}, got {proc.height}"
+
+    # 3. 고대비 전처리 모드 검증
+    proc_contrast = OcrWorkerThread.preprocess_image_for_ocr(raw, scale=2.0, pad=16, contrast_boost=True)
+    assert proc_contrast.size == proc.size
+
+    # 4. 신규 i18n 키 'toast_ocr_no_text' 13개 언어 무결성 검증
+    im = I18nManager.instance()
+    catalog = im.CATALOG
+    assert "toast_ocr_no_text" in catalog, "toast_ocr_no_text 누락"
+    all_locales = ["ko", "en", "zh", "zh_tw", "ja", "de", "es", "fr", "it", "pt", "ru", "vi", "id"]
+    for loc in all_locales:
+        assert catalog["toast_ocr_no_text"].get(loc, ""), f"toast_ocr_no_text '{loc}' 번역 누락"
+
+    print("[PASS] test_ocr_smart_preprocessing (Smart Padding, Lanczos Upscaling & 13-Lang i18n valid)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -2927,5 +2960,6 @@ if __name__ == "__main__":
     test_item_properties_dialog_and_sync()
     test_dimension_and_properties_i18n_keys()
     test_box_dimension_and_ocr_labels_and_ghost_fix()
-    print("\nALL 55 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
+    test_ocr_smart_preprocessing()
+    print("\nALL 56 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
     os._exit(0)

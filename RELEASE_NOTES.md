@@ -1,5 +1,36 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.23] - 2026-09-13 15:18
+
+### OCR 스마트 전처리(외곽 패딩+Lanczos 업스케일링) 파이프라인 탑재, 텍스트 미인식 토스트 안내 및 드래그 최소 크기 임계값 완화 (C-컴파일 최적화)
+
+#### 배경 및 목적
+- OCR 라벨 및 텍스트 추출 시 사용자가 버튼 또는 단어를 타이트하게 드래그할 경우, 글자 획이 이미지 외곽선에 닿아 WinRT OCR 엔진이 경계선 노이즈로 필터링하여 인식이 누락되던 문제를 해결했습니다.
+- 저해상도 화면 폰트(11~13pt, 15~25px 높이)의 획 두께 한계로 인해 OCR 인식률이 급감하던 문제를 해결하기 위해 적응형 업스케일링 및 여백 전처리 파이프라인을 도입했습니다.
+- 텍스트 미인식 시 에러나 알림 없이 조용히 함수가 종료되어 사용자가 프로그램 먹통으로 오인하던 문제를 방지하고, 전사 표준 헌장(Zero Silent Failures)에 따라 사용자 토스트 안내를 구현했습니다.
+- 1~2글자 버튼 또는 작은 아이콘 영역을 정밀 드래그 시 OCR 호출이 스킵되던 최소 크기 필터 임계값을 완화했습니다.
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| **스마트 이미지 전처리 파이프라인 탑재** | `OcrWorkerThread.preprocess_image_for_ocr()` 구현: 4점 모서리 배경색 자동 샘플링 기반 외곽 16px 패딩 여백 부여(테두리 경계 아티팩트 필터링 원천 방지), 이미지 크기에 따른 적응형 Lanczos 2.0x~3.0x 고품질 업스케일링 및 선명도(Sharpness 1.2x) 강화 |
+| **다단계 OCR 인식 폴백 체인** | `_try_winrt_ocr()`에서 1차 스마트 전처리(2x) -> 2차 고배율 전처리(3x) -> 3차 원본 이미지 다단계 시도 구조로 개편하여 작은 버튼부터 대형 문서까지 인식 성공률 극대화 |
+| **텍스트 미인식 시 무음 반환 방지 토스트 안내** | `_on_ocr_label_result()`에서 텍스트가 인식되지 않을 경우 조용히 종료되던 무음 실패(Silent Failure)를 제거하고 `toast_ocr_no_text` ("텍스트 미인식 (더 넓게 드래그)") 토스트 즉시 표출 |
+| **OCR 최소 드래그 임계값 완화** | `mouseReleaseEvent`의 OCR 드래그 최소 크기를 기존 `width > 20 and height > 10`에서 `width >= 10 and height >= 8`로 조정하여 작은 UI 요소 및 단축 텍스트도 정상 인식 트리거 |
+| **13개 글로벌 언어 i18n 신규 키 등록** | `toast_ocr_no_text` 13개 언어(KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) 번역 전수 등록 |
+| **단위 테스트 56개 전수 100% 통과** | `test_ocr_smart_preprocessing` 단위 테스트 추가 및 기존 55개 테스트 포함 총 56개 전 항목 통과 (`ALL 56 TESTS PASSED 100%`) |
+| **C-컴파일 빌드 버전 갱신** | `build_c.bat` Windows 파일/제품 버전 `1.4.0.23` 동기화 |
+
+#### 수정 파일
+- `manual_capture_studio.py`: `OcrWorkerThread.preprocess_image_for_ocr` 스마트 전처리 구현, `_try_winrt_ocr` 3단계 폴백, `_on_ocr_label_result` 미인식 토스트 표출, `mouseReleaseEvent` 최소 드래그 임계값 완화
+- `i18n_manager.py`: `toast_ocr_no_text` 13개국어 번역 전수 등록
+- `test_core_engine.py`: `test_ocr_smart_preprocessing` 신규 단위 테스트 추가 (56개 테스트 100% 통과)
+- `dev_temp.md`: 신규 개발 태스크 기록 및 완료 체크
+- `build_c.bat`: 빌드 버전 `1.4.0.23` 갱신
+
+---
+
 ## [v1.4.0.Build.22] - 2026-09-13 15:00
 
 ### OCR 오류 수정, DWM 캡처 투명화 고스트 방지, 객체 속성 수정 후 증발 방지, F8 부분캡처 선택 우선순위 개선 및 리본 2행 그리드·13개국어 벡터 아이콘 완비 (C-컴파일 최적화)

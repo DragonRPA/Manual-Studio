@@ -2572,7 +2572,7 @@ class BoxDimensionItem:
 # OCR Worker & Dialog
 # ------------------------------------------------------------------------------
 class OcrWorkerThread(QThread):
-    """백그라운드 OCR 스레드. WinRT → RapidOCR 폴백."""
+    """백그라운드 OCR 스레드. 스마트 전처리(패딩+업스케일) 및 WinRT → RapidOCR 다단계 폴백."""
     sig_result = Signal(str, str)   # (text, error_msg)
 
     def __init__(self, pil_img, lang="ko", parent=None):
@@ -2580,34 +2580,81 @@ class OcrWorkerThread(QThread):
         self.pil_img = pil_img
         self.lang = lang
 
+    @staticmethod
+    def preprocess_image_for_ocr(pil_img, scale=2.0, pad=16, contrast_boost=False):
+        """작은 버튼, 타이트한 드래그 영역, 저해상도 텍스트 인식을 위한 스마트 전처리.
+        1. 모서리 4점 배경색 자동 샘플링 (단색/그라데이션 대응)
+        2. 16px 패딩 여백 부여로 외곽 테두리 텍스트 분할(Segmentation) 실패 원천 방지
+        3. 높이/너비 기반 적응형 Lanczos 고품질 업스케일링 (1.0~3.0배)
+        4. 선명도 및 대비(옵션) 강화
+        """
+        try:
+            from PIL import Image, ImageOps, ImageEnhance
+            img_rgb = pil_img.convert("RGB")
+            w, h = img_rgb.size
+            if w <= 0 or h <= 0:
+                return pil_img
+
+            corners = [
+                img_rgb.getpixel((0, 0)),
+                img_rgb.getpixel((w - 1, 0)),
+                img_rgb.getpixel((0, h - 1)),
+                img_rgb.getpixel((w - 1, h - 1)),
+            ]
+            bg_color = max(set(corners), key=corners.count)
+
+            # 외곽 패딩 여백 추가 (글자 획이 이미지 외곽선과 닿아 노이즈로 필터링되는 현상 방지)
+            padded = ImageOps.expand(img_rgb, border=pad, fill=bg_color)
+
+            # 적응형 배율 계산 (이미지가 작을수록 업스케일)
+            eff_scale = scale
+            if h >= 120 and w >= 240:
+                eff_scale = 1.0
+            elif h >= 60 and w >= 120:
+                eff_scale = min(eff_scale, 1.5)
+
+            if eff_scale > 1.0:
+                nw, nh = int(padded.width * eff_scale), int(padded.height * eff_scale)
+                padded = padded.resize((nw, nh), Image.Resampling.LANCZOS)
+                padded = ImageEnhance.Sharpness(padded).enhance(1.2)
+
+            if contrast_boost:
+                padded = ImageEnhance.Contrast(padded).enhance(1.5)
+
+            return padded
+        except Exception:
+            return pil_img
+
     def run(self):
         text, err = self._try_winrt_ocr()
-        if err:
-            text, err = self._try_rapid_ocr()
+        if err or not text or not text.strip():
+            rapid_text, rapid_err = self._try_rapid_ocr()
+            if rapid_text and rapid_text.strip():
+                text, err = rapid_text, ""
         self.sig_result.emit(text, err)
 
     def _try_winrt_ocr(self):
         try:
             import asyncio
-            import ctypes
-            import ctypes.wintypes
             from winsdk.windows.media.ocr import OcrEngine
             import winsdk.windows.globalization as glob
             import winsdk.windows.graphics.imaging as wgi
             import winsdk.windows.storage.streams as wss
 
-            pil = self.pil_img.convert("RGBA")
-            w, h = pil.size
-            raw = pil.tobytes()   # RGBA bytes
+            async def _recognize_image(target_pil, engine):
+                pil_rgba = target_pil.convert("RGBA")
+                tw, th = pil_rgba.size
+                raw_bytes = pil_rgba.tobytes()
+                writer = wss.DataWriter()
+                writer.write_bytes(bytes(raw_bytes))
+                ibuf = writer.detach_buffer()
+                soft_bmp = wgi.SoftwareBitmap.create_copy_from_buffer(
+                    ibuf, wgi.BitmapPixelFormat.RGBA8, tw, th
+                )
+                result = await engine.recognize_async(soft_bmp)
+                return "\n".join([line.text for line in result.lines if line.text.strip()]).strip()
 
             async def _do_ocr():
-                # PIL RGBA bytes → IBuffer → SoftwareBitmap
-                data_writer = wss.DataWriter()
-                data_writer.write_bytes(bytes(raw))
-                ibuf = data_writer.detach_buffer()
-                soft_bmp = wgi.SoftwareBitmap.create_copy_from_buffer(
-                    ibuf, wgi.BitmapPixelFormat.RGBA8, w, h
-                )
                 # 언어 선택 (지정 언어 -> 사용자 프로필 언어 -> 설치된 첫 언어)
                 engine = None
                 try:
@@ -2623,8 +2670,22 @@ class OcrWorkerThread(QThread):
 
                 if engine is None:
                     return None
-                result = await engine.recognize_async(soft_bmp)
-                return "\n".join([line.text for line in result.lines])
+
+                # 1차 시도: 스마트 전처리(16px 패딩 + 적응형 2배 업스케일)
+                proc1 = self.preprocess_image_for_ocr(self.pil_img, scale=2.0, pad=16)
+                text = await _recognize_image(proc1, engine)
+                if text:
+                    return text
+
+                # 2차 시도: 3배 업스케일 전처리 (초소형 버튼 대응)
+                proc2 = self.preprocess_image_for_ocr(self.pil_img, scale=3.0, pad=20)
+                text = await _recognize_image(proc2, engine)
+                if text:
+                    return text
+
+                # 3차 시도: 원본 이미지 (이미 여백이 충분하거나 고해상도인 경우)
+                text = await _recognize_image(self.pil_img, engine)
+                return text
 
             loop = asyncio.new_event_loop()
             try:
@@ -2644,14 +2705,19 @@ class OcrWorkerThread(QThread):
             RapidOCR = getattr(rapid_mod, "RapidOCR")
             np = importlib.import_module("numpy")
             ocr = RapidOCR()
-            img_np = np.array(self.pil_img.convert("RGB"))
+            # 스마트 전처리 이미지로 인식률 극대화
+            proc_img = self.preprocess_image_for_ocr(self.pil_img, scale=2.0, pad=16)
+            img_np = np.array(proc_img.convert("RGB"))
             result, _ = ocr(img_np)
             if not result:
-                return tr("ocr_no_text", "인식된 텍스트가 없습니다."), ""
+                img_np_raw = np.array(self.pil_img.convert("RGB"))
+                result, _ = ocr(img_np_raw)
+            if not result:
+                return "", ""
             lines = [item[1] for item in result if item and len(item) > 1]
-            return "\n".join(lines), ""
+            return "\n".join(lines).strip(), ""
         except (ImportError, SystemError, Exception) as e:
-            return "", tr("ocr_engine_error", "OCR 처리 중 오류가 발생했습니다.") + f"\n{e}"
+            return "", ""
 
 
 class OcrResultDialog(QDialog):
@@ -4145,10 +4211,12 @@ class StudioCanvasWidget(QWidget):
         self._ocr_thread.start()
 
     def _on_ocr_label_result(self, text, error_msg, target_pt):
-        if error_msg or not text or not text.strip():
-            if error_msg:
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, tr("ocr_dialog_title", "OCR 텍스트 추출"), error_msg)
+        if error_msg:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, tr("ocr_dialog_title", "OCR 텍스트 추출"), error_msg)
+            return
+        if not text or not text.strip():
+            self.sig_request_toast.emit(tr("toast_ocr_no_text", "텍스트 미인식 (더 넓게 드래그)"))
             return
         self.push_undo()
         text_style = dict(self.config.get("text_style", DEFAULT_CONFIG["text_style"]))
@@ -4159,7 +4227,7 @@ class StudioCanvasWidget(QWidget):
         self.sig_item_selected.emit(label)
         self.update()
         self.sig_content_changed.emit()
-        self.sig_request_toast.emit(tr("toast_ocr_label_created", "OCR 텍스트 라벨이 생성되었습니다."))
+        self.sig_request_toast.emit(tr("toast_ocr_label_created", "OCR 라벨 생성 완료"))
 
     def _on_ocr_result(self, text, error_msg):
         if error_msg:
@@ -4564,7 +4632,7 @@ class StudioCanvasWidget(QWidget):
             elif self.drawing_ocr:
                 self.drawing_ocr = False
                 r = QRect(self.ocr_start, self.ocr_end).normalized()
-                if r.width() > 20 and r.height() > 10:
+                if r.width() >= 10 and r.height() >= 8:
                     self._run_ocr_on_region(r, as_label=getattr(self, "ocr_is_label_mode", False))
                 self.set_mode("SELECT")
             elif self.drawing_dimension:

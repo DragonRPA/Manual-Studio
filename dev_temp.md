@@ -1,5 +1,19 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-13 15:18] OCR 라벨 간헐적 인식 실패 해결: 스마트 전처리 파이프라인(패딩+적응형 Lanczos 업스케일링) 탑재, 미인식 토스트 알림 안내 및 드래그 임계값 완화
+- [x] OcrWorkerThread 스마트 이미지 전처리(Smart Preprocessing) 파이프라인 구현
+  - 모서리 4점 배경색 자동 샘플링 기반 외곽 16px 패딩 여백 부여 (WinRT 경계선 노이즈 판정 방지)
+  - 높이/너비 기반 적응형 Lanczos 2.0x~3.0x 고품질 업스케일링 및 선명도(Sharpness 1.2x) 강화
+  - 1차 전처리(2x) -> 2차 고배율 전처리(3x) -> 3차 원본 다단계 OCR 인식 폴백
+- [x] OCR 라벨 미인식 시 무음 반환(Silent Failure) 방지 및 토스트 안내 표출
+  - 텍스트 미인식 시 `toast_ocr_no_text` 토스트 안내 즉시 표출 (Zero Silent Failure 원칙 준수)
+- [x] OCR 드래그 최소 크기 필터 임계값 완화
+  - `mouseReleaseEvent`에서 기존 `width > 20 and height > 10` -> `width >= 10 and height >= 8`로 조정하여 작은 UI 버튼 정상 인식 지원
+- [x] 13개 글로벌 언어 i18n 신규 키 등록
+  - `toast_ocr_no_text` 13개국어(KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) 전수 등록
+- [x] 단위 테스트 56개 전 항목 100% 통과 (test_core_engine.py 56/56 ALL PASS)
+- [x] 릴리즈 노트(RELEASE_NOTES.md v1.4.0.Build.23) 작성 및 build_c.bat 버전 갱신
+
 ## [2026-09-13 15:00] OCR 오류 해결, 캡처 투명화 고스트 방지, 객체 속성 수정 후 증발 방지, F8 부분캡처 선택 우선순위 개선 및 리본 2행 그리드·13개국어 벡터 아이콘 완비
 - [x] OCR 오류 해결 (WinRT OCR 버퍼 타입 write_bytes(bytes(raw)) 수정, 3단계 언어 폴백, Nuitka excluded assertion 방지)
 - [x] DWM 캡처 투명화/고스트 잔상 원천 차단 (_prepare_window_for_capture, _restore_window_after_capture)
