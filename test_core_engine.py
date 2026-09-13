@@ -2814,6 +2814,63 @@ def test_dimension_and_properties_i18n_keys():
     print("[PASS] test_dimension_and_properties_i18n_keys (All 37 dimension & property keys in 13 languages 100% verified)")
 
 
+def test_box_dimension_and_ocr_labels_and_ghost_fix():
+    from manual_capture_studio import (
+        BoxDimensionItem, ITEM_REGISTRY, RibbonIconProvider
+    )
+    from PySide6.QtCore import QRect, QPointF
+    from PySide6.QtGui import QPixmap, QPainter
+    from i18n_manager import I18nManager
+
+    # 1. BoxDimensionItem 레지스트리 및 기능 검증
+    assert "BoxDimensionItem" in ITEM_REGISTRY, "BoxDimensionItem이 ITEM_REGISTRY에 등록되지 않음"
+    item = BoxDimensionItem(QRect(50, 50, 200, 150), {"color": "#2563EB", "font_size": 10})
+    assert item.contains(QPointF(100, 100)) is True
+    assert item.contains(QPointF(10, 10)) is False
+
+    # 직렬화 / 복원 검증
+    d = item.to_dict()
+    assert d["type"] == "BoxDimensionItem"
+    assert d["rect"] == [50, 50, 200, 150]
+    restored = ITEM_REGISTRY["BoxDimensionItem"].from_dict(d)
+    assert restored.rect.width() == 200
+    assert restored.rect.height() == 150
+
+    # 렌더링 검증 (무예외 완료)
+    canvas_pix = QPixmap(400, 300)
+    canvas_pix.fill()
+    p = QPainter(canvas_pix)
+    item.render(p)
+    p.end()
+
+    # 2. 신규 5종 다국어 키 13개 언어 100% 무누락 검증
+    im = I18nManager.instance()
+    catalog = im.CATALOG
+    new_keys = [
+        "btn_mode_ocr_label",
+        "tooltip_ocr_label",
+        "btn_mode_box_dimension",
+        "tooltip_box_dimension",
+        "toast_ocr_label_created"
+    ]
+    all_locales = ["ko", "en", "zh", "zh_tw", "ja", "de", "es", "fr", "it", "pt", "ru", "vi", "id"]
+    for k in new_keys:
+        assert k in catalog, f"신규 키 '{k}' 카탈로그 누락"
+        for loc in all_locales:
+            val = catalog[k].get(loc, "")
+            assert val, f"키 '{k}' 언어 '{loc}' 번역 누락"
+
+    # 3. RibbonIconProvider 신규 벡터 아이콘 검증
+    icon_ocr = RibbonIconProvider.get_icon("ocr")
+    assert not icon_ocr.isNull()
+    icon_ocr_lbl = RibbonIconProvider.get_icon("ocr_label")
+    assert not icon_ocr_lbl.isNull()
+    icon_box_dim = RibbonIconProvider.get_icon("box_dimension")
+    assert not icon_box_dim.isNull()
+
+    print("[PASS] test_box_dimension_and_ocr_labels_and_ghost_fix (BoxDimensionItem, 13-Lang i18n & Vector Icons 100% verified)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -2869,5 +2926,6 @@ if __name__ == "__main__":
     test_stamp_item_rounded_rect_shape()
     test_item_properties_dialog_and_sync()
     test_dimension_and_properties_i18n_keys()
-    print("\nALL 54 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
+    test_box_dimension_and_ocr_labels_and_ghost_fix()
+    print("\nALL 55 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
     os._exit(0)

@@ -1779,17 +1779,21 @@ class ImageOverlayItem:
             for i in range(4):
                 offset = (i + 1) * 1.5
                 alpha = int(40 / (i + 1))
-                shadow_rect = r.translated(offset, offset)
+                if hasattr(r, "translated") and isinstance(r, QRectF):
+                    shadow_rect = r.translated(offset, offset)
+                else:
+                    shadow_rect = QRectF(r).translated(offset, offset)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QColor(0, 0, 0, alpha))
                 painter.drawRoundedRect(shadow_rect, radius + 1, radius + 1)
 
         # 2. 이미지 렌더링 (둥근 모서리 클리핑)
         path = QPainterPath()
-        path.addRoundedRect(r, radius, radius)
+        path.addRoundedRect(QRectF(r), radius, radius)
         painter.save()
         painter.setClipPath(path)
-        painter.drawPixmap(r.toRect(), self.pixmap)
+        draw_r = r.toRect() if hasattr(r, "toRect") else QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height()))
+        painter.drawPixmap(draw_r, self.pixmap)
         painter.restore()
 
         # 3. 외곽 테두리
@@ -2455,6 +2459,116 @@ class DimensionLineItem:
         painter.restore()
 
 
+class BoxDimensionItem:
+    """영역의 가로×세로(W×H) 크기를 측정하여 외곽 박스와 치수선 뱃지를 표시하는 객체"""
+    def __init__(self, rect, style=None):
+        self.rect = QRectF(rect) if hasattr(rect, "x") else QRectF(rect[0], rect[1], rect[2], rect[3])
+        default_style = {
+            "color": "#007AFF",
+            "border_width": 2,
+            "fill": False,
+            "fill_opacity": 30,
+            "unit": "px",
+            "font_size": 11,
+            "font_family": "Malgun Gothic",
+            "font_bold": True,
+            "badge_bg": "#007AFF",
+            "badge_text_color": "#FFFFFF",
+            "corner_radius": 4
+        }
+        if style:
+            default_style.update(style)
+        self.style = default_style
+
+    def clone(self):
+        return BoxDimensionItem(QRectF(self.rect), self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "BoxDimensionItem",
+            "rect": [float(self.rect.x()), float(self.rect.y()), float(self.rect.width()), float(self.rect.height())],
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        r = data.get("rect", [0, 0, 100, 100])
+        return cls(QRectF(r[0], r[1], r[2], r[3]), data.get("style", {}))
+
+    def contains(self, pt):
+        if hasattr(pt, "toPoint"):
+            pt = pt.toPoint()
+        return self.rect.adjusted(-6, -6, 6, 6).contains(pt)
+
+    def render(self, painter: QPainter):
+        r = self.rect.normalized()
+        if r.width() < 2 or r.height() < 2:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        col = QColor(self.style.get("color", "#007AFF"))
+        bw = int(self.style.get("border_width", 2))
+        radius = float(self.style.get("corner_radius", 4))
+        unit = self.style.get("unit", "px")
+
+        # 1. 박스 영역 테두리 & 배경 채우기
+        if self.style.get("fill", False):
+            fill_col = QColor(col)
+            fill_col.setAlpha(int(self.style.get("fill_opacity", 30)))
+            painter.setBrush(QBrush(fill_col))
+        else:
+            painter.setBrush(Qt.NoBrush)
+
+        pen = QPen(col, bw, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawRoundedRect(r, radius, radius)
+
+        # 2. 치수 텍스트 뱃지 (가로 × 세로 px)
+        w_val = int(round(r.width()))
+        h_val = int(round(r.height()))
+        badge_text = f"{w_val} × {h_val} {unit}"
+
+        font_family = self.style.get("font_family", "Malgun Gothic")
+        font_size = int(self.style.get("font_size", 11))
+        font = QFont(font_family, font_size)
+        font.setBold(bool(self.style.get("font_bold", True)))
+        painter.setFont(font)
+
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(badge_text)
+        th = fm.height()
+        pad_x = 8
+        pad_y = 4
+        bw_badge = tw + pad_x * 2
+        bh_badge = th + pad_y * 2
+
+        bx = r.x() + 6
+        by = r.y() - bh_badge - 3
+        if by < 4:
+            by = r.y() + 4
+
+        badge_rect = QRectF(bx, by, bw_badge, bh_badge)
+
+        # 뱃지 드롭 섀도우
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.drawRoundedRect(QRectF(badge_rect.x() + 1, badge_rect.y() + 1.5, bw_badge, bh_badge), 4, 4)
+
+        # 뱃지 배경
+        badge_bg = QColor(self.style.get("badge_bg", col.name()))
+        painter.setBrush(QBrush(badge_bg))
+        painter.setPen(QPen(col.darker(110), 1))
+        painter.drawRoundedRect(badge_rect, 4, 4)
+
+        # 뱃지 텍스트
+        text_col = QColor(self.style.get("badge_text_color", "#FFFFFF"))
+        painter.setPen(text_col)
+        painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
+
+        painter.restore()
+
+
 # OCR Worker & Dialog
 # ------------------------------------------------------------------------------
 class OcrWorkerThread(QThread):
@@ -2489,19 +2603,24 @@ class OcrWorkerThread(QThread):
             async def _do_ocr():
                 # PIL RGBA bytes → IBuffer → SoftwareBitmap
                 data_writer = wss.DataWriter()
-                data_writer.write_bytes(list(raw))
+                data_writer.write_bytes(bytes(raw))
                 ibuf = data_writer.detach_buffer()
                 soft_bmp = wgi.SoftwareBitmap.create_copy_from_buffer(
                     ibuf, wgi.BitmapPixelFormat.RGBA8, w, h
                 )
-                # 언어 선택 (지원 안 되면 영어 폴백)
+                # 언어 선택 (지정 언어 -> 사용자 프로필 언어 -> 설치된 첫 언어)
+                engine = None
                 try:
                     lang_obj = glob.Language(self.lang)
-                    if not OcrEngine.is_language_supported(lang_obj):
-                        lang_obj = glob.Language("en")
+                    if OcrEngine.is_language_supported(lang_obj):
+                        engine = OcrEngine.try_create_from_language(lang_obj)
                 except Exception:
-                    lang_obj = glob.Language("en")
-                engine = OcrEngine.try_create_from_language(lang_obj)
+                    pass
+                if engine is None:
+                    engine = OcrEngine.try_create_from_user_profile_languages()
+                if engine is None and OcrEngine.available_recognizer_languages:
+                    engine = OcrEngine.try_create_from_language(OcrEngine.available_recognizer_languages[0])
+
                 if engine is None:
                     return None
                 result = await engine.recognize_async(soft_bmp)
@@ -2531,7 +2650,7 @@ class OcrWorkerThread(QThread):
                 return tr("ocr_no_text", "인식된 텍스트가 없습니다."), ""
             lines = [item[1] for item in result if item and len(item) > 1]
             return "\n".join(lines), ""
-        except Exception as e:
+        except (ImportError, SystemError, Exception) as e:
             return "", tr("ocr_engine_error", "OCR 처리 중 오류가 발생했습니다.") + f"\n{e}"
 
 
@@ -2592,6 +2711,7 @@ ITEM_REGISTRY = {
     "ClickRippleItem": ClickRippleItem,
     "MagnifierZoomItem": MagnifierZoomItem,
     "DimensionLineItem": DimensionLineItem,
+    "BoxDimensionItem": BoxDimensionItem,
 }
 
 def item_from_dict(data):
@@ -2640,6 +2760,7 @@ class ItemPropertiesDialog(QDialog):
             "DraftStampItem": tr("btn_mode_draft", "드래프트 스탬프"),
             "WordArtItem": tr("btn_mode_wordart", "워드아트"),
             "DimensionLineItem": tr("btn_mode_dimension", "치수선"),
+            "BoxDimensionItem": tr("btn_mode_box_dimension", "영역 치수"),
             "SpotlightMaskItem": "스포트라이트",
             "ClickRippleItem": "클릭 인디케이터",
             "MagnifierZoomItem": "돋보기 렌즈",
@@ -2747,6 +2868,7 @@ class ItemPropertiesDialog(QDialog):
             "HotkeyBadgeItem": "hotkey_style",
             "WordArtItem": "wordart_style",
             "DimensionLineItem": "dimension_style",
+            "BoxDimensionItem": "dimension_style",
         }
         return mapping.get(cls_name)
 
@@ -2915,18 +3037,23 @@ class ItemPropertiesDialog(QDialog):
             layout.addWidget(self.chk_box_fill, row, 2, 1, 2)
             row += 1
 
-        elif cls_name == "DimensionLineItem":
+        elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
             layout.addWidget(QLabel(tr("prop_line_width", "선 두께")), row, 0)
             self.spn_line_width = QSpinBox()
             self.spn_line_width.setRange(1, 20)
-            self.spn_line_width.setValue(int(item.style.get("width", 2)))
+            self.spn_line_width.setValue(int(item.style.get("width" if cls_name == "DimensionLineItem" else "border_width", 2)))
             layout.addWidget(self.spn_line_width, row, 1)
 
-            layout.addWidget(QLabel(tr("prop_head_size", "틱 크기")), row, 2)
-            self.spn_tick_size = QSpinBox()
-            self.spn_tick_size.setRange(2, 40)
-            self.spn_tick_size.setValue(int(item.style.get("tick_size", 8)))
-            layout.addWidget(self.spn_tick_size, row, 3)
+            if cls_name == "DimensionLineItem":
+                layout.addWidget(QLabel(tr("prop_head_size", "틱 크기")), row, 2)
+                self.spn_tick_size = QSpinBox()
+                self.spn_tick_size.setRange(2, 40)
+                self.spn_tick_size.setValue(int(item.style.get("tick_size", 8)))
+                layout.addWidget(self.spn_tick_size, row, 3)
+            else:
+                self.chk_box_fill = QCheckBox(tr("opt_box_fill", "영역 채우기"))
+                self.chk_box_fill.setChecked(bool(item.style.get("fill", False)))
+                layout.addWidget(self.chk_box_fill, row, 2, 1, 2)
             row += 1
 
             layout.addWidget(QLabel("단위 (Unit)"), row, 0)
@@ -2948,7 +3075,7 @@ class ItemPropertiesDialog(QDialog):
     def _has_font_properties(self):
         item = self.item
         cls_name = item.__class__.__name__
-        if cls_name in ("TextLabelItem", "CalloutItem", "HotkeyBadgeItem", "WordArtItem", "DimensionLineItem", "DraftStampItem"):
+        if cls_name in ("TextLabelItem", "CalloutItem", "HotkeyBadgeItem", "WordArtItem", "DimensionLineItem", "BoxDimensionItem", "DraftStampItem"):
             return True
         return False
 
@@ -3003,7 +3130,7 @@ class ItemPropertiesDialog(QDialog):
             stroke_color = item.style.get("color", "#E53935")
         elif cls_name == "HighlightBoxItem":
             stroke_color = item.style.get("color", "#E53935")
-        elif cls_name == "DimensionLineItem":
+        elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
             stroke_color = item.style.get("color", "#007AFF")
         elif cls_name == "StepArrowItem":
             stroke_color = item.arrow_style.get("color", "#E53935")
@@ -3024,7 +3151,7 @@ class ItemPropertiesDialog(QDialog):
             bg_color = item.style.get("bg_color", "#E53935")
         elif cls_name == "StepArrowItem":
             bg_color = item.stamp_style.get("bg_color", "#E53935")
-        elif cls_name == "DimensionLineItem":
+        elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
             bg_color = item.style.get("badge_bg", "#007AFF")
         elif hasattr(item, "style") and "bg_color" in item.style:
             bg_color = item.style.get("bg_color", "#212121")
@@ -3041,7 +3168,7 @@ class ItemPropertiesDialog(QDialog):
             text_color = item.style.get("text_color", "#FFFFFF")
         elif cls_name == "StepArrowItem":
             text_color = item.stamp_style.get("text_color", "#FFFFFF")
-        elif cls_name == "DimensionLineItem":
+        elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
             text_color = item.style.get("badge_text_color", "#FFFFFF")
         elif hasattr(item, "style") and "text_color" in item.style:
             text_color = item.style.get("text_color", "#FFFFFF")
@@ -3064,7 +3191,10 @@ class ItemPropertiesDialog(QDialog):
             if hasattr(item, "rect"):
                 w = self.spn_w.value() if hasattr(self, "spn_w") else item.rect.width()
                 h = self.spn_h.value() if hasattr(self, "spn_h") else item.rect.height()
-                item.rect = QRect(self.spn_x.value(), self.spn_y.value(), w, h)
+                if isinstance(item, (ImageOverlayItem, BoxDimensionItem)) or isinstance(getattr(item, "rect", None), QRectF):
+                    item.rect = QRectF(float(self.spn_x.value()), float(self.spn_y.value()), float(w), float(h))
+                else:
+                    item.rect = QRect(self.spn_x.value(), self.spn_y.value(), int(w), int(h))
             elif hasattr(item, "box_rect"):
                 w = self.spn_w.value() if hasattr(self, "spn_w") else item.box_rect.width()
                 h = self.spn_h.value() if hasattr(self, "spn_h") else item.box_rect.height()
@@ -3092,6 +3222,10 @@ class ItemPropertiesDialog(QDialog):
             item.style["width"] = self.spn_line_width.value()
             item.style["tick_size"] = self.spn_tick_size.value()
             item.style["unit"] = self.cmb_unit.currentData()
+        elif cls_name == "BoxDimensionItem":
+            item.style["border_width"] = self.spn_line_width.value()
+            item.style["fill"] = self.chk_box_fill.isChecked()
+            item.style["unit"] = self.cmb_unit.currentData()
         elif cls_name == "BlurMosaicItem":
             item.style["block_size"] = self.spn_block_size.value()
 
@@ -3112,7 +3246,7 @@ class ItemPropertiesDialog(QDialog):
         # 4. 색상 반영
         if hasattr(self, "btn_stroke_color"):
             c = self.btn_stroke_color.text()
-            if cls_name in ("ArrowItem", "ElbowArrowItem", "HighlightBoxItem", "DimensionLineItem"):
+            if cls_name in ("ArrowItem", "ElbowArrowItem", "HighlightBoxItem", "DimensionLineItem", "BoxDimensionItem"):
                 item.style["color"] = c
             elif cls_name == "StepArrowItem":
                 item.arrow_style["color"] = c
@@ -3127,7 +3261,7 @@ class ItemPropertiesDialog(QDialog):
                 item.style["bg_color"] = c
             elif cls_name == "StepArrowItem":
                 item.stamp_style["bg_color"] = c
-            elif cls_name == "DimensionLineItem":
+            elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
                 item.style["badge_bg"] = c
             elif hasattr(item, "style") and "bg_color" in item.style:
                 item.style["bg_color"] = c
@@ -3138,7 +3272,7 @@ class ItemPropertiesDialog(QDialog):
                 item.style["text_color"] = c
             elif cls_name == "StepArrowItem":
                 item.stamp_style["text_color"] = c
-            elif cls_name == "DimensionLineItem":
+            elif cls_name in ("DimensionLineItem", "BoxDimensionItem"):
                 item.style["badge_text_color"] = c
             elif hasattr(item, "style") and "text_color" in item.style:
                 item.style["text_color"] = c
@@ -3308,6 +3442,7 @@ class CaptureOverlayWidget(QWidget):
             Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMouseTracking(True)
 
         self.config = config or DEFAULT_CONFIG
@@ -3505,11 +3640,13 @@ class CaptureOverlayWidget(QWidget):
             )
         self.sig_captured.emit(cropped, emit_rect)
         self.close()
+        self.deleteLater()
 
     def closeEvent(self, event):
         if not self.is_captured:
             self.sig_cancelled.emit()
         super().closeEvent(event)
+        self.deleteLater()
 
     def get_handles(self):
         if self.selected_rect.isEmpty():
@@ -3734,6 +3871,10 @@ class StudioCanvasWidget(QWidget):
         self.drawing_dimension = False
         self.dimension_start = QPointF()
         self.dimension_end = QPointF()
+        self.drawing_box_dimension = False
+        self.box_dimension_start = QPoint()
+        self.box_dimension_end = QPoint()
+        self.ocr_is_label_mode = False
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -3852,7 +3993,11 @@ class StudioCanvasWidget(QWidget):
 
     def set_mode(self, mode):
         self.current_mode = mode
-        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "BOX", "CALLOUT", "BLUR", "OCR"):
+        if mode == "OCR_LABEL":
+            self.ocr_is_label_mode = True
+        elif mode == "OCR":
+            self.ocr_is_label_mode = False
+        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "BOX", "CALLOUT", "BLUR", "OCR", "OCR_LABEL", "DIMENSION", "BOX_DIMENSION"):
             self.setCursor(Qt.CrossCursor)
         elif mode in ("TEXT", "HOTKEY"):
             self.setCursor(Qt.IBeamCursor)
@@ -3957,12 +4102,17 @@ class StudioCanvasWidget(QWidget):
         self.sig_content_changed.emit()
         return item
 
-    def _run_ocr_on_region(self, rect):
-        """선택 영역을 OCR 처리하여 OcrResultDialog로 결과 표시."""
+    def _run_ocr_on_region(self, rect, as_label=False):
+        """선택 영역을 OCR 처리하여 OcrResultDialog로 결과 표시 또는 TextLabelItem 자동 생성."""
         if self.pixmap is None or self.pixmap.isNull():
             return
-        # QPixmap → PIL Image (crop 포함)
-        cropped = self.pixmap.copy(rect)
+        # QPixmap / Composite Image → PIL Image (오버레이 객체 포함하여 크롭)
+        comp_img = self.get_composed_image()
+        if comp_img and not comp_img.isNull():
+            cropped = comp_img.copy(rect)
+        else:
+            cropped = self.pixmap.copy(rect).toImage()
+
         img_byte = QByteArray()
         buf = QBuffer(img_byte)
         buf.open(QIODevice.WriteOnly)
@@ -3987,8 +4137,29 @@ class StudioCanvasWidget(QWidget):
 
         # QThread로 블로킹 없이 OCR 실행
         self._ocr_thread = OcrWorkerThread(pil_img, ocr_lang)
-        self._ocr_thread.sig_result.connect(self._on_ocr_result)
+        if as_label:
+            target_pt = QPoint(rect.x(), max(10, rect.y() - 25))
+            self._ocr_thread.sig_result.connect(lambda txt, err, pt=target_pt: self._on_ocr_label_result(txt, err, pt))
+        else:
+            self._ocr_thread.sig_result.connect(self._on_ocr_result)
         self._ocr_thread.start()
+
+    def _on_ocr_label_result(self, text, error_msg, target_pt):
+        if error_msg or not text or not text.strip():
+            if error_msg:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, tr("ocr_dialog_title", "OCR 텍스트 추출"), error_msg)
+            return
+        self.push_undo()
+        text_style = dict(self.config.get("text_style", DEFAULT_CONFIG["text_style"]))
+        clean_text = text.strip()
+        label = TextLabelItem(clean_text, target_pt.x(), target_pt.y(), text_style)
+        self.items.append(label)
+        self.selected_item = label
+        self.sig_item_selected.emit(label)
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(tr("toast_ocr_label_created", "OCR 텍스트 라벨이 생성되었습니다."))
 
     def _on_ocr_result(self, text, error_msg):
         if error_msg:
@@ -4064,8 +4235,9 @@ class StudioCanvasWidget(QWidget):
                 self.blur_start = pt
                 self.blur_end = pt
 
-            elif self.current_mode == "OCR":
+            elif self.current_mode in ("OCR", "OCR_LABEL"):
                 self.drawing_ocr = True
+                self.ocr_is_label_mode = (self.current_mode == "OCR_LABEL")
                 self.ocr_start = pt
                 self.ocr_end = pt
 
@@ -4073,6 +4245,11 @@ class StudioCanvasWidget(QWidget):
                 self.drawing_dimension = True
                 self.dimension_start = QPointF(pt)
                 self.dimension_end = QPointF(pt)
+
+            elif self.current_mode == "BOX_DIMENSION":
+                self.drawing_box_dimension = True
+                self.box_dimension_start = pt
+                self.box_dimension_end = pt
 
             elif self.current_mode == "TEXT":
                 text, ok = self.prompt_text_dialog("")
@@ -4120,10 +4297,16 @@ class StudioCanvasWidget(QWidget):
                         return
 
                 hit_item = None
+                # 오버레이 객체(스티커 레이어)보다 일반 주석(스탬프, 박스, 텍스트 등)을 최우선 선택
                 for it in reversed(self.items):
-                    if it.contains(pt):
+                    if not isinstance(it, ImageOverlayItem) and it.contains(pt):
                         hit_item = it
                         break
+                if not hit_item:
+                    for it in reversed(self.items):
+                        if isinstance(it, ImageOverlayItem) and it.contains(pt):
+                            hit_item = it
+                            break
 
                 self.selected_item = hit_item
                 self.sig_item_selected.emit(hit_item)
@@ -4131,7 +4314,7 @@ class StudioCanvasWidget(QWidget):
                     self.dragging_item = hit_item
                     if isinstance(hit_item, ImageOverlayItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
-                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem)):
+                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
                     elif isinstance(hit_item, CalloutItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.box_rect.x(), pt.y() - hit_item.box_rect.y())
@@ -4143,10 +4326,16 @@ class StudioCanvasWidget(QWidget):
 
         elif event.button() == Qt.RightButton:
             hit_item = None
+            # 오버레이 객체보다 일반 주석을 최우선 선택하여 우클릭 속성창 표시
             for it in reversed(self.items):
-                if it.contains(pt):
+                if not isinstance(it, ImageOverlayItem) and it.contains(pt):
                     hit_item = it
                     break
+            if not hit_item:
+                for it in reversed(self.items):
+                    if isinstance(it, ImageOverlayItem) and it.contains(pt):
+                        hit_item = it
+                        break
             if hit_item:
                 self.selected_item = hit_item
                 self.sig_item_selected.emit(hit_item)
@@ -4215,7 +4404,7 @@ class StudioCanvasWidget(QWidget):
             new_y = pt.y() - self.drag_offset.y()
             if isinstance(self.dragging_item, ImageOverlayItem):
                 self.dragging_item.rect.moveTo(new_x, new_y)
-            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem)):
+            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
                 self.dragging_item.rect.moveTo(int(new_x), int(new_y))
             elif isinstance(self.dragging_item, CalloutItem):
                 dx = new_x - self.dragging_item.box_rect.x()
@@ -4263,6 +4452,9 @@ class StudioCanvasWidget(QWidget):
                 else:
                     cur_pt = QPointF(self.dimension_start.x(), cur_pt.y())
             self.dimension_end = cur_pt
+            self.update()
+        elif self.drawing_box_dimension:
+            self.box_dimension_end = pt
             self.update()
         elif self.current_mode == "SELECT":
             if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
@@ -4373,7 +4565,7 @@ class StudioCanvasWidget(QWidget):
                 self.drawing_ocr = False
                 r = QRect(self.ocr_start, self.ocr_end).normalized()
                 if r.width() > 20 and r.height() > 10:
-                    self._run_ocr_on_region(r)
+                    self._run_ocr_on_region(r, as_label=getattr(self, "ocr_is_label_mode", False))
                 self.set_mode("SELECT")
             elif self.drawing_dimension:
                 self.drawing_dimension = False
@@ -4392,6 +4584,19 @@ class StudioCanvasWidget(QWidget):
                     self.push_undo()
                     dim_style = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
                     dim_item = DimensionLineItem(self.dimension_start, self.dimension_end, dim_style)
+                    self.items.append(dim_item)
+                    self.selected_item = dim_item
+                    self.sig_item_selected.emit(dim_item)
+                    self.sig_content_changed.emit()
+                self.set_mode("SELECT")
+                self.update()
+            elif self.drawing_box_dimension:
+                self.drawing_box_dimension = False
+                r = QRect(self.box_dimension_start, self.box_dimension_end).normalized()
+                if r.width() > 10 and r.height() > 10:
+                    self.push_undo()
+                    dim_style = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
+                    dim_item = BoxDimensionItem(r, dim_style)
                     self.items.append(dim_item)
                     self.selected_item = dim_item
                     self.sig_item_selected.emit(dim_item)
@@ -4688,8 +4893,9 @@ class StudioCanvasWidget(QWidget):
             elif self.drawing_ocr:
                 painter.save()
                 r = QRect(self.ocr_start, self.ocr_end).normalized()
-                painter.setPen(QPen(QColor(16, 185, 129), 2, Qt.DashLine))
-                painter.setBrush(QBrush(QColor(16, 185, 129, 30)))
+                border_col = QColor(37, 99, 235) if getattr(self, "ocr_is_label_mode", False) else QColor(16, 185, 129)
+                painter.setPen(QPen(border_col, 2, Qt.DashLine))
+                painter.setBrush(QBrush(QColor(border_col.red(), border_col.green(), border_col.blue(), 30)))
                 painter.drawRect(r)
                 painter.restore()
 
@@ -4698,6 +4904,14 @@ class StudioCanvasWidget(QWidget):
                 dim_st = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
                 temp_dim = DimensionLineItem(self.dimension_start, self.dimension_end, dim_st)
                 temp_dim.render(painter)
+                painter.restore()
+
+            elif self.drawing_box_dimension:
+                painter.save()
+                r = QRect(self.box_dimension_start, self.box_dimension_end).normalized()
+                dim_st = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
+                temp_box_dim = BoxDimensionItem(r, dim_st)
+                temp_box_dim.render(painter)
                 painter.restore()
 
             # 4. 선택된 객체 하이라이트
@@ -4718,7 +4932,7 @@ class StudioCanvasWidget(QWidget):
                         painter.drawEllipse(self.selected_item.pos, r, r)
                 elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
                     painter.drawRect(self.selected_item.get_rect().adjusted(-2, -2, 2, 2))
-                elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem)):
+                elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
                     painter.drawRect(self.selected_item.rect.adjusted(-2, -2, 2, 2))
                 elif isinstance(self.selected_item, CalloutItem):
                     painter.drawRect(self.selected_item.box_rect.adjusted(-2, -2, 2, 2))
@@ -5887,6 +6101,25 @@ class RibbonIconProvider:
             p.drawLine(QPointF(s - 2, s / 2 - 4), QPointF(s - 2, s / 2 + 4))
             p.setFont(QFont("Arial", int(s * 0.35), QFont.Bold))
             p.drawText(QRectF(0, 0, s, s / 2 - 1), Qt.AlignCenter, "px")
+        elif name == "box_dimension":
+            pen_dim = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_dim)
+            p.drawRect(QRectF(2, 2, s - 4, s - 4))
+            p.setFont(QFont("Arial", int(s * 0.30), QFont.Bold))
+            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "W×H")
+        elif name == "ocr":
+            pen_o = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_o)
+            p.drawRoundedRect(QRectF(1.5, 2.5, s - 3, s - 5), 2, 2)
+            p.setFont(QFont("Segoe UI", int(s * 0.36), QFont.Bold))
+            p.drawText(QRectF(0, 1, s, s - 2), Qt.AlignCenter, "OCR")
+        elif name == "ocr_label":
+            pen_o = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_o)
+            p.drawRoundedRect(QRectF(1.5, 2.5, s - 3, s - 5), 2, 2)
+            p.setFont(QFont("Segoe UI", int(s * 0.34), QFont.Bold))
+            p.drawText(QRectF(0, 0, s, s - 5), Qt.AlignCenter, "TXT")
+            p.drawLine(QPointF(3.5, s - 4.5), QPointF(s - 3.5, s - 4.5))
         else:
             p.drawRect(QRectF(3, 3, s - 6, s - 6))
 
@@ -6244,23 +6477,35 @@ class ManualStudioWindow(QMainWindow):
         self.btn_mode_ocr.setToolTip(tr("tooltip_ocr", "이미지 영역을 드래그하여 텍스트를 인식합니다. (O)"))
         self.btn_mode_ocr.clicked.connect(lambda: self.switch_mode("OCR"))
 
+        self.btn_mode_ocr_label = QPushButton(tr("btn_mode_ocr_label", "OCR 라벨"), self)
+        self.btn_mode_ocr_label.setCheckable(True)
+        self.btn_mode_ocr_label.setToolTip(tr("tooltip_ocr_label", "영역을 인식하여 텍스트 라벨을 즉시 생성합니다. (Shift+O)"))
+        self.btn_mode_ocr_label.clicked.connect(lambda: self.switch_mode("OCR_LABEL"))
+
         ocr_grid = QGridLayout()
         ocr_grid.setContentsMargins(0, 0, 0, 0)
         ocr_grid.setSpacing(2)
         ocr_grid.addWidget(self.btn_mode_ocr, 0, 0)
+        ocr_grid.addWidget(self.btn_mode_ocr_label, 1, 0)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_ocr", "텍스트 인식"), ocr_grid, "grp_ocr"))
         tools_layout.addWidget(self.create_separator())
 
         # 5-DIM) [치수선] 그룹
-        self.btn_mode_dimension = QPushButton(tr("btn_mode_dimension", "치수선"), self)
+        self.btn_mode_dimension = QPushButton(tr("btn_mode_dimension", "선 치수선"), self)
         self.btn_mode_dimension.setCheckable(True)
         self.btn_mode_dimension.setToolTip(tr("tooltip_dimension", "두 지점 사이의 거리를 측정하여 브라켓 치수선으로 표시합니다. (D)"))
         self.btn_mode_dimension.clicked.connect(lambda: self.switch_mode("DIMENSION"))
+
+        self.btn_mode_box_dimension = QPushButton(tr("btn_mode_box_dimension", "영역 치수"), self)
+        self.btn_mode_box_dimension.setCheckable(True)
+        self.btn_mode_box_dimension.setToolTip(tr("tooltip_box_dimension", "사각 영역의 가로x세로 크기(W×H)를 박스로 표시합니다. (Shift+D)"))
+        self.btn_mode_box_dimension.clicked.connect(lambda: self.switch_mode("BOX_DIMENSION"))
 
         dim_grid = QGridLayout()
         dim_grid.setContentsMargins(0, 0, 0, 0)
         dim_grid.setSpacing(2)
         dim_grid.addWidget(self.btn_mode_dimension, 0, 0)
+        dim_grid.addWidget(self.btn_mode_box_dimension, 1, 0)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_dimension", "치수선"), dim_grid, "grp_dimension"))
         tools_layout.addWidget(self.create_separator())
 
@@ -7355,6 +7600,8 @@ class ManualStudioWindow(QMainWindow):
             "grp_select_edit": ("grp_select_edit", "선택·편집"),
             "grp_step_flow": ("grp_step_flow", "단계·흐름"),
             "grp_highlight_security": ("grp_highlight_security", "강조·보안"),
+            "grp_ocr": ("grp_ocr", "텍스트 인식"),
+            "grp_dimension": ("grp_dimension", "치수선"),
             "grp_text_wordart": ("grp_text_wordart", "텍스트·워드아트"),
             "grp_ppt_export": ("grp_ppt_export", "PPT 출력"),
             "grp_stamp_fmt": ("grp_stamp_fmt", "스탬프"),
@@ -7432,6 +7679,10 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_box", "btn_mode_box", "사각 강조", "tooltip_box"),
             ("btn_mode_blur", "btn_mode_blur", "모자이크", "tooltip_blur"),
             ("btn_draft_stamp", "btn_draft_stamp", "Draft 스탬프", "tooltip_draft"),
+            ("btn_mode_ocr", "btn_mode_ocr", "OCR 추출", "tooltip_ocr"),
+            ("btn_mode_ocr_label", "btn_mode_ocr_label", "OCR 라벨", "tooltip_ocr_label"),
+            ("btn_mode_dimension", "btn_mode_dimension", "선 치수선", "tooltip_dimension"),
+            ("btn_mode_box_dimension", "btn_mode_box_dimension", "영역 치수", "tooltip_box_dimension"),
             ("btn_mode_callout", "btn_mode_callout", "설명 말풍선", "tooltip_callout"),
             ("btn_mode_text", "btn_mode_text", "텍스트 라벨", "tooltip_text"),
             ("btn_mode_hotkey", "btn_mode_hotkey", "단축키 배지", "tooltip_hotkey"),
@@ -7589,6 +7840,10 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_box", "box", "btn_mode_box", "사각 강조"),
             ("btn_mode_blur", "blur", "btn_mode_blur", "모자이크"),
             ("btn_draft_stamp", "draft", "btn_draft_stamp", "Draft 스탬프"),
+            ("btn_mode_ocr", "ocr", "btn_mode_ocr", "OCR 추출"),
+            ("btn_mode_ocr_label", "ocr_label", "btn_mode_ocr_label", "OCR 라벨"),
+            ("btn_mode_dimension", "dimension", "btn_mode_dimension", "선 치수선"),
+            ("btn_mode_box_dimension", "box_dimension", "btn_mode_box_dimension", "영역 치수"),
             ("btn_mode_callout", "callout", "btn_mode_callout", "설명 말풍선"),
             ("btn_mode_text", "text", "btn_mode_text", "텍스트 라벨"),
             ("btn_mode_hotkey", "hotkey", "btn_mode_hotkey", "단축키 배지"),
@@ -7859,7 +8114,9 @@ class ManualStudioWindow(QMainWindow):
             "HOTKEY": ("btn_mode_hotkey", "단축키 배지"),
             "WORDART": ("btn_mode_wordart", "워드아트"),
             "OCR": ("btn_mode_ocr", "OCR 텍스트 추출"),
-            "DIMENSION": ("btn_mode_dimension", "치수선"),
+            "OCR_LABEL": ("btn_mode_ocr_label", "OCR 라벨"),
+            "DIMENSION": ("btn_mode_dimension", "선 치수선"),
+            "BOX_DIMENSION": ("btn_mode_box_dimension", "영역 치수"),
         }
         cur_mode = mode_or_name or self.canvas.current_mode
         if cur_mode in mode_keys:
@@ -7904,8 +8161,12 @@ class ManualStudioWindow(QMainWindow):
             self.btn_mode_wordart.setChecked(mode == "WORDART")
         if hasattr(self, "btn_mode_ocr"):
             self.btn_mode_ocr.setChecked(mode == "OCR")
+        if hasattr(self, "btn_mode_ocr_label"):
+            self.btn_mode_ocr_label.setChecked(mode == "OCR_LABEL")
         if hasattr(self, "btn_mode_dimension"):
             self.btn_mode_dimension.setChecked(mode == "DIMENSION")
+        if hasattr(self, "btn_mode_box_dimension"):
+            self.btn_mode_box_dimension.setChecked(mode == "BOX_DIMENSION")
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -8709,6 +8970,24 @@ class ManualStudioWindow(QMainWindow):
         else:
             self.start_capture()
 
+    def _prepare_window_for_capture(self):
+        """DWM 창 애니메이션 및 잔상으로 인한 반투명 고스트 캡처 원천 방지"""
+        was_visible = self.isVisible() and not self.isMinimized()
+        if was_visible:
+            self.setWindowOpacity(0.0)
+            self.hide()
+            QApplication.processEvents()
+            time.sleep(0.18)
+        return was_visible
+
+    def _restore_window_after_capture(self, was_visible=True):
+        """캡처 완료/취소 시 스튜디오 창을 원래 불투명도와 전면 활성 상태로 안전 복원"""
+        if was_visible:
+            self.setWindowOpacity(1.0)
+            self.show()
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
+            self.activateWindow()
+
     def capture_fixed_rect(self):
         fr = self.config.get("fixed_rect", {"x": 100, "y": 100, "width": 960, "height": 540})
         x = fr.get("x", 100)
@@ -8716,12 +8995,7 @@ class ManualStudioWindow(QMainWindow):
         w = fr.get("width", 960)
         h = fr.get("height", 540)
 
-        # 캡처 순간 스튜디오 창이 대상 영역을 가리는 것을 방지하기 위해 잠시 숨김
-        was_visible = self.isVisible() and not self.isMinimized()
-        if was_visible:
-            self.hide()
-            QApplication.processEvents()
-            time.sleep(0.05)
+        was_visible = self._prepare_window_for_capture()
 
         try:
             target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
@@ -8735,18 +9009,10 @@ class ManualStudioWindow(QMainWindow):
             mon_str = "전체 가상화면" if target_mon == -1 else f"모니터 {target_mon + 1}"
             self.show_toast(f"고정 영역 ({mon_str} {x},{y} {w}×{h}px) 즉시 캡처 완료!")
         finally:
-            if was_visible:
-                self.show()
-                self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
-                self.activateWindow()
+            self._restore_window_after_capture(was_visible)
 
     def start_capture(self):
-        # 캡처 전 스튜디오 창이 화면에 보이면 잠시 숨겨서 배경 작업 화면이 깨끗이 보이도록 함
-        was_visible = self.isVisible() and not self.isMinimized()
-        if was_visible:
-            self.hide()
-            QApplication.processEvents()
-            time.sleep(0.06)
+        was_visible = self._prepare_window_for_capture()
 
         try:
             target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
@@ -8759,15 +9025,11 @@ class ManualStudioWindow(QMainWindow):
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
             self.overlay_window.showFullScreen()
         except Exception as e:
-            if was_visible:
-                self.show()
-                self.activateWindow()
+            self._restore_window_after_capture(was_visible)
             print(f"[오버레이 실행 오류]: {e}")
 
     def on_capture_cancelled(self):
-        self.show()
-        self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
-        self.activateWindow()
+        self._restore_window_after_capture(True)
 
     def start_sub_capture(self):
         """F8 단축키 또는 리본 버튼: 모달/팝업 영역 부분 캡처 후 캔버스에 독립 이미지 객체로 추가"""
@@ -8775,11 +9037,7 @@ class ManualStudioWindow(QMainWindow):
             self.show_toast("먼저 메인 화면(F9)을 캡처한 후 모달을 추가하세요.")
             return
 
-        was_visible = self.isVisible() and not self.isMinimized()
-        if was_visible:
-            self.hide()
-            QApplication.processEvents()
-            time.sleep(0.06)
+        was_visible = self._prepare_window_for_capture()
 
         try:
             target_mon = getattr(self, "current_target_monitor", self.config.get("target_monitor", -1))
@@ -8793,16 +9051,11 @@ class ManualStudioWindow(QMainWindow):
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
             self.overlay_window.showFullScreen()
         except Exception as e:
-            if was_visible:
-                self.show()
-                self.activateWindow()
+            self._restore_window_after_capture(was_visible)
             print(f"[부분 캡처 오버레이 실행 오류]: {e}")
 
     def on_sub_capture_completed(self, pixmap, global_rect=None):
-        # 창 전면 복원
-        self.show()
-        self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
-        self.activateWindow()
+        self._restore_window_after_capture(True)
 
         if pixmap and not pixmap.isNull():
             self.canvas.add_image_overlay(pixmap)
@@ -9112,9 +9365,7 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.history.clear()
 
         # 창 전면 활성화
-        self.show()
-        self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
-        self.activateWindow()
+        self._restore_window_after_capture(True)
 
         w = pixmap.width()
         h = pixmap.height()
@@ -9588,6 +9839,16 @@ class ManualStudioWindow(QMainWindow):
         focus_w = QApplication.focusWidget()
         in_editor = isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox))
         if not in_editor and not (modifiers & (Qt.ControlModifier | Qt.AltModifier)):
+            if modifiers & Qt.ShiftModifier:
+                if key == Qt.Key_O:
+                    self.switch_mode("OCR_LABEL")
+                    self.hide_keytips()
+                    return
+                elif key == Qt.Key_D:
+                    self.switch_mode("BOX_DIMENSION")
+                    self.hide_keytips()
+                    return
+
             mode_map = {
                 Qt.Key_V: "SELECT",
                 Qt.Key_S: "STAMP",

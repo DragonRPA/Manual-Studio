@@ -1,5 +1,16 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-13 15:00] OCR 오류 해결, 캡처 투명화 고스트 방지, 객체 속성 수정 후 증발 방지, F8 부분캡처 선택 우선순위 개선 및 리본 2행 그리드·13개국어 벡터 아이콘 완비
+- [x] OCR 오류 해결 (WinRT OCR 버퍼 타입 write_bytes(bytes(raw)) 수정, 3단계 언어 폴백, Nuitka excluded assertion 방지)
+- [x] DWM 캡처 투명화/고스트 잔상 원천 차단 (_prepare_window_for_capture, _restore_window_after_capture)
+- [x] 우클릭 속성 수정 후 객체 투명화/증발 버그 해결 (ImageOverlayItem 및 BoxDimensionItem QRectF/QRect 호환성 확보)
+- [x] F8 부분캡처 후 객체 선택 우선순위 개선 (Non-overlay 아이템 최우선 선택, get_composed_image() 기반 크롭으로 오버레이 영역 OCR 지원)
+- [x] 리본 메뉴 2행 그리드 고도화 (OCR 그룹: OCR 추출 + OCR 라벨, 치수선 그룹: 선 치수선 + 영역 치수선)
+- [x] OCR 라벨 즉시 생성 모드 (Shift+O) 및 영역 치수선 박스 (Shift+D, BoxDimensionItem) 신규 구현
+- [x] 13개 글로벌 언어 i18n 5개 신규 키 전수 등록 및 RibbonIconProvider 벡터 아이콘 3종 완비
+- [x] 단위 테스트 55개 전 항목 100% 통과 (test_core_engine.py 55/55 ALL PASS)
+- [x] 릴리즈 노트(RELEASE_NOTES.md v1.4.0.Build.22) 작성 및 build_c.bat C-컴파일 옵션 갱신
+
 ## [2026-09-13 12:30] PixelSnap 1안 치수선 구현, 스탬프 둥근 사각 바탕 및 객체 우클릭 속성 편집 다이얼로그
 - [x] DimensionLineItem 치수선 주석 클래스 신규 구현
   - 수평/수직 거리 자동 판정 및 Shift 직교 잠금

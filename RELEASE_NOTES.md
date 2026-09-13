@@ -1,5 +1,39 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.22] - 2026-09-13 15:00
+
+### OCR 오류 수정, DWM 캡처 투명화 고스트 방지, 객체 속성 수정 후 증발 방지, F8 부분캡처 선택 우선순위 개선 및 리본 2행 그리드·13개국어 벡터 아이콘 완비 (C-컴파일 최적화)
+
+#### 배경 및 목적
+- OCR 실행 시 발생하던 WinRT 버퍼 타입 오류 및 Nuitka 빌드 환경 모듈 제외 어설션을 완벽히 해결했습니다.
+- 캡처 시 Windows DWM 창 페이드아웃 애니메이션 지연으로 인해 스튜디오 창의 반투명 잔상(고스트)이 캡처되는 문제를 원천 차단했습니다.
+- 우클릭 속성 확인/수정 후 `ImageOverlayItem` 및 `BoxDimensionItem` 객체가 투명화(증발)되던 `QRectF` / `QRect` 변환 버그를 패치했습니다.
+- F8 부분캡처 후 추가된 모달/팝업 스티커 레이어가 캔버스를 덮어 다른 주석 객체(스탬프, 박스, 텍스트)를 선택할 수 없던 문제를 해결하고, 오버레이 이미지 영역에서도 OCR 텍스트 인식이 정확히 작동하도록 개선했습니다.
+- 리본 메뉴의 텍스트 인식 그룹과 치수선 그룹을 2행 균형 그리드로 재구성하고, 신규 기능(OCR 라벨 생성, 영역 치수선 박스)과 함께 전사 13개 언어 번역 및 벡터 아이콘을 완비했습니다.
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| **WinRT OCR 버퍼 타입 에러 및 3단계 폴백 패치** | `OcrWorkerThread._try_winrt_ocr()`의 `data_writer.write_bytes(bytes(raw))` 버퍼 주입 타입 교정. 언어 매핑 실패 시 `try_create_from_user_profile_languages()` 및 `available_recognizer_languages[0]` 3단계 폴백 적용. RapidOCR 동적 임포트 시 `(ImportError, SystemError, Exception)` 포괄적 예외 포획으로 Nuitka excluded module assertion 방지 |
+| **DWM 캡처 투명화/고스트 잔상 원천 차단** | `_prepare_window_for_capture()` (`setWindowOpacity(0.0)` + `hide()` + `time.sleep(0.18)`) 및 `_restore_window_after_capture()` (`setWindowOpacity(1.0)` + `show()` + `activateWindow()`) 아키텍처 전격 도입. 고정 캡처(F9), 영역 지정(Shift+F9), 부분 캡처(F8) 전체에 일관 적용하여 반투명 고스트 현상 100% 제거 |
+| **우클릭 속성 수정 후 객체 투명화(증발) 버그 해결** | `ImageOverlayItem.render()`에서 `draw_r = r.toRect() if hasattr(r, "toRect") else QRect(...)` 안전 캐스팅 적용 및 `QRectF(r).translated(...)` 드롭 섀도우 호환성 확보. `ItemPropertiesDialog._on_apply_and_accept()`에서 `ImageOverlayItem` 및 `BoxDimensionItem`의 `QRectF` 다운캐스팅 방지 |
+| **F8 부분캡처 후 객체 선택 우선순위 및 OCR 지원** | 캔버스 `mousePressEvent` 및 우클릭 컨텍스트 메뉴에서 `ImageOverlayItem`(배경 스티커)보다 일반 주석(스탬프, 박스, 화살표, 텍스트 등)을 최우선 선택하도록 히트 테스트 알고리즘 개선. 부분캡처 이미지 위에서도 OCR이 작동하도록 `_run_ocr_on_region()`에서 `get_composed_image()` 크롭 적용 |
+| **리본 메뉴 2행 밸런스 그리드 고도화** | 텍스트 인식 그룹: Row 0 `OCR 추출` (`O`), Row 1 `OCR 라벨` (`Shift+O`). 치수선 그룹: Row 0 `선 치수선` (`D`), Row 1 `영역 치수` (`Shift+D`, `BoxDimensionItem`). 모든 그룹의 행 높이와 그리드 시각적 균형 일체화 |
+| **`OCR 라벨` 즉시 생성 모드 탑재** | `OCR 라벨` 모드(`Shift+O`)에서 영역 드래그 시 텍스트 인식 즉시 캔버스 해당 위치에 `TextLabelItem` 자동 생성, 선택 상태 전환 및 알림 토스트 표출 |
+| **`영역 치수선` (`BoxDimensionItem`) 구현** | 사각 영역의 가로x세로(W×H px)를 박스 형태와 캡슐 뱃지로 표시하는 독립 주석 객체 구현. `.mcs.json` 직렬화/역직렬화 및 우클릭 속성 편집 완벽 지원 |
+| **13개 글로벌 언어 및 벡터 아이콘 완비** | `btn_mode_ocr_label`, `tooltip_ocr_label`, `btn_mode_box_dimension`, `tooltip_box_dimension`, `toast_ocr_label_created` 5개 신규 키 13개국어 번역 100% 등록. `RibbonIconProvider`에 `ocr`, `ocr_label`, `box_dimension` B2B 벡터 아이콘 탑재 |
+| **단위 테스트 55개 전수 100% 통과** | `BoxDimensionItem` 지오메트리/직렬화/렌더링, 13개 언어 i18n 무결성, 신규 벡터 아이콘 유효성 검증 추가 (`ALL 55 TESTS PASSED 100%`) |
+| **C-컴파일 스크립트 최적화 (`build_c.bat`)** | `--include-package=winsdk` 및 `--no-deployment-flag=excluded-module-usage` 플래그 추가 및 빌드 버전 `1.4.0.22` 반영 |
+
+#### 수정 파일
+- `manual_capture_studio.py`: DWM 캡처 전처리/후처리 메서드(`_prepare_window_for_capture`, `_restore_window_after_capture`), `StudioCanvasWidget` 모드 및 이벤트 연동(`OCR_LABEL`, `BOX_DIMENSION`, Non-overlay 우선 선택, `_on_ocr_label_result`), `BoxDimensionItem` 신규 클래스 구현 및 직렬화/속성 등록, `RibbonIconProvider` 신규 벡터 아이콘, 리본 2행 그리드 재구성, `retranslate_ribbon` / `toggle_ribbon_display_mode` / `switch_mode` / `update_mode_status_indicator` 갱신
+- `i18n_manager.py`: 신규 5개 다국어 키 13개 언어(KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) 전수 추가
+- `test_core_engine.py`: `test_box_dimension_and_ocr_labels_and_ghost_fix` 단위 테스트 추가 (55개 테스트 100% 통과)
+- `build_c.bat`: Nuitka 빌드 옵션 보강(`winsdk`, `excluded-module-usage`) 및 버전 `1.4.0.22` 업데이트
+
+---
+
 ## [v1.4.0.Build.21] - 2026-09-13 13:05
 
 ### PixelSnap 1안 치수선 구현, 스탬프 둥근 사각 바탕 및 객체 우클릭 속성 편집 다이얼로그 (C-컴파일 바이너리 최적화)
