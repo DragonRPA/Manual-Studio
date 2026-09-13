@@ -5,6 +5,7 @@
   "release_title": "Manual Studio v1.5.0 2세대 프로젝트 아키텍처 정식 릴리즈",
   "release_notes": "• 프로젝트 레벨 다중 슬라이드 저장(.dragon 압축 패키지 및 .mcs.json)\n• 팀 분업을 위한 프로젝트 병합(Merge Project) 기능 탑재\n• 웹북(HTML), PPT, Google Slides, HWP, GIF 전 내보내기 파이프라인 무결성 확보\n• 13개국어 번역 100% 연동 및 건조한 명사/동사 UI 단일 표준화 준수\n• 메뉴바/리본 플로팅 및 중복 버튼 제거로 작업대 정보 밀도 극대화",
   "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.5.0/ManualStudio.exe",
+  "release_page_url": "https://github.com/DragonRPA/Manual-Studio/releases",
   "min_required_version": "1.0.0",
   "force_update": false
 }

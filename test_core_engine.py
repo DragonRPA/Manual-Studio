@@ -1543,7 +1543,7 @@ def test_version_json_schema():
         assert field in meta, f"Field '{field}' missing from version.json"
         assert meta[field] is not None and len(str(meta[field])) > 0
 
-    assert meta["version"] == "1.4.0"
+    assert meta["version"] == "1.5.0"
     print("[PASS] test_version_json_schema (Root version.json metadata schema and SSOT valid)")
 
 def test_patcher_script_generation():
@@ -3712,6 +3712,126 @@ def test_phase8_project_level_architecture_and_exports():
     print("[PASS] test_phase8_project_level_architecture_and_exports (.dragon / .mcs.json multi-slide project, merge, empty slide fallback & 13-locale i18n valid)")
 
 
+def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
+    from manual_capture_studio import (
+        ManualStudioWindow, ReleaseNotesDialog, RibbonIconProvider, APP_VERSION
+    )
+    from updater_engine import WindowsPatcher, UpdateDownloadThread
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent, Qt
+
+    # 1. 버전 일관성 검증
+    assert APP_VERSION == "v1.5.0", f"APP_VERSION must be v1.5.0, got {APP_VERSION}"
+
+    # 2. ReleaseNotesDialog 초기버전부터 현재까지 수록 검증
+    dlg = ReleaseNotesDialog()
+    assert len(dlg.sections) >= 30, f"ReleaseNotesDialog must contain at least 30 releases, got {len(dlg.sections)}"
+    first_ver = dlg.sections[0][0]
+    assert "1.5.0" in first_ver, f"Latest version should be 1.5.0, got {first_ver}"
+
+    # 콤보박스 필터링 동작 테스트
+    dlg.combo_version.setCurrentIndex(1)  # 특정 버전 선택
+    assert dlg.browser.toHtml() is not None and len(dlg.browser.toHtml()) > 0
+    dlg.combo_version.setCurrentIndex(0)  # 전체 버전 선택
+    assert "v1.5.0" in dlg.browser.toHtml()
+
+    # 3. RibbonIconProvider & 리본 표시 모드 전수 검증
+    win = ManualStudioWindow()
+    # 42개 전 버튼 벡터 렌더링 무결점 테스트
+    test_icon_names = [
+        "capture_fixed", "capture_area", "capture_sub", "save_rect", "scroll_stitch",
+        "action_record", "new_project", "open_project", "save_project", "merge_project",
+        "autosave", "open_image", "copy_image", "select", "undo", "clear", "stamp",
+        "reset_index", "step_arrow", "elbow", "arrow", "box", "blur", "auto_pii",
+        "eraser", "draft", "ocr", "ocr_label", "dimension", "box_dimension", "callout",
+        "text", "hotkey", "wordart", "ppt_export", "export_hwp", "slides_export",
+        "ppt_autofit", "ppt_renumber", "window_frame", "filmstrip", "settings"
+    ]
+    for ic_name in test_icon_names:
+        ic = RibbonIconProvider.get_icon(ic_name, size=18)
+        assert not ic.isNull(), f"Icon {ic_name} must render a valid non-null icon"
+        pm = ic.pixmap(18, 18)
+        assert not pm.isNull(), f"Icon {ic_name} pixmap must not be null"
+
+    # 아이콘 모드 전환 테스트
+    win.toggle_ribbon_display_mode("icon")
+    assert win.config.get("ribbon_display_mode") == "icon"
+    assert win.btn_capture.text() == ""
+    assert not win.btn_capture.icon().isNull()
+    assert win.btn_export_hwp.text() == ""
+    assert not win.btn_export_hwp.icon().isNull()
+
+    # 텍스트 모드 복귀 테스트
+    win.toggle_ribbon_display_mode("text")
+    assert win.config.get("ribbon_display_mode") == "text"
+    assert win.btn_capture.text() != ""
+    assert win.btn_export_hwp.text() != ""
+
+    # 4. 메뉴바 도움말 내 업데이트 노트 및 내보내기 액션 검증
+    assert hasattr(win, "act_release_notes"), "menu_help must have act_release_notes"
+    assert hasattr(win, "act_export_hwp"), "menu_file must have act_export_hwp"
+    assert hasattr(win, "act_export_webbook"), "menu_file must have act_export_webbook"
+    assert hasattr(win, "act_export_gif"), "menu_file must have act_export_gif"
+
+    # 5. 각 기능키 및 단축키 keyPressEvent 응답 테스트 (논블로킹 액션 검증)
+    triggered_actions = []
+    win.start_sub_capture = lambda: triggered_actions.append("F8")
+    win.handle_hotkey_capture = lambda: triggered_actions.append("F9")
+    win.start_capture = lambda: triggered_actions.append("Shift+F9")
+    win.action_add_new_slide = lambda: triggered_actions.append("F10")
+    win.action_send_to_hwp = lambda: triggered_actions.append("HWP")
+    win.action_send_to_google_slides = lambda: triggered_actions.append("F11")
+    win.action_new_project = lambda: triggered_actions.append("Ctrl+N")
+    win.action_save_project = lambda: triggered_actions.append("Ctrl+S")
+    win.action_undo = lambda: triggered_actions.append("Ctrl+Z")
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F8, Qt.NoModifier))
+    assert "F8" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F9, Qt.NoModifier))
+    assert "F9" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F9, Qt.ShiftModifier))
+    assert "Shift+F9" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F10, Qt.NoModifier))
+    assert "F10" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F10, Qt.ShiftModifier))
+    assert "HWP" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F11, Qt.NoModifier))
+    assert "F11" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_F12, Qt.NoModifier))
+    assert triggered_actions.count("HWP") == 2
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_N, Qt.ControlModifier))
+    assert "Ctrl+N" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_S, Qt.ControlModifier))
+    assert "Ctrl+S" in triggered_actions
+
+    win.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Z, Qt.ControlModifier))
+    assert "Ctrl+Z" in triggered_actions
+
+    # 모드 전환 키 테스트
+    for k, expected_mode in [
+        (Qt.Key_V, "SELECT"), (Qt.Key_S, "STAMP"), (Qt.Key_B, "BOX"),
+        (Qt.Key_A, "ARROW"), (Qt.Key_E, "ELBOW"), (Qt.Key_X, "ERASER")
+    ]:
+        key_ev = QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier)
+        win.keyPressEvent(key_ev)
+        assert win.canvas.current_mode == expected_mode, f"Key {k} should switch mode to {expected_mode}"
+
+    # 6. 스마트 업데이트 복원력 검증
+    patcher_script = WindowsPatcher.get_patcher_script_content("ManualStudio.exe", "update.exe", 12345)
+    assert "update_patcher" in patcher_script or "Manual Studio" in patcher_script
+
+    win.close()
+    print("[PASS] test_phase9_release_notes_ribbon_icons_function_keys_and_updater (Release notes viewer, 42 vector icons, display mode, hotkeys F8-F12/Ctrl+N/S & updater resilience valid)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -3784,5 +3904,6 @@ if __name__ == "__main__":
     test_phase6_multi_selection_and_f10_slide()
     test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul()
     test_phase8_project_level_architecture_and_exports()
-    print("\nALL 71 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL & PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE TESTS PASSED 100%!")
+    test_phase9_release_notes_ribbon_icons_function_keys_and_updater()
+    print("\nALL 72 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE & PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER RESILIENCE TESTS PASSED 100%!")
     os._exit(0)

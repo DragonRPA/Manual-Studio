@@ -78,7 +78,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QDialog, QSpinBox, QColorDialog,
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
-    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox,
+    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
     QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
 
@@ -103,7 +103,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.4.0"
+APP_VERSION = "v1.5.0"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -7483,6 +7483,112 @@ class RibbonIconProvider:
             p.setFont(QFont("Segoe UI", int(s * 0.34), QFont.Bold))
             p.drawText(QRectF(0, 0, s, s - 5), Qt.AlignCenter, "TXT")
             p.drawLine(QPointF(3.5, s - 4.5), QPointF(s - 3.5, s - 4.5))
+        elif name == "action_record":
+            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(2, 6), QPointF(2, 2))
+            p.drawLine(QPointF(2, 2), QPointF(6, 2))
+            p.drawLine(QPointF(s - 6, 2), QPointF(s - 2, 2))
+            p.drawLine(QPointF(s - 2, 2), QPointF(s - 2, 6))
+            p.drawLine(QPointF(2, s - 6), QPointF(2, s - 2))
+            p.drawLine(QPointF(2, s - 2), QPointF(6, s - 2))
+            p.drawLine(QPointF(s - 6, s - 2), QPointF(s - 2, s - 2))
+            p.drawLine(QPointF(s - 2, s - 2), QPointF(s - 2, s - 6))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor("#EF4444")))
+            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.24, s * 0.24)
+        elif name == "auto_pii":
+            path = QPainterPath()
+            path.moveTo(s / 2, 2)
+            path.lineTo(s - 3, 5)
+            path.lineTo(s - 3, s * 0.55)
+            path.cubicTo(s - 3, s * 0.85, s / 2, s - 2, s / 2, s - 2)
+            path.cubicTo(s / 2, s - 2, 3, s * 0.85, 3, s * 0.55)
+            path.lineTo(3, 5)
+            path.closeSubpath()
+            p.setPen(QPen(QColor("#2563EB"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(QBrush(QColor("#EFF6FF")))
+            p.drawPath(path)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor("#2563EB")))
+            p.drawEllipse(QPointF(s / 2 - 3, s / 2), 1.5, 1.5)
+            p.drawEllipse(QPointF(s / 2, s / 2), 1.5, 1.5)
+            p.drawEllipse(QPointF(s / 2 + 3, s / 2), 1.5, 1.5)
+        elif name == "eraser":
+            p.save()
+            p.translate(s / 2, s / 2)
+            p.rotate(-30)
+            p.setPen(QPen(QColor("#D97706"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(-s * 0.38, -s * 0.22, s * 0.76, s * 0.44), 2, 2)
+            p.setBrush(QBrush(QColor("#FDE68A")))
+            p.drawRect(QRectF(-s * 0.38, -s * 0.22, s * 0.38, s * 0.44))
+            p.restore()
+        elif name == "scroll_stitch":
+            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(4, 2, s - 8, s - 4), 2, 2)
+            pen_dash = QPen(QColor("#2563EB"), 1.4, Qt.DashLine)
+            p.setPen(pen_dash)
+            p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
+            p.setPen(QPen(QColor("#2563EB"), 1.5, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(s / 2, 5), QPointF(s / 2, 8))
+            p.drawLine(QPointF(s / 2, s - 5), QPointF(s / 2, s - 8))
+        elif name == "new_project":
+            path = QPainterPath()
+            path.moveTo(3, 2)
+            path.lineTo(s - 6, 2)
+            path.lineTo(s - 2, 6)
+            path.lineTo(s - 2, s - 2)
+            path.lineTo(3, s - 2)
+            path.closeSubpath()
+            p.drawPath(path)
+            p.setPen(QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(s * 0.45 - 3, s * 0.6), QPointF(s * 0.45 + 3, s * 0.6))
+            p.drawLine(QPointF(s * 0.45, s * 0.6 - 3), QPointF(s * 0.45, s * 0.6 + 3))
+        elif name == "merge_project":
+            p.drawRoundedRect(QRectF(2, 2, s - 7, s - 7), 1.5, 1.5)
+            p.setPen(QPen(QColor("#2563EB"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(6, 6, s - 8, s - 8), 1.5, 1.5)
+            p.drawLine(QPointF(s - 5, 2), QPointF(s - 2, 5))
+        elif name == "export_hwp":
+            p.setPen(QPen(QColor("#0284C7"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 2, 2)
+            p.setFont(QFont("Segoe UI", int(s * 0.48), QFont.Bold))
+            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "H")
+        elif name == "window_frame":
+            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 2, 2)
+            p.drawLine(QPointF(2, 7), QPointF(s - 2, 7))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor("#EF4444")))
+            p.drawEllipse(QPointF(5, 4.5), 1.2, 1.2)
+            p.setBrush(QBrush(QColor("#F59E0B")))
+            p.drawEllipse(QPointF(8.5, 4.5), 1.2, 1.2)
+            p.setBrush(QBrush(QColor("#10B981")))
+            p.drawEllipse(QPointF(12, 4.5), 1.2, 1.2)
+        elif name == "filmstrip":
+            p.drawRect(QRectF(2, 3, s - 4, s - 6))
+            p.drawLine(QPointF(2, 6), QPointF(s - 2, 6))
+            p.drawLine(QPointF(2, s - 6), QPointF(s - 2, s - 6))
+            p.drawLine(QPointF(s / 3, 6), QPointF(s / 3, s - 6))
+            p.drawLine(QPointF(s * 2 / 3, 6), QPointF(s * 2 / 3, s - 6))
+        elif name == "settings":
+            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.28, s * 0.28)
+            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.12, s * 0.12)
+            for angle in (0, 45, 90, 135):
+                p.save()
+                p.translate(s / 2, s / 2)
+                p.rotate(angle)
+                p.drawLine(QPointF(0, -s * 0.42), QPointF(0, -s * 0.28))
+                p.drawLine(QPointF(0, s * 0.28), QPointF(0, s * 0.42))
+                p.restore()
+        elif name == "reset_index":
+            p.drawArc(QRectF(3, 3, s - 6, s - 6), 30 * 16, 280 * 16)
+            p.setFont(QFont("Arial", int(s * 0.42), QFont.Bold))
+            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "1")
+        elif name == "save_rect":
+            p.drawRect(QRectF(2, 2, s - 4, s - 4))
+            p.setPen(QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(s / 2, 4), QPointF(s / 2, s - 4))
+            p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
         else:
             p.drawRect(QRectF(3, 3, s - 6, s - 6))
 
@@ -9359,6 +9465,13 @@ class ManualStudioWindow(QMainWindow):
         self.act_export_slides = self.menu_file.addAction("구글 슬라이드 전송 (F11)")
         self.act_export_slides.setShortcut(QKeySequence("F11"))
         self.act_export_slides.triggered.connect(self.action_send_to_google_slides)
+        self.act_export_hwp = self.menu_file.addAction("한컴 한글(HWP) 문서 전송 (Shift+F10)")
+        self.act_export_hwp.setShortcut(QKeySequence("Shift+F10"))
+        self.act_export_hwp.triggered.connect(self.action_send_to_hwp)
+        self.act_export_webbook = self.menu_file.addAction("웹북(HTML) 매뉴얼 출판...")
+        self.act_export_webbook.triggered.connect(self.action_export_webbook)
+        self.act_export_gif = self.menu_file.addAction("애니메이션 GIF 생성...")
+        self.act_export_gif.triggered.connect(self.action_export_gif)
         self.menu_file.addSeparator()
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
         self.act_exit.triggered.connect(self.close)
@@ -9419,11 +9532,18 @@ class ManualStudioWindow(QMainWindow):
         self.menu_help = menubar.addMenu("도움말(&H)")
         self.act_update = self.menu_help.addAction("최신 업데이트 확인(&U)...")
         self.act_update.triggered.connect(lambda: self.check_for_updates(silent=False))
+        self.act_release_notes = self.menu_help.addAction("업데이트 노트 (릴리즈 내역)(&R)...")
+        self.act_release_notes.triggered.connect(self.show_release_notes_dialog)
         self.menu_help.addSeparator()
         self.act_eula_m = self.menu_help.addAction("사용권 계약서 (EULA)")
         self.act_eula_m.triggered.connect(self.show_eula_dialog)
         self.act_about_m = self.menu_help.addAction("프로그램 정보 (About)")
         self.act_about_m.triggered.connect(self.show_about_dialog)
+
+    def show_release_notes_dialog(self):
+        dlg = ReleaseNotesDialog(self)
+        dlg.exec()
+
     def show_about_dialog(self):
         dlg = AboutDialog(self)
         dlg.exec()
@@ -9522,6 +9642,12 @@ class ManualStudioWindow(QMainWindow):
             self.act_export_ppt.setText(tr("menu_export_ppt", "PowerPoint 슬라이드 전송") + " (F10)")
         if hasattr(self, "act_export_slides"):
             self.act_export_slides.setText(tr("btn_send_google_slides", "구글 슬라이드 전송") + " (F11)")
+        if hasattr(self, "act_export_hwp"):
+            self.act_export_hwp.setText(tr("btn_export_hwp", "한글 문서 삽입") + " (Shift+F10)")
+        if hasattr(self, "act_export_webbook"):
+            self.act_export_webbook.setText(tr("btn_export_html_single", "웹북(HTML) 매뉴얼 출판..."))
+        if hasattr(self, "act_export_gif"):
+            self.act_export_gif.setText(tr("btn_export_gif", "애니메이션 GIF 생성..."))
         if hasattr(self, "act_exit"):
             self.act_exit.setText(tr("act_exit", "종료") + " (Alt+F4)")
 
@@ -9575,6 +9701,8 @@ class ManualStudioWindow(QMainWindow):
             self.menu_help.setTitle(tr("menu_help", "도움말(&H)"))
         if hasattr(self, "act_update"):
             self.act_update.setText(tr("act_update", "최신 업데이트 확인(&U)..."))
+        if hasattr(self, "act_release_notes"):
+            self.act_release_notes.setText(tr("act_release_notes", "업데이트 노트 (릴리즈 내역)(&R)..."))
         if hasattr(self, "act_eula_m"):
             self.act_eula_m.setText(tr("act_eula", "사용권 계약서 (EULA)"))
         if hasattr(self, "act_about_m"):
@@ -9825,8 +9953,13 @@ class ManualStudioWindow(QMainWindow):
             ("btn_capture", "capture_fixed", "btn_fixed_capture", "고정 캡처"),
             ("btn_drag_capture", "capture_area", "btn_variable_capture", "영역 지정"),
             ("btn_sub_capture", "capture_sub", "btn_sub_capture", "부분 캡처"),
+            ("btn_save_rect", "save_rect", "btn_save_rect", "영역 고정"),
+            ("btn_scroll_stitch", "scroll_stitch", "btn_scroll_stitch", "스크롤 스티칭"),
+            ("btn_action_record", "action_record", "btn_action_record", "액션 녹화"),
+            ("btn_new_project", "new_project", "btn_new_project", "새 프로젝트"),
             ("btn_open_project", "open_project", "btn_open_project", "불러오기"),
             ("btn_save_project", "save_project", "btn_save_project", "프로젝트 저장"),
+            ("btn_merge_project", "merge_project", "btn_merge_project", "프로젝트 병합"),
             ("btn_autosave", "autosave", "btn_autosave", "자동 저장"),
             ("btn_open_file", "open_image", "btn_open_file", "이미지 열기"),
             ("btn_copy_image", "copy_image", "btn_copy_image", "결과 복사"),
@@ -9834,11 +9967,14 @@ class ManualStudioWindow(QMainWindow):
             ("btn_undo", "undo", "btn_undo", "실행 취소"),
             ("btn_clear", "clear", "btn_clear", "전체 삭제"),
             ("btn_mode_stamp", "stamp", "btn_mode_stamp", "번호 스탬프"),
+            ("btn_reset_stamp_index", "reset_index", "btn_reset_stamp_index", "순번 초기화"),
             ("btn_mode_step_arrow", "step_arrow", "btn_mode_step_arrow", "순번 화살표"),
             ("btn_mode_elbow", "elbow", "btn_mode_elbow", "직각 화살표"),
             ("btn_mode_arrow", "arrow", "btn_mode_arrow", "직선 화살표"),
             ("btn_mode_box", "box", "btn_mode_box", "사각 강조"),
             ("btn_mode_blur", "blur", "btn_mode_blur", "모자이크"),
+            ("btn_auto_pii", "auto_pii", "btn_auto_pii", "개인정보 마스킹"),
+            ("btn_mode_eraser", "eraser", "btn_mode_eraser", "스마트 지우개"),
             ("btn_draft_stamp", "draft", "btn_draft_stamp", "Draft 스탬프"),
             ("btn_mode_ocr", "ocr", "btn_mode_ocr", "OCR 추출"),
             ("btn_mode_ocr_label", "ocr_label", "btn_mode_ocr_label", "OCR 라벨"),
@@ -9849,16 +9985,20 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_hotkey", "hotkey", "btn_mode_hotkey", "단축키 배지"),
             ("btn_mode_wordart", "wordart", "btn_mode_wordart", "워드아트"),
             ("btn_export", "ppt_export", "btn_export", "슬라이드 삽입"),
+            ("btn_export_hwp", "export_hwp", "btn_export_hwp", "한글 문서 삽입"),
             ("btn_send_slides", "slides_export", "btn_send_google_slides", "구글 슬라이드 전송"),
             ("btn_ppt_fit", "ppt_autofit", "btn_ppt_fit", "배율 맞춤"),
             ("btn_renumber_steps", "ppt_renumber", "btn_renumber_steps", "순번 재정렬"),
+            ("btn_toggle_window_frame", "window_frame", "btn_toggle_window_frame", "창틀 프레임"),
+            ("btn_toggle_filmstrip", "filmstrip", "btn_toggle_filmstrip", "스토리보드"),
+            ("btn_settings", "settings", "btn_settings", "환경설정"),
         ]
 
         for attr, icon_name, text_key, def_text in btn_icon_defs:
             if hasattr(self, attr):
                 btn = getattr(self, attr)
                 if new_mode == "icon":
-                    icon_color = "#C2410C" if attr == "btn_export" else ("#D97706" if attr == "btn_send_slides" else "#334155")
+                    icon_color = "#C2410C" if attr == "btn_export" else ("#0284C7" if attr == "btn_export_hwp" else ("#D97706" if attr == "btn_send_slides" else "#334155"))
                     icon = RibbonIconProvider.get_icon(icon_name, size=18, color=icon_color)
                     btn.setIcon(icon)
                     btn.setIconSize(QSize(18, 18))
@@ -11917,12 +12057,26 @@ class ManualStudioWindow(QMainWindow):
                 self.action_undo()
                 self.hide_keytips()
                 return
+            elif key == Qt.Key_N:
+                self.action_new_project()
+                self.hide_keytips()
+                return
             elif key == Qt.Key_O:
                 self.action_open_project()
                 self.hide_keytips()
                 return
             elif key == Qt.Key_S:
-                self.action_save_project()
+                if modifiers & Qt.ShiftModifier:
+                    self.action_save_as_project()
+                else:
+                    self.action_save_project()
+                self.hide_keytips()
+                return
+            elif key == Qt.Key_M:
+                if modifiers & Qt.ShiftModifier:
+                    self.action_merge_project()
+                else:
+                    self.toggle_ribbon_display_mode()
                 self.hide_keytips()
                 return
             elif key == Qt.Key_C:
@@ -11941,10 +12095,6 @@ class ManualStudioWindow(QMainWindow):
                 self.action_renumber_powerpoint_steps()
                 self.hide_keytips()
                 return
-            elif key == Qt.Key_M:
-                self.toggle_ribbon_display_mode()
-                self.hide_keytips()
-                return
             elif key in (Qt.Key_Delete, Qt.Key_Backspace) or (modifiers & Qt.ShiftModifier and key == Qt.Key_X):
                 self.action_clear()
                 self.hide_keytips()
@@ -11959,7 +12109,7 @@ class ManualStudioWindow(QMainWindow):
                 self.hide_keytips()
                 return
 
-        # 4. 기능키 (F8, F9, F10) & 삭제키
+        # 4. 기능키 (F8, F9, F10, F11, F12) & 삭제키
         if key in (Qt.Key_Delete, Qt.Key_Backspace):
             if self.canvas.delete_selected_item():
                 self.hide_keytips()
@@ -11977,7 +12127,10 @@ class ManualStudioWindow(QMainWindow):
             self.hide_keytips()
             return
         elif key == Qt.Key_F10:
-            self.action_add_new_slide()
+            if modifiers & Qt.ShiftModifier:
+                self.action_send_to_hwp()
+            else:
+                self.action_add_new_slide()
             self.hide_keytips()
             return
         elif key == Qt.Key_F11:
@@ -12051,7 +12204,7 @@ class ManualStudioWindow(QMainWindow):
         lic_suffix = f"[{badge}]" if status.get("is_licensed") else f"[{tr('badge_trial', '평가판')} • ~2026.12.31]"
         proj = getattr(self, "current_project_path", None)
         project_name = f" - [{os.path.basename(proj)}]" if proj else ""
-        self.setWindowTitle(f"Manual Studio v1.4.0 (DragonRPA Co.){project_name} {lic_suffix}")
+        self.setWindowTitle(f"Manual Studio {APP_VERSION} (DragonRPA Co.){project_name} {lic_suffix}")
 
     def update_status_bar(self):
         if not hasattr(self, "lbl_bottom_dev"):
@@ -13259,6 +13412,277 @@ class LicenseRegistrationDialog(QDialog):
 
 
 # ==============================================================================
+# 7-3. 업데이트 노트(릴리즈 내역) 다이얼로그 (ReleaseNotesDialog)
+# ==============================================================================
+class ReleaseNotesDialog(QDialog):
+    """초기버전(v1.0.0)부터 최신(v1.5.0)까지 전 릴리즈 이력을 열람하는 다이얼로그"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("release_notes_title", "업데이트 노트 (릴리즈 내역)"))
+        self.resize(780, 620)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        ci_pix = get_dragon_rpa_ci_pixmap()
+        if not ci_pix.isNull():
+            self.setWindowIcon(QIcon(ci_pix))
+
+        self.sections = []  # list of (version_tag, date_str, raw_text, html_text)
+        self.load_release_notes()
+        self.init_ui()
+
+    def load_release_notes(self):
+        candidate_paths = [
+            os.path.join(get_app_dir(), "RELEASE_NOTES.md"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "RELEASE_NOTES.md"),
+            os.path.join(os.getcwd(), "RELEASE_NOTES.md"),
+        ]
+        full_text = ""
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        full_text = f.read()
+                    break
+                except Exception:
+                    pass
+
+        if not full_text:
+            full_text = "# Manual Studio Release Notes\n\n## [v1.5.0] - 2026-09-13\n\n최신 버전이 적용되었습니다."
+
+        # Parse sections
+        raw_sections = re.split(r'\n(?=##\s*\[v)', full_text)
+        for sec in raw_sections:
+            m = re.match(r'##\s*\[([^\]]+)\]\s*-\s*([^\n]+)', sec.strip())
+            if m:
+                ver_tag = m.group(1)
+                date_str = m.group(2).strip()
+                html = self._markdown_to_html(sec)
+                self.sections.append((ver_tag, date_str, sec, html))
+
+    def _markdown_to_html(self, md_text: str) -> str:
+        lines = md_text.strip().split('\n')
+        html_lines = []
+        in_table = False
+        table_rows = []
+
+        for line in lines:
+            line_str = line.strip()
+            if line_str.startswith("## "):
+                m = re.match(r'##\s*\[([^\]]+)\]\s*-\s*(.*)', line_str)
+                if m:
+                    ver = m.group(1)
+                    dt = m.group(2)
+                    html_lines.append(f'<div style="background-color: #EFF6FF; border-left: 4px solid #2563EB; padding: 10px 14px; margin: 16px 0 10px 0; border-radius: 4px;"><span style="font-size: 15px; font-weight: bold; color: #1E40AF;">v{ver}</span> &nbsp; <span style="font-size: 12px; color: #64748B;">({dt})</span></div>')
+                else:
+                    html_lines.append(f'<h3 style="color: #1E40AF; margin-top: 14px;">{line_str[3:]}</h3>')
+            elif line_str.startswith("### "):
+                html_lines.append(f'<h4 style="color: #0F172A; margin: 12px 0 6px 0; font-size: 13px;">{line_str[4:]}</h4>')
+            elif line_str.startswith("#### "):
+                html_lines.append(f'<h5 style="color: #334155; margin: 8px 0 4px 0; font-size: 12px;">{line_str[5:]}</h5>')
+            elif line_str.startswith("- ") or line_str.startswith("• "):
+                item = line_str[2:].strip()
+                item = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', item)
+                item = re.sub(r'`(.*?)`', r'<code style="background-color: #F1F5F9; padding: 2px 4px; border-radius: 3px; font-size: 11px; color: #0F172A;">\1</code>', item)
+                html_lines.append(f'<li style="margin-bottom: 4px; line-height: 1.5; color: #334155; font-size: 12px;">{item}</li>')
+            elif line_str.startswith("|") and line_str.endswith("|"):
+                if "---" in line_str:
+                    continue
+                cells = [c.strip() for c in line_str.split("|")[1:-1]]
+                table_rows.append(cells)
+                in_table = True
+            else:
+                if in_table and table_rows:
+                    html_lines.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; border: 1px solid #CBD5E1; width: 100%; margin: 8px 0; font-size: 11.5px;">')
+                    hdr = table_rows[0]
+                    html_lines.append('<tr style="background-color: #F8FAFC;">')
+                    for h in hdr:
+                        html_lines.append(f'<th style="border: 1px solid #CBD5E1; color: #1E293B; font-weight: bold; text-align: left;">{h}</th>')
+                    html_lines.append('</tr>')
+                    for row in table_rows[1:]:
+                        html_lines.append('<tr>')
+                        for c in row:
+                            c_fmt = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', c)
+                            c_fmt = re.sub(r'`(.*?)`', r'<code style="background-color: #F1F5F9; padding: 2px 4px; border-radius: 3px; font-size: 10.5px;">\1</code>', c_fmt)
+                            html_lines.append(f'<td style="border: 1px solid #E2E8F0; color: #334155; line-height: 1.4;">{c_fmt}</td>')
+                        html_lines.append('</tr>')
+                    html_lines.append('</table>')
+                    table_rows = []
+                    in_table = False
+
+                if line_str and not line_str.startswith("---"):
+                    formatted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line_str)
+                    formatted = re.sub(r'`(.*?)`', r'<code style="background-color: #F1F5F9; padding: 2px 4px; border-radius: 3px; font-size: 11px;">\1</code>', formatted)
+                    html_lines.append(f'<p style="margin: 4px 0; line-height: 1.5; color: #334155; font-size: 12px;">{formatted}</p>')
+
+        if in_table and table_rows:
+            html_lines.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; border: 1px solid #CBD5E1; width: 100%; margin: 8px 0; font-size: 11.5px;">')
+            hdr = table_rows[0]
+            html_lines.append('<tr style="background-color: #F8FAFC;">')
+            for h in hdr:
+                html_lines.append(f'<th style="border: 1px solid #CBD5E1; color: #1E293B; font-weight: bold; text-align: left;">{h}</th>')
+            html_lines.append('</tr>')
+            for row in table_rows[1:]:
+                html_lines.append('<tr>')
+                for c in row:
+                    c_fmt = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', c)
+                    html_lines.append(f'<td style="border: 1px solid #E2E8F0; color: #334155;">{c_fmt}</td>')
+                html_lines.append('</tr>')
+            html_lines.append('</table>')
+
+        return "\n".join(html_lines)
+
+    def init_ui(self):
+        self.setStyleSheet("""
+            QDialog { background-color: #FFFFFF; }
+            QLabel { font-family: 'Segoe UI', 'Malgun Gothic'; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        # 1. 헤더: 타이틀 + 버전 콤보박스
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(10)
+
+        lbl_title = QLabel(tr("release_notes_title", "업데이트 노트 (릴리즈 내역)"), self)
+        lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #0F172A;")
+        header_layout.addWidget(lbl_title)
+        header_layout.addStretch(1)
+
+        lbl_ver = QLabel(tr("lbl_version", "버전:"), self)
+        lbl_ver.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #64748B;")
+        header_layout.addWidget(lbl_ver)
+
+        self.combo_version = QComboBox(self)
+        self.combo_version.setFixedHeight(28)
+        self.combo_version.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                background-color: #F8FAFC;
+                color: #1E293B;
+                min-width: 170px;
+            }
+            QComboBox:hover { border-color: #94A3B8; }
+        """)
+        self.combo_version.addItem(tr("release_notes_all_ver", "전체 버전 보기"), "all")
+        for ver_tag, dt, raw, html in self.sections:
+            self.combo_version.addItem(f"{ver_tag} ({dt})", ver_tag)
+        self.combo_version.currentIndexChanged.connect(self.on_version_selected)
+        header_layout.addWidget(self.combo_version)
+
+        layout.addLayout(header_layout)
+
+        # 2. 본문 텍스트 브라우저
+        self.browser = QTextBrowser(self)
+        self.browser.setOpenExternalLinks(True)
+        self.browser.setStyleSheet("""
+            QTextBrowser {
+                background-color: #FAFAFA;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+                padding: 14px;
+                font-family: 'Segoe UI', 'Malgun Gothic';
+                color: #1E293B;
+            }
+        """)
+        layout.addWidget(self.browser, 1)
+
+        # 3. 하단 버튼 바
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(10)
+
+        lbl_total = QLabel(f"총 {len(self.sections)}개 릴리즈 내역 수록", self)
+        lbl_total.setStyleSheet("font-size: 11px; color: #94A3B8; font-weight: 500;")
+        bottom_layout.addWidget(lbl_total)
+        bottom_layout.addStretch(1)
+
+        self.btn_copy = QPushButton(tr("release_notes_btn_copy", "클립보드에 복사"), self)
+        self.btn_copy.setFixedHeight(32)
+        self.btn_copy.setCursor(Qt.PointingHandCursor)
+        self.btn_copy.setStyleSheet("""
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #2563EB;
+                border: 1px solid #BFDBFE;
+                border-radius: 4px;
+                padding: 0 14px;
+                font-size: 11.5px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #EFF6FF; }
+        """)
+        self.btn_copy.clicked.connect(self.copy_to_clipboard)
+        bottom_layout.addWidget(self.btn_copy)
+
+        btn_close = QPushButton(tr("btn_close", "닫기"), self)
+        btn_close.setFixedHeight(32)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 4px;
+                padding: 0 18px;
+                font-size: 11.5px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #1D4ED8; }
+        """)
+        btn_close.clicked.connect(self.accept)
+        bottom_layout.addWidget(btn_close)
+
+        layout.addLayout(bottom_layout)
+
+        # 초기 렌더링: 전체 버전
+        self.display_all_sections()
+
+    def display_all_sections(self):
+        full_html = """
+        <html>
+        <body style="font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 12px; color: #1E293B;">
+        """
+        for ver, dt, raw, html in self.sections:
+            full_html += html + "<hr style='border: none; border-top: 1px solid #E2E8F0; margin: 18px 0;'>"
+        full_html += "</body></html>"
+        self.browser.setHtml(full_html)
+
+    def on_version_selected(self, idx: int):
+        data = self.combo_version.currentData()
+        if data == "all":
+            self.display_all_sections()
+        else:
+            for ver, dt, raw, html in self.sections:
+                if ver == data:
+                    styled_html = f"""
+                    <html>
+                    <body style="font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 12px; color: #1E293B;">
+                    {html}
+                    </body></html>
+                    """
+                    self.browser.setHtml(styled_html)
+                    break
+
+    def copy_to_clipboard(self):
+        data = self.combo_version.currentData()
+        if data == "all":
+            text = "\n\n".join([raw for _, _, raw, _ in self.sections])
+        else:
+            text = ""
+            for ver, dt, raw, _ in self.sections:
+                if ver == data:
+                    text = raw
+                    break
+        QApplication.clipboard().setText(text)
+        self.btn_copy.setText(tr("release_notes_copied", "복사 완료!"))
+
+
+# ==============================================================================
 # 8. 개발사 정보 및 About 다이얼로그 (AboutDialog - DragonRPA Co.)
 # ==============================================================================
 class AboutDialog(QDialog):
@@ -13496,6 +13920,28 @@ class AboutDialog(QDialog):
         btn_eula.clicked.connect(self.show_eula)
         btn_box.addWidget(btn_eula)
 
+        btn_rel = QPushButton(tr("release_notes_title", "업데이트 노트"), self)
+        btn_rel.setFixedHeight(34)
+        btn_rel.setCursor(Qt.PointingHandCursor)
+        btn_rel.setStyleSheet("""
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                border-radius: 5px;
+                padding: 0 16px;
+                font-size: 11.5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                color: #0F172A;
+                border-color: #94A3B8;
+            }
+        """)
+        btn_rel.clicked.connect(self.show_release_notes)
+        btn_box.addWidget(btn_rel)
+
         btn_ok = QPushButton(tr("btn_ok", "확인"), self)
         btn_ok.setFixedSize(90, 34)
         btn_ok.setCursor(Qt.PointingHandCursor)
@@ -13525,6 +13971,10 @@ class AboutDialog(QDialog):
 
     def show_eula(self):
         dlg = EulaDialog(self)
+        dlg.exec()
+
+    def show_release_notes(self):
+        dlg = ReleaseNotesDialog(self)
         dlg.exec()
 
     def copy_email(self):

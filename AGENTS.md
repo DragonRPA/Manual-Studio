@@ -150,32 +150,46 @@ Add to `claude_desktop_config.json` (or Cowork agent settings):
 
 ---
 
-## 5. Declarative Project Specification (`.mcs.json`)
+## 5. Declarative Project Specification (`.dragon` / `.mcs.json`)
 
-Manual Studio uses a simple JSON schema for multi-layered annotation projects:
+Manual Studio uses a multi-layered annotation schema supporting single-file JSON (`.mcs.json`) and self-contained ZIP archive packages (`.dragon`):
+
+### 1) Package Archive (`.dragon`)
+- Structure:
+  - `manifest.json`: Multi-step metadata and annotation layers.
+  - `slides/step_{i:03d}_raw.png`: Lossless raw capture bitmaps.
+
+### 2) JSON Manifest Schema (`manifest.json` / `.mcs.json`)
 ```json
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
+  "project_title": "ERP User Guide",
   "canvas_size": [1920, 1080],
-  "raw_image_file": "step_001_raw.png",
-  "items": [
+  "slides": [
     {
-      "type": "StampItem",
-      "index": 1,
-      "pos": [240.0, 310.0],
-      "style": { "size": 32, "bg_color": "#007AFF", "text_color": "#FFFFFF" }
-    },
-    {
-      "type": "HighlightBoxItem",
-      "rect": [200, 280, 450, 120],
-      "style": { "color": "#007AFF", "border_width": 3, "fill": false }
-    },
-    {
-      "type": "ElbowArrowItem",
-      "start_pos": [120.0, 100.0],
-      "end_pos": [250.0, 220.0],
-      "route_mode": "HV",
-      "style": { "color": "#007AFF", "width": 3, "head_size": 14 }
+      "step_num": 1,
+      "title": "Authentication",
+      "raw_image_file": "slides/step_001_raw.png",
+      "items": [
+        {
+          "type": "StampItem",
+          "index": 1,
+          "pos": [240.0, 310.0],
+          "style": { "size": 32, "bg_color": "#007AFF", "text_color": "#FFFFFF" }
+        },
+        {
+          "type": "HighlightBoxItem",
+          "rect": [200, 280, 450, 120],
+          "style": { "color": "#007AFF", "border_width": 3, "fill": false }
+        },
+        {
+          "type": "ElbowArrowItem",
+          "start_pos": [120.0, 100.0],
+          "end_pos": [250.0, 220.0],
+          "route_mode": "HV",
+          "style": { "color": "#007AFF", "width": 3, "head_size": 14 }
+        }
+      ]
     }
   ]
 }
@@ -191,12 +205,19 @@ Manual Studio uses a simple JSON schema for multi-layered annotation projects:
   - `BtnFixedCapture` / F9: Quick fixed capture.
   - `BtnVariableCapture` / Shift+F9: Interactive region capture.
   - `BtnSubCapture` / F8: Modal sub-window capture.
-  - `BtnExportPpt` / F10: PowerPoint slide insertion.
+  - `BtnExportPpt` / F10: PowerPoint slide insertion (+ new slide creation).
+  - `BtnExportHwp` / Shift+F10, F12: Hancom Hangul (HWP) document/cursor insertion.
   - `BtnSendSlides` / F11: Direct Google Slides browser injection.
-  - `BtnSaveProject` / Ctrl+S: Save `.mcs.json`.
+  - `BtnNewProject` / Ctrl+N: Initialize new empty project.
+  - `BtnOpenProject` / Ctrl+O: Open `.dragon` / `.mcs.json` project.
+  - `BtnSaveProject` / Ctrl+S: Save `.dragon` / `.mcs.json` project.
+  - `BtnSaveAsProject` / Ctrl+Shift+S: Save project with new filename.
+  - `BtnMergeProject` / Ctrl+Shift+M: Merge external project slides into current timeline.
+  - `BtnReleaseNotes`: Open Release Notes history dialog (30 releases viewable).
+  - `BtnToggleRibbon` / Ctrl+M: Toggle ribbon mode (Standard vs 42 Vector Icons).
   - `BtnElbowTR`: Elbow arrow Right then Down (`─┐`, Top-Right corner).
   - `BtnElbowBR`: Elbow arrow Right then Up (`─┘`, Bottom-Right corner).
   - `BtnElbowBL`: Elbow arrow Down then Right (`│└`, Bottom-Left corner).
   - `BtnElbowTL`: Elbow arrow Up then Right (`│┌`, Top-Left corner).
   - `Tab` / `Space`: Toggle right-angle routing axis (`HV` ↔ `VH`).
-  - Mode switches: `V` (Select), `S` (Stamp), `B` (Box).
+  - Mode switches: `V` (Select), `S` (Stamp), `B` (Box), `A` (Arrow), `E` (Elbow), `T` (Text), `C` (Callout), `M` (Blur), `X` (Smart Eraser).

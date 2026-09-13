@@ -5,7 +5,7 @@ a = Analysis(
     ['manual_capture_studio.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets'), ('fonts', 'fonts'), ('config.json', '.'), ('version.json', '.'), ('AGENTS.md', '.')],
+    datas=[('assets', 'assets'), ('fonts', 'fonts'), ('config.json', '.'), ('version.json', '.'), ('AGENTS.md', '.'), ('RELEASE_NOTES.md', '.'), ('각 기능(키)설명.MD', '.')],
     hiddenimports=['i18n_manager', 'manual_cli', 'mcp_server', 'license_engine', 'updater_engine'],
     hookspath=[],
     hooksconfig={},

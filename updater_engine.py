@@ -18,14 +18,15 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QTextEdit, QFrame, QMessageBox, QApplication
 )
-from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal, QTimer, QSize
-from PySide6.QtGui import QIcon, QFont, QColor
+from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal, QTimer, QSize, QUrl
+from PySide6.QtGui import QIcon, QFont, QColor, QDesktopServices
 
 from dragon_rpa_ci_data import get_dragon_rpa_ci_pixmap
 from i18n_manager import tr
 
 PRIMARY_VERSION_URL = "https://raw.githubusercontent.com/DragonRPA/Manual-Studio/main/version.json"
 FALLBACK_GITHUB_API = "https://api.github.com/repos/DragonRPA/Manual-Studio/releases/latest"
+DEFAULT_RELEASE_PAGE = "https://github.com/DragonRPA/Manual-Studio/releases"
 
 
 class VersionComparator:
@@ -77,7 +78,7 @@ class UpdateCheckerThread(QThread):
             self.sig_up_to_date.emit(self.current_version)
 
     def _fetch_version_metadata(self) -> dict:
-        headers = {"User-Agent": "DragonRPA-ManualStudio-Updater/1.4"}
+        headers = {"User-Agent": "DragonRPA-ManualStudio-Updater/1.5"}
 
         # 1. 고속 CDN raw.githubusercontent.com version.json 우선 조회 (Rate-limit 없음)
         try:
@@ -85,8 +86,11 @@ class UpdateCheckerThread(QThread):
             with urllib.request.urlopen(req, timeout=4.0) as resp:
                 if resp.status == 200:
                     raw_data = resp.read().decode("utf-8")
-                    return json.loads(raw_data)
-        except Exception as e:
+                    data = json.loads(raw_data)
+                    if "release_page_url" not in data:
+                        data["release_page_url"] = DEFAULT_RELEASE_PAGE
+                    return data
+        except Exception:
             pass
 
         # 2. GitHub Releases API 폴백 조회
@@ -107,9 +111,10 @@ class UpdateCheckerThread(QThread):
                         "release_title": data.get("name", f"Manual Studio v{tag_name}"),
                         "release_notes": data.get("body", ""),
                         "download_url": dl_url,
+                        "release_page_url": data.get("html_url", DEFAULT_RELEASE_PAGE),
                         "force_update": False
                     }
-        except Exception as e:
+        except Exception:
             pass
 
         return None
@@ -135,7 +140,7 @@ class UpdateDownloadThread(QThread):
             self.sig_download_failed.emit("다운로드 URL이 유효하지 않습니다.")
             return
 
-        headers = {"User-Agent": "DragonRPA-ManualStudio-Updater/1.4"}
+        headers = {"User-Agent": "DragonRPA-ManualStudio-Updater/1.5"}
         try:
             req = urllib.request.Request(self.download_url, headers=headers)
             with urllib.request.urlopen(req, timeout=10.0) as resp:
@@ -159,6 +164,22 @@ class UpdateDownloadThread(QThread):
                         self.sig_progress.emit(downloaded, total_bytes)
 
             self.sig_download_completed.emit(self.dest_path)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                self.sig_download_failed.emit(
+                    f"배포 파일이 서버에 등록되지 않았습니다 (HTTP 404 Not Found).\n"
+                    f"현재 버전의 릴리즈 패키지가 아직 생성/업로드 중일 수 있습니다.\n"
+                    f"공식 릴리즈 페이지에서 최신 패키지 빌드 상태를 확인해 주십시오."
+                )
+            elif e.code == 403:
+                self.sig_download_failed.emit(
+                    f"GitHub 서버 접근 제한 또는 Rate-Limit(요청 한도)이 초과되었습니다 (HTTP 403).\n"
+                    f"잠시 후 다시 시도해 주십시오."
+                )
+            else:
+                self.sig_download_failed.emit(f"서버 응답 오류 (HTTP {e.code}): {e.reason}")
+        except urllib.error.URLError as e:
+            self.sig_download_failed.emit(f"원격 서버 연결 실패: {e.reason}")
         except Exception as e:
             self.sig_download_failed.emit(f"다운로드 실패: {e}")
 
@@ -198,9 +219,14 @@ del "%~f0"
     @classmethod
     def apply_update_and_restart(cls, target_exe: str, new_exe: str) -> bool:
         try:
+            # 안전 검사: 개발 환경에서 python.exe 덮어쓰기 방지
+            if os.path.basename(target_exe).lower().startswith("python"):
+                target_dir = os.path.dirname(os.path.abspath(target_exe))
+                target_exe = os.path.join(target_dir, "ManualStudio.exe")
+
             pid = os.getpid()
-            bat_dir = os.path.dirname(os.path.abspath(target_exe))
-            bat_path = os.path.join(bat_dir, "update_patcher.bat")
+            bat_dir = tempfile.gettempdir()
+            bat_path = os.path.join(bat_dir, f"update_patcher_{pid}.bat")
             script_content = cls.get_patcher_script_content(target_exe, new_exe, pid)
             with open(bat_path, "w", encoding="utf-8") as f:
                 f.write(script_content)
@@ -341,6 +367,25 @@ class UpdateDialog(QDialog):
         btn_box.addWidget(self.lbl_notice)
         btn_box.addStretch(1)
 
+        self.btn_web = QPushButton(tr("update_btn_web", "릴리즈 웹페이지"), self)
+        self.btn_web.setFixedHeight(34)
+        self.btn_web.setCursor(Qt.PointingHandCursor)
+        self.btn_web.setStyleSheet("""
+            QPushButton {
+                background-color: #F8FAFC;
+                color: #2563EB;
+                border: 1px solid #BFDBFE;
+                border-radius: 5px;
+                padding: 0 14px;
+                font-size: 11.5px;
+                font-weight: 500;
+            }
+            QPushButton:hover { background-color: #EFF6FF; }
+        """)
+        rel_page_url = self.metadata.get("release_page_url", DEFAULT_RELEASE_PAGE)
+        self.btn_web.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(rel_page_url)))
+        btn_box.addWidget(self.btn_web)
+
         self.btn_update = QPushButton(tr("update_btn_now", "업데이트 실행"), self)
         self.btn_update.setFixedHeight(34)
         self.btn_update.setCursor(Qt.PointingHandCursor)
@@ -437,4 +482,17 @@ class UpdateDialog(QDialog):
         self.progress_frame.setVisible(False)
         self.btn_update.setEnabled(True)
         self.btn_later.setText(tr("btn_close", "닫기"))
-        QMessageBox.warning(self, tr("update_failed_title", "다운로드 실패"), f"Error:\n{err_msg}")
+
+        rel_page_url = self.metadata.get("release_page_url", DEFAULT_RELEASE_PAGE)
+
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowTitle(tr("update_failed_title", "다운로드 실패"))
+        msg_box.setText(err_msg)
+        btn_open_web = msg_box.addButton(tr("update_btn_open_web", "릴리즈 웹페이지 열기"), QMessageBox.ActionRole)
+        btn_ok = msg_box.addButton(tr("btn_confirm", "확인"), QMessageBox.AcceptRole)
+        msg_box.setDefaultButton(btn_ok)
+        msg_box.exec()
+
+        if msg_box.clickedButton() == btn_open_web:
+            QDesktopServices.openUrl(QUrl(rel_page_url))

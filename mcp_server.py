@@ -19,8 +19,8 @@ from manual_cli import (
     cli_batch, cli_export_doc
 )
 
-SERVER_NAME = "manual-studio-mcp-server"
-SERVER_VERSION = "1.4.0"
+SERVER_NAME = "manual-studio"
+SERVER_VERSION = "1.5.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 TOOLS_SPEC = [
