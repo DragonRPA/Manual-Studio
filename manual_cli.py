@@ -20,7 +20,7 @@ from PySide6.QtGui import QPainter, QColor, QPixmap, QImage, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from manual_capture_studio import (
-    StampItem, HighlightBoxItem, ArrowItem, CalloutItem,
+    StampItem, HighlightBoxItem, ArrowItem, ElbowArrowItem, CalloutItem,
     TextLabelItem, BlurMosaicItem, HotkeyBadgeItem,
     SpotlightMaskItem, ClickRippleItem, MagnifierZoomItem,
     ProjectManager, ExportEngine, DEFAULT_CONFIG, APP_VERSION,
@@ -142,17 +142,17 @@ def cli_capture(rect: str = None, monitor: int = 0, fixed: bool = False, output:
     }
 
 
-def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> list:
-    """CLI 인자 및 JSON 스펙을 주석 Item 객체 목록으로 파싱"""
+def parse_item_specs(stamps=None, boxes=None, arrows=None, elbows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> list:
+    """CLI/MCP 문자열 인자를 파싱하여 주석 객체 리스트 생성"""
+    cfg = DEFAULT_CONFIG
     items = []
-    cfg = load_user_config()
 
-    # 1. Stamps: "index:x,y[:bg_color:size]"
+    # 1. Stamps: "index:x,y[:color:size]"
     if stamps:
         for s in stamps:
             parts = s.split(":")
             idx = int(parts[0])
-            coords = [float(c) for c in parts[1].split(",")]
+            coords = [float(v) for v in parts[1].split(",")]
             style = cfg.get("stamp_style", {}).copy()
             if len(parts) > 2 and parts[2]:
                 style["bg_color"] = parts[2]
@@ -160,7 +160,7 @@ def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=
                 style["size"] = int(parts[3])
             items.append(StampItem(idx, coords[0], coords[1], style))
 
-    # 2. Boxes: "x,y,w,h[:color:width:fill]"
+    # 2. Highlight Boxes: "x,y,w,h[:color:width:fill]"
     if boxes:
         for b in boxes:
             parts = b.split(":")
@@ -185,6 +185,25 @@ def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=
             if len(parts) > 2 and parts[2]:
                 style["width"] = int(parts[2])
             items.append(ArrowItem(QPointF(coords[0], coords[1]), QPointF(coords[2], coords[3]), style))
+
+    # 3-1. Elbow Arrows: "x1,y1,x2,y2[:color:width:route_mode]"
+    if elbows:
+        for ea in elbows:
+            parts = ea.split(":")
+            coords = [float(v) for v in parts[0].split(",")]
+            style = cfg.get("arrow_style", {}).copy()
+            route_mode = "HV"
+            if len(parts) > 1 and parts[1]:
+                style["color"] = parts[1]
+            if len(parts) > 2 and parts[2]:
+                style["width"] = int(parts[2])
+            if len(parts) > 3 and parts[3]:
+                raw_mode = parts[3].strip().lower()
+                if raw_mode in ("vh", "bl", "tl"):
+                    route_mode = "VH"
+                else:
+                    route_mode = "HV"
+            items.append(ElbowArrowItem(QPointF(coords[0], coords[1]), QPointF(coords[2], coords[3]), style, route_mode))
 
     # 4. Callouts: "text:box_x,box_y,box_w,box_h:tail_x,tail_y[:border_color:font_size]"
     if callouts:
@@ -272,7 +291,7 @@ def parse_item_specs(stamps=None, boxes=None, arrows=None, callouts=None, texts=
 
 
 def cli_annotate(input_path: str, output_path: str = None, stamps=None, boxes=None,
-                 arrows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> dict:
+                 arrows=None, elbows=None, callouts=None, texts=None, spotlights=None, clicks=None, magnifiers=None, raw_items=None) -> dict:
     """기존 이미지에 주석 객체를 합성 렌더링하여 새 이미지로 저장"""
     get_or_create_app()
     if not os.path.exists(input_path):
@@ -282,7 +301,7 @@ def cli_annotate(input_path: str, output_path: str = None, stamps=None, boxes=No
     if pixmap.isNull():
         return {"status": "error", "message": f"Failed to load image: {input_path}"}
 
-    items = parse_item_specs(stamps, boxes, arrows, callouts, texts, spotlights, clicks, magnifiers, raw_items)
+    items = parse_item_specs(stamps, boxes, arrows, elbows, callouts, texts, spotlights, clicks, magnifiers, raw_items)
 
     img = QImage(pixmap.size(), QImage.Format_ARGB32)
     img.fill(Qt.transparent)
@@ -490,6 +509,7 @@ def cli_batch(workflow_path: str, output_dir: str = None, doc_format: str = "all
             stamps=ann_cfg.get("stamps"),
             boxes=ann_cfg.get("boxes"),
             arrows=ann_cfg.get("arrows"),
+            elbows=ann_cfg.get("elbows"),
             callouts=ann_cfg.get("callouts"),
             texts=ann_cfg.get("texts"),
             spotlights=ann_cfg.get("spotlights"),
@@ -590,6 +610,7 @@ def handle_cli(argv: list) -> int:
     p_ann.add_argument("--stamp", "-s", action="append", help="Stamp: index:x,y[:color:size]")
     p_ann.add_argument("--box", "-b", action="append", help="Box: x,y,w,h[:color:width:fill]")
     p_ann.add_argument("--arrow", "-a", action="append", help="Arrow: x1,y1,x2,y2[:color:width]")
+    p_ann.add_argument("--elbow", "-e", action="append", help="Elbow: x1,y1,x2,y2[:color:width:route_mode]")
     p_ann.add_argument("--callout", "-c", action="append", help="Callout: text:bx,by,bw,bh:tx,ty")
     p_ann.add_argument("--text", "-t", action="append", help="Text: text:x,y[:color:size:bg]")
     p_ann.add_argument("--spotlight", action="append", help="Spotlight: x,y,w,h[:border:dim:bw]")
@@ -634,6 +655,7 @@ def handle_cli(argv: list) -> int:
         res = cli_annotate(
             args.input, args.output,
             stamps=args.stamp, boxes=args.box, arrows=args.arrow,
+            elbows=args.elbow,
             callouts=args.callout, texts=args.text,
             spotlights=args.spotlight, clicks=args.click, magnifiers=args.magnifier
         )

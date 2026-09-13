@@ -1,5 +1,205 @@
 # Manual Studio Release Notes
 
+## [v1.4.0.Build.21] - 2026-09-13 13:05
+
+### PixelSnap 1안 치수선 구현, 스탬프 둥근 사각 바탕 및 객체 우클릭 속성 편집 다이얼로그 (C-컴파일 바이너리 최적화)
+
+#### 배경 및 목적
+- UI 가이드라인 및 화면 규격 매뉴얼 작성을 위해 두 지점 간 거리(px, dp 등)를 자동 측정·시각화하는 PixelSnap 스타일의 치수선 주석 도구를 탑재했습니다.
+- 기존 원형 단일 형태였던 숫자 스탬프에 모서리가 둥근 사각형(Rounded Rectangle) 옵션을 추가하여 시각적 다양성을 확보했습니다.
+- 캔버스 내 삽입된 모든 객체를 마우스 우클릭하여 좌표, 크기, 글꼴, 선색, 배경색, 글자색을 확인·수정하고 기본 설정에 즉시 동기화할 수 있는 통합 속성 다이얼로그(`ItemPropertiesDialog`)를 전사 13개 언어로 구축했습니다.
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| **치수선(`DimensionLineItem`) 도구 추가** | 단축키 `D`로 치수선 모드 진입. 캔버스 드래그 시 수평/수직 거리 자동 판정 및 `Shift` 직교 잠금. 양끝 수직 틱(`├ ─ ┤`) 브라켓 및 중앙 둥근 캡슐 뱃지(`[ 320 px ]`, `[ 16 dp ]`) 렌더링. `.mcs.json` 직렬화 및 PPT/슬라이드 완벽 호환 |
+| **스탬프 둥근 사각 바탕 지원** | `StampItem` 및 `StepArrowItem`에서 `shape: "circle" | "rounded_rect"` 및 `corner_radius` 지원. 둥근 사각형 본체와 드롭 섀도우 정밀 렌더링 및 히트테스트 |
+| **객체 우클릭 컨텍스트 메뉴** | 객체 우클릭 시 즉시 삭제되던 방식을 개편하여 `속성... (P)`, `맨 앞으로`, `맨 뒤로`, `삭제 (Del)` 메뉴 표출 |
+| **객체 속성 보기+수정 다이얼로그 (`ItemPropertiesDialog`)** | 객체 우클릭 메뉴 또는 더블클릭(`P` 단축키) 시 실행. 좌표(X/Y, Start/End), 크기(W/H, 직경, 선두께, 촉크기), 스탬프 바탕 모양(원형 vs 둥근 사각), 글꼴(패밀리, 크기, 굵기, 텍스트 내용), 선색, 배경색, 글자색 실시간 편집 |
+| **"기본 설정에 반영" 체크박스** | 다이얼로그에서 설정 변경 후 체크 시 애플리케이션 전역 `config.json`의 기본 스타일로 즉각 저장 및 동기화 |
+| **리본 메뉴 도구 추가** | 텍스트 인식 그룹 뒤에 `grp_dimension` ("치수선") 그룹, 단축키 `D` 툴팁 및 벡터 아이콘(`dimension`) 탑재 |
+| **13개 글로벌 언어 i18n 완비** | 치수선, 스탬프 바탕 형태, 우클릭 컨텍스트 메뉴, 속성 편집창의 모든 필드·버튼 37개 신규 키 13개국어 번역 100% 등록 |
+| **단위 테스트 확장 (54개 100% 통과)** | 치수선 지오메트리, 둥근 사각 스탬프, 속성 다이얼로그 및 기본 설정 동기화, i18n 키 무결성 검증 추가 (54/54 ALL PASS) |
+| **Nuitka C-컴파일 최적화 및 릴리즈 바이너리 생성** | `rapidocr` 동적 임포트 전환 및 Nuitka `--nofollow-import-to` 옵션을 적용하여 PyTorch 등 불필요한 ML 라이브러리 유입 차단. C-컴파일러(GCC 15.2.0) 기반 고성능 단일 바이너리 `ManualStudio.exe` 빌드 완료 |
+
+#### 수정 파일
+- `manual_capture_studio.py`: `DimensionLineItem`, `ItemPropertiesDialog` 클래스 구현, `DEFAULT_CONFIG`에 `dimension_style` 및 `stamp_style["shape"]` 추가, `StudioCanvasWidget` 마우스 이벤트 및 우클릭 컨텍스트 메뉴 연동, 리본 메뉴 치수선 버튼 추가, OCR 동적 임포트 최적화
+- `i18n_manager.py`: 신규 37개 다국어 번역 키 13개 언어 전수 추가
+- `test_core_engine.py`: `test_dimension_line_item`, `test_stamp_item_rounded_rect_shape`, `test_item_properties_dialog_and_sync`, `test_dimension_and_properties_i18n_keys` 단위 테스트 추가
+- `dev_temp.md`: 개편 태스크 완료 기록
+- `build_c.bat`: 빌드 버전 `1.4.0.21` 업데이트 및 ML 의존성 추적 방지 플래그 추가
+
+
+---
+
+## [v1.4.0.Build.20] - 2026-09-13 20:55
+
+### OCR 영역 선택 텍스트 추출 기능
+
+#### 배경 및 목적
+매뉴얼 작성 중 화면 내 텍스트를 별도 타이핑 없이 즉시 추출·복사할 수 있도록 OCR 모드를 추가했습니다.
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| OCR 드래그 모드 추가 | 단축키 `O`로 활성화, 캔버스에서 영역을 드래그하여 텍스트 추출 |
+| WinRT OCR 엔진 (1순위) | Windows 내장 `winsdk.windows.media.ocr`를 asyncio 루프로 구동. 한국어·일본어·중국어 등 UI 언어 자동 매핑 |
+| RapidOCR 폴백 (2순위) | WinRT 불가 시 `rapidocr_onnxruntime` 자동 폴백. PPOCR v3 기반 다국어 지원 |
+| OcrWorkerThread | QThread 기반 백그라운드 처리. `sig_result(str, str)` 시그널로 결과 전달 |
+| OcrResultDialog | 추출 텍스트 표시 + 자동 클립보드 복사 + "클립보드 복사" / "닫기" 버튼 |
+| 리본 OCR 그룹 | 강조·보안 그룹 뒤에 `grp_ocr` ("텍스트 인식") 추가 |
+| OCR 드래그 프리뷰 | 초록 점선 + 반투명 오버레이로 선택 영역 시각적 피드백 |
+| i18n 9개 키 추가 | `btn_mode_ocr`, `grp_ocr`, `tooltip_ocr`, `ocr_dialog_title`, `ocr_copy_btn`, `ocr_copy_btn_done`, `ocr_close_btn`, `ocr_no_text`, `ocr_engine_error` — 13개 언어 완비 |
+
+#### 수정 파일
+
+- `manual_capture_studio.py`: `OcrWorkerThread`, `OcrResultDialog` 클래스 추가; `AnnotationCanvas`에 OCR 드래그 상태·이벤트·paintEvent 프리뷰·`_run_ocr_on_region`·`_on_ocr_result` 추가; 리본 `grp_ocr`, 단축키 `O`, 상태바 `"OCR"` 모드 추가
+- `i18n_manager.py`: OCR 관련 i18n 키 9개 (13개 언어) 추가
+- `test_core_engine.py`: `test_ocr_i18n_keys` 추가 (총 50개 테스트)
+
+#### 테스트 결과
+
+```
+[PASS] test_ocr_i18n_keys
+ALL 50 TESTS PASSED 100%
+```
+
+---
+
+## [v1.4.0.Build.19] - 2026-09-13 11:44
+
+### 포르투갈어 노출 + 언어 목록 알파벳 정렬 + 최초 실행 OS 자동 언어 감지 영구 저장
+
+#### 변경 내역
+
+| 항목 | 내용 |
+|:---|:---|
+| 포르투갈어(Português) 노출 | `pt` 번역 297개 기존 완비. `SUPPORTED_LOCALES` 정렬 재배치로 언어 메뉴 및 설정 콤보박스에 정상 노출 |
+| 언어 목록 알파벳 정렬 | `SUPPORTED_LOCALES` 딕셔너리를 표시명(display name) Python 유니코드 정렬 기준으로 재배열 |
+| OS 자동 언어 감지 영구 저장 | `config["locale"] = "auto"` 최초 실행 시 `I18nManager.detect_system_locale()` 결과를 즉시 `config.json`에 저장. 이후 재실행에서도 동일 언어 유지 |
+| 알파벳 정렬 후 언어 순서 | Bahasa Indonesia → Deutsch → English → Español → Français → Italiano → Português → Tiếng Việt → Русский → 日本語 → 简体中文 → 繁體中文 → 한국어 |
+
+#### 수정 파일
+
+- `i18n_manager.py`: `SUPPORTED_LOCALES` 딕셔너리 정렬 순서 재배열
+- `manual_capture_studio.py`: `__init__` 로케일 초기화 로직 — `auto` 감지 결과 `save_config()` 즉시 저장 추가
+- `test_core_engine.py`: `test_global_i18n_manager` — 알파벳 정렬 검증 + `detect_system_locale()` 직접 호출 검증 추가
+
+#### 테스트 결과
+
+```
+[PASS] test_global_i18n_manager (13 Global Locales, Font Fallback, Dynamic Switch valid, Alphabetical Order, OS Detect)
+ALL 49 TESTS PASSED 100%
+```
+
+---
+
+## [v1.4.0.Build.18] - 2026-09-13 10:54
+
+### 하이브리드 라이선스 인증 엔진 (3-레이어 아키텍처) 구현
+
+#### 배경 — 순수 온라인 인증의 4대 단점 극복
+| 단점 | 해결 |
+|:---|:---|
+| ① 공장·폐쇄망 구동 불가 | 폐쇄망 `.lic` 파일 발급 지원 |
+| ② 서버 장애 시 업무 중단 | 오프라인 유예 14일 자동 허용 |
+| ③ 방화벽/EDR 패킷 차단 | 로컬 캐시 토큰으로 비블로킹 즉시 실행 |
+| ④ 서버 영속성·비용 부담 | 로컬 HMAC 서명 1차 검증으로 서버 독립성 유지 |
+
+#### `license_engine.py` — 3개 신규 클래스 추가 (기존 코드 무변경)
+- **`OnlineLicenseVerifier`** (신규):
+  - `VERIFY_URL = "https://license.dragonrpa.co.kr/v1/verify"` 플레이스홀더 (서버 구축 후 교체)
+  - `CACHE_TOKEN_DAYS = 30`: 캐시 토큰 유효 기간
+  - `GRACE_PERIOD_DAYS = 14`: 오프라인 유예 기간
+  - `save_cache_token()` / `load_cache_token()`: HMAC-SHA256 서명 + Base64 인코딩 이중 저장 (레지스트리 + APPDATA 파일)
+  - `is_cache_valid()`: 30일 캐시 유효 기간 확인
+  - `is_license_expired()`: 라이선스 만료일 즉시 판정 (유예 없음)
+  - `get_grace_remaining_days()`: 마지막 온라인 인증 기준 유예 잔여일
+  - `verify_online()`: 서버 POST 인증 → 캐시 자동 갱신 (타임아웃 5초)
+  - `verify_offline_lic_file()`: `.lic` 파일 HMAC 검증 + HWID 노드락 + 만료 즉시 판정
+- **`HybridLicenseCheck`** (신규):
+  - `run(serial_key, async_refresh)`: 4-레이어 폴백 실행기
+    1. 로컬 캐시 유효 → 즉시 실행 (`mode="cache"`)
+    2. 온라인 서버 인증 성공 → 캐시 갱신 (`mode="online"`)
+    3. 오프라인 14일 유예 이내 → 경고 배너 후 실행 (`mode="grace"`)
+    4. 폐쇄망 `.lic` 파일 검증 → 실행 (`mode="offline_lic"`)
+    5. 전 레이어 실패 → 차단 (`mode="blocked"`)
+  - `_schedule_bg_refresh()`: 캐시 만료 7일 전부터 백그라운드 데몬 스레드로 조용히 갱신
+  - `mode="expired"`: 라이선스 만료일 즉시 차단 (유예 없음)
+- **`LicenseFileGenerator`** (신규):
+  - `generate_offline_lic(hwid, issued_to, expiry, license_type, max_seats, output_path)`: 폐쇄망 배포용 `.lic` 파일 생성 (HMAC-SHA256 서명, JSON 포맷)
+  - AIR_GAPPED / ENTERPRISE 타입은 HWID를 `"ENTERPRISE"`로 통일하여 사이트 라이선스 지원
+
+#### `license_engine.py` — 임포트 추가
+- `threading`, `urllib.request`, `urllib.error`, `pathlib.Path`
+
+#### `test_core_engine.py` — 4개 신규 테스트 추가 (45 → 49개)
+- `test_cache_token_save_load()`: 캐시 저장/로드/HMAC 무결성/만료 시뮬레이션
+- `test_grace_period_logic()`: 유예 14일 경계값 (13일=1일 남음, 14일=0일, 오늘=14일)
+- `test_offline_lic_file_verify()`: `.lic` 정상 검증 + 위변조 감지 + 만료 즉시 차단
+- `test_hybrid_license_flow_offline()`: A) 캐시 유효 즉시 실행 / B) 유예 폴백 / C) 만료 즉시 차단
+
+---
+
+## [v1.4.0.Build.17] - 2026-09-13 10:28
+
+### 글로벌 13개 언어 체계 전면 확장 및 워드아트/글꼴 색상 버튼 로컬라이제이션
+- **글로벌 13개 언어 체계 전면 확장 (`i18n_manager.py`, `eula_manager.py`)**:
+  - 4대 핵심 전략 언어 전격 추가:
+    1. `vi`: 베트남어 (Tiếng Việt) - 글로벌 제조/IT 생산기지 공정 SOP 및 매뉴얼 수요 완벽 대응
+    2. `zh_tw`: 繁體中文 (Chinese Traditional) - 대만·홍콩 하이테크/반도체/금융 허브 B2B 공략
+    3. `it`: Italiano (Italian) - EFIGS(영·프·독·스·이) 서유럽 5대 표준 언어군 패키지 완결
+    4. `id`: Bahasa Indonesia (Indonesian) - 아세안 최대 2.8억 경제권 신흥 시장 선점
+  - 전사 295개 카탈로그 키 13개 국어 100% 완전 번역 달성.
+  - 상단 메뉴바 `언어(Language)` 메뉴, 환경설정(`SettingsDialog`), EULA 계약서(`EulaDialog`) 전체에 13개 언어 자동 바인딩.
+  - 시스템 언어 자동 감지(`detect_system_locale`) 및 폰트 폴백 체인(`Microsoft JhengHei` 추가) 고도화.
+- **글자색·제목색상 버튼 언어별 대표 글리프(`font_sample_glyph`) 동적 핫스왑 (`manual_capture_studio.py`)**:
+  - 서식 탭의 텍스트 글자색(`btn_text_color`) 및 PPT 제목상자 색상(`btn_title_color`) 버튼에 고정되어 있던 한글 `"가"` 텍스트 제거.
+  - 언어 핫스왑 시 0.05초 만에 각 언어의 고유 첫글자/대표 문자 글리프로 즉시 자동 전환:
+    - 한국어 (`ko`): **`가`**
+    - 일본어 (`ja`): **`あ`**
+    - 중국어 간체 (`zh`) / 번체 (`zh_tw`): **`字`**
+    - 러시아어 (`ru`): **`А`** (키릴 Capital A)
+    - 영·독·스·프·이·포·베·인 (`en`, `de`, `es`, `fr`, `it`, `pt`, `vi`, `id`): **`A`**
+  - 글자색 및 배경색 변경 시에도 해당 언어 글리프와 명도 대비가 완벽히 유지되도록 렌더러 동기화.
+- **워드아트 프리셋 드롭다운 13개 국어 완전 번역 (`combo_wordart_preset`)**:
+  - 5대 워드아트 프리셋(`화이트 팝`, `골드 메탈릭`, `네온 사이언`, `레드 경고`, `차콜 모던`)의 명칭을 13개 국어로 완벽 로컬라이제이션.
+  - 언어 전환 시 기존 선택된 프리셋 ID(`currentData()`)를 100% 보존하면서 드롭다운 아이템 라벨이 즉시 번역되어 실시간 갱신.
+- **모니터 선택 드롭다운 다국어화 연동**:
+  - `init_monitor_combos()` 내 가상 화면 명칭을 `tr("settings_monitor_all")`로 통합하고 `retranslate_ui()` 발화 시 실시간 동기화.
+- **자동화 단위 테스트 스위트 45개 전 항목 100% 통과 (`test_core_engine.py`)**:
+  - 13개 언어 핫스왑, 글리프 전환, 워드아트 번역, EULA 13개 국어 HTML 구조 검증 완결.
+
+## [v1.4.0.Build.16] - 2026-09-13 10:10
+
+### OS 자동 UI 분기 엔진 및 꺾은선 화살표 4방향 다이렉트 벡터 아이콘 버튼군 개편
+- **OS 환경 자동 감지 및 UI 스타일 동적 분기 엔진 (`ThemeManager`)**:
+  - `ui_style` 기본값을 `"auto"`로 제정하여 프로그램 시작 시 실행 환경(`sys.platform`)을 자동 식별.
+  - Apple macOS 환경(`darwin`) 감지 시 **Macintosh Cupertino 스타일**로 자동 분기 작동 (트래픽 라이트 창 제어 버튼 활성화, SF Pro 폰트 체인, 필 세그먼트 탭바 적용).
+  - Microsoft Windows 환경(`win32`) 감지 시 **Windows Fluent 스타일**로 자동 분기 작동 (클래식 슬레이트 테마, 사각 리본 탭, Malgun Gothic/Segoe UI 폰트 체인 적용).
+  - 환경설정(`SettingsDialog`) 내 UI 테마 선택 콤보박스에 `자동 감지 (OS 기본값)`(`auto`), `Windows 스타일 (Fluent)`(`windows`), `Macintosh 스타일 (Cupertino)`(`macos`) 옵션 제공 및 수동 오버라이드 영구 보존.
+- **꺾은선 화살표 4방향 다이렉트 벡터 아이콘 버튼군 신설 (`manual_capture_studio.py`)**:
+  - 기존의 단일 콤보박스(`ㄱ/┘`, `ㄴ/┌`)와 `반전` 푸시 버튼의 이중 조작 구조를 전면 폐지.
+  - 4가지 기하학적 꺾임 형태를 1:1 직관적으로 표현하는 **4대 전용 벡터 아이콘 버튼** 탑재:
+    1. `btn_elbow_tr` (`BtnElbowTR`): `─┐` (Top-Right 코너 / 가로-하향 ㄱ자 형태)
+    2. `btn_elbow_br` (`BtnElbowBR`): `─┘` (Bottom-Right 코너 / 가로-상향 ┘자 형태)
+    3. `btn_elbow_bl` (`BtnElbowBL`): `│└` (Bottom-Left 코너 / 세로-하향 ㄴ자 형태)
+    4. `btn_elbow_tl` (`BtnElbowTL`): `│┌` (Top-Left 코너 / 세로-상향 ┌자 형태)
+  - `QButtonGroup(exclusive=True)` 상호 배타 체크 상태 연동 (활성화 시 `#EFF6FF` 배경 및 `#2563EB` 액센트 테두리 하이라이트).
+  - 1클릭 즉시 반영: 버튼 클릭 시 신규 드로잉 모드뿐만 아니라 캔버스에 선택된 꺾은선 화살표의 경로 모드 및 상하 방향성을 클릭한 형태와 100% 일치하도록 즉각 실시간 보정.
+  - 키보드 단축키(`Tab` / `Space`)로 꺾임 축 토글 시에도 4개 버튼의 체크 상태가 0.01초 만에 실시간 양방향 동기화.
+- **전사 9개 국어 완전 로컬라이제이션 (`i18n_manager.py`)**:
+  - 4개 꺾은선 버튼 툴팁 및 자동 UI 감지 설정 키 9개 언어 카탈로그 완비 (한국어, 영어, 중국어, 일본어, 독일어, 스페인어, 프랑스어, 포르투갈어, 러시아어).
+  - 언어 실시간 전환 시 꺾은선 버튼 툴팁 및 설정창 옵션이 잔류 한글 없이 완벽 핫스왑.
+- **AI 에이전트 전용 CLI 및 MCP 인터페이스 동기화 (`manual_cli.py`, `mcp_server.py`)**:
+  - CLI `annotate` 및 `batch` 명령어에 `--elbow` (`-e`) 옵션 추가: `x1,y1,x2,y2[:color:width:route_mode]`.
+  - MCP 9대 도구 중 `manual_studio_add_annotations` 및 `manual_studio_create_step`에 `elbows` 파라미터 스키마 정식 등록.
+  - `AGENTS.md` 기계 판독형 규격서에 4대 꺾은선 프리셋(`tr`, `br`, `bl`, `tl`), CLI 옵션, MCP 스키마 및 UIA 컨트롤 식별자 최신화.
+- **핵심 엔진 자동화 테스트 스위트 45개 전 항목 100% 통과 (`test_core_engine.py`)**:
+  - `test_elbow_arrow_four_directions_and_toggle` 및 `test_ui_theme_styles_windows_and_macos` 확장 검증 완결.
+
 ## [v1.4.0.Build.15] - 2026-09-13 09:35
 
 ### 구글 슬라이드 전송 전용 벡터 아이콘 탑재 및 F11 원터치 전역/로컬 단축키 정의

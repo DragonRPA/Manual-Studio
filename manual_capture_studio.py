@@ -77,7 +77,8 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QDialog, QSpinBox, QColorDialog,
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
-    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox
+    QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QPlainTextEdit, QComboBox, QFontComboBox,
+    QButtonGroup, QGroupBox
 )
 
 from PIL import Image
@@ -166,7 +167,9 @@ DEFAULT_CONFIG = {
         "font_family": "Malgun Gothic",
         "font_bold": True,
         "border_color": "#FFFFFF",
-        "border_width": 2
+        "border_width": 2,
+        "shape": "circle",
+        "corner_radius": 6
     },
     "text_style": {
         "font_family": "Malgun Gothic",
@@ -227,6 +230,18 @@ DEFAULT_CONFIG = {
         "shadow_offset_y": 2.0,
         "preset_id": "white_pop"
     },
+    "dimension_style": {
+        "color": "#007AFF",
+        "width": 2,
+        "tick_size": 8,
+        "font_size": 11,
+        "font_family": "Malgun Gothic",
+        "font_bold": True,
+        "badge_bg": "#007AFF",
+        "badge_text_color": "#FFFFFF",
+        "unit": "px",
+        "cap_style": "bracket"
+    },
     "custom_fonts": [],
     "target_monitor": 0,
     "fixed_rect_enabled": True,
@@ -261,7 +276,7 @@ DEFAULT_CONFIG = {
     "export_target": "powerpoint",
     "slides_auto_slide": True,
     "slides_return_focus": True,
-    "ui_style": "windows"
+    "ui_style": "auto"
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -352,8 +367,19 @@ class MacTrafficLight(QWidget):
 
 class ThemeManager:
     """Windows Fluent vs Macintosh Cupertino 듀얼 UI 스타일 엔진"""
+    AUTO = "auto"
     WINDOWS = "windows"
     MACOS = "macos"
+
+    @classmethod
+    def get_effective_ui_style(cls, theme_name: str) -> str:
+        """auto 설정 시 현재 실행 OS에 따라 macos 또는 windows 반환"""
+        t = (theme_name or cls.AUTO).lower()
+        if t == cls.AUTO:
+            return cls.MACOS if sys.platform == "darwin" else cls.WINDOWS
+        if t == cls.MACOS:
+            return cls.MACOS
+        return cls.WINDOWS
 
     @classmethod
     def get_windows_ribbon_qss(cls) -> str:
@@ -635,7 +661,7 @@ class ThemeManager:
 
     @classmethod
     def apply_theme(cls, app: QApplication, theme_name: str, window=None):
-        theme = theme_name.lower() if theme_name else cls.WINDOWS
+        theme = cls.get_effective_ui_style(theme_name)
         if theme == cls.MACOS:
             font = QFont("SF Pro Text", 9)
             font.setFamilies(["SF Pro Text", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", "sans-serif"])
@@ -940,7 +966,12 @@ class StampItem:
         return cls(int(data["index"]), float(data["x"]), float(data["y"]), data.get("style", {}))
 
     def contains(self, pt):
-        r = self.style.get("size", 32) / 2.0
+        size = self.style.get("size", 32)
+        r = size / 2.0
+        shape = self.style.get("shape", "circle")
+        if shape == "rounded_rect":
+            rect = QRectF(self.pos.x() - r, self.pos.y() - r, size, size)
+            return rect.contains(pt)
         dx = pt.x() - self.pos.x()
         dy = pt.y() - self.pos.y()
         return (dx*dx + dy*dy) <= (r * r)
@@ -954,16 +985,29 @@ class StampItem:
         border_col = QColor(self.style.get("border_color", "#FFFFFF"))
         border_w = self.style.get("border_width", 2)
         text_col = QColor(self.style.get("text_color", "#FFFFFF"))
+        shape = self.style.get("shape", "circle")
+        corner_r = float(self.style.get("corner_radius", max(4, int(size * 0.25))))
 
-        # 드롭 섀도우
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 70))
-        painter.drawEllipse(QPointF(self.pos.x() + 1.5, self.pos.y() + 2), r, r)
+        if shape == "rounded_rect":
+            # 모서리가 둥근 사각형 섀도우
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 70))
+            painter.drawRoundedRect(QRectF(self.pos.x() - r + 1.5, self.pos.y() - r + 2, size, size), corner_r, corner_r)
 
-        # 원형 배경
-        painter.setBrush(QBrush(bg_col))
-        painter.setPen(QPen(border_col, border_w))
-        painter.drawEllipse(self.pos, r, r)
+            # 모서리가 둥근 사각형 본체
+            painter.setBrush(QBrush(bg_col))
+            painter.setPen(QPen(border_col, border_w))
+            painter.drawRoundedRect(QRectF(self.pos.x() - r, self.pos.y() - r, size, size), corner_r, corner_r)
+        else:
+            # 원형 드롭 섀도우
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 70))
+            painter.drawEllipse(QPointF(self.pos.x() + 1.5, self.pos.y() + 2), r, r)
+
+            # 원형 배경
+            painter.setBrush(QBrush(bg_col))
+            painter.setPen(QPen(border_col, border_w))
+            painter.drawEllipse(self.pos, r, r)
 
         # 숫자 텍스트 (이중 원 제거: 순수 아라비아 숫자 + tightBoundingRect 기하학적 정밀 센터링)
         char_text = str(self.index)
@@ -1252,11 +1296,17 @@ class StepArrowItem:
         )
 
     def contains(self, pt):
-        r = self.stamp_style.get("size", 32) / 2.0
-        dx1 = pt.x() - self.start_pos.x()
-        dy1 = pt.y() - self.start_pos.y()
-        if (dx1 * dx1 + dy1 * dy1) <= (r * r):
-            return True
+        size = self.stamp_style.get("size", 32)
+        r = size / 2.0
+        shape = self.stamp_style.get("shape", "circle")
+        if shape == "rounded_rect":
+            if QRectF(self.start_pos.x() - r, self.start_pos.y() - r, size, size).contains(pt):
+                return True
+        else:
+            dx1 = pt.x() - self.start_pos.x()
+            dy1 = pt.y() - self.start_pos.y()
+            if (dx1 * dx1 + dy1 * dy1) <= (r * r):
+                return True
 
         dx = self.end_pos.x() - self.start_pos.x()
         dy = self.end_pos.y() - self.start_pos.y()
@@ -2257,6 +2307,272 @@ class MagnifierZoomItem:
     def render(self, painter: QPainter):
         self.render_zoom(painter, None)
 
+
+# ------------------------------------------------------------------------------
+# 치수선 아이템 (DimensionLineItem) — PixelSnap 스타일 픽셀/거리 측정선
+# ------------------------------------------------------------------------------
+class DimensionLineItem:
+    def __init__(self, start_pos: QPointF, end_pos: QPointF, style=None, unit="px", cap_style="bracket"):
+        self.start_pos = QPointF(start_pos)
+        self.end_pos = QPointF(end_pos)
+        default_style = {
+            "color": "#007AFF",
+            "width": 2,
+            "tick_size": 8,
+            "font_size": 11,
+            "font_family": "Malgun Gothic",
+            "font_bold": True,
+            "badge_bg": "#007AFF",
+            "badge_text_color": "#FFFFFF",
+            "unit": unit,
+            "cap_style": cap_style
+        }
+        if style:
+            default_style.update(style)
+        self.style = default_style
+
+    def clone(self):
+        return DimensionLineItem(self.start_pos, self.end_pos, self.style.copy())
+
+    def to_dict(self):
+        return {
+            "type": "DimensionLineItem",
+            "start_pos": [float(self.start_pos.x()), float(self.start_pos.y())],
+            "end_pos": [float(self.end_pos.x()), float(self.end_pos.y())],
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        p1 = data.get("start_pos", [0.0, 0.0])
+        p2 = data.get("end_pos", [0.0, 0.0])
+        return cls(
+            QPointF(float(p1[0]), float(p1[1])),
+            QPointF(float(p2[0]), float(p2[1])),
+            data.get("style", {})
+        )
+
+    def get_distance(self):
+        dx = abs(self.end_pos.x() - self.start_pos.x())
+        dy = abs(self.end_pos.y() - self.start_pos.y())
+        if dy <= 2:
+            return int(round(dx))
+        elif dx <= 2:
+            return int(round(dy))
+        else:
+            return int(round(math.hypot(dx, dy)))
+
+    def contains(self, pt):
+        p1 = self.start_pos
+        p2 = self.end_pos
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        l2 = dx * dx + dy * dy
+        if l2 == 0:
+            return math.hypot(pt.x() - p1.x(), pt.y() - p1.y()) <= 8.0
+        t = max(0.0, min(1.0, ((pt.x() - p1.x()) * dx + (pt.y() - p1.y()) * dy) / l2))
+        proj_x = p1.x() + t * dx
+        proj_y = p1.y() + t * dy
+        dist_sq = (pt.x() - proj_x)**2 + (pt.y() - proj_y)**2
+        hit_margin = max(10.0, float(self.style.get("width", 2)) * 3.0)
+        return dist_sq <= (hit_margin * hit_margin)
+
+    def render(self, painter: QPainter):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        col = QColor(self.style.get("color", "#007AFF"))
+        w = int(self.style.get("width", 2))
+        tick_size = float(self.style.get("tick_size", 8))
+        unit = self.style.get("unit", "px")
+
+        p1 = self.start_pos
+        p2 = self.end_pos
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        dist = math.hypot(dx, dy)
+        if dist < 2:
+            painter.restore()
+            return
+
+        # 1. 메인 치수선
+        pen = QPen(col, w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(p1, p2)
+
+        # 2. 양 끝 틱 (수직 브라켓)
+        angle = math.atan2(dy, dx)
+        perp_angle = angle + math.pi / 2.0
+        perp_dx = math.cos(perp_angle) * (tick_size / 2.0)
+        perp_dy = math.sin(perp_angle) * (tick_size / 2.0)
+
+        painter.drawLine(
+            QPointF(p1.x() - perp_dx, p1.y() - perp_dy),
+            QPointF(p1.x() + perp_dx, p1.y() + perp_dy)
+        )
+        painter.drawLine(
+            QPointF(p2.x() - perp_dx, p2.y() - perp_dy),
+            QPointF(p2.x() + perp_dx, p2.y() + perp_dy)
+        )
+
+        # 3. 중앙 치수 뱃지 (Pill badge)
+        mid_x = (p1.x() + p2.x()) / 2.0
+        mid_y = (p1.y() + p2.y()) / 2.0
+
+        val = self.get_distance()
+        text = f"{val} {unit}"
+
+        font_family = self.style.get("font_family", "Malgun Gothic")
+        font_size = int(self.style.get("font_size", 11))
+        font = QFont(font_family, font_size)
+        font.setBold(self.style.get("font_bold", True))
+        painter.setFont(font)
+
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+        pad_x = 8
+        pad_y = 4
+        badge_w = tw + pad_x * 2
+        badge_h = th + pad_y * 2
+        badge_rect = QRectF(mid_x - badge_w / 2.0, mid_y - badge_h / 2.0, badge_w, badge_h)
+
+        # 드롭 섀도우
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.drawRoundedRect(QRectF(badge_rect.x() + 1, badge_rect.y() + 1.5, badge_w, badge_h), 5, 5)
+
+        # 뱃지 배경
+        badge_bg = QColor(self.style.get("badge_bg", col.name()))
+        painter.setBrush(QBrush(badge_bg))
+        painter.setPen(QPen(col.darker(110), 1))
+        painter.drawRoundedRect(badge_rect, 5, 5)
+
+        # 텍스트
+        text_col = QColor(self.style.get("badge_text_color", "#FFFFFF"))
+        painter.setPen(text_col)
+        painter.drawText(badge_rect, Qt.AlignCenter, text)
+
+        painter.restore()
+
+
+# OCR Worker & Dialog
+# ------------------------------------------------------------------------------
+class OcrWorkerThread(QThread):
+    """백그라운드 OCR 스레드. WinRT → RapidOCR 폴백."""
+    sig_result = Signal(str, str)   # (text, error_msg)
+
+    def __init__(self, pil_img, lang="ko", parent=None):
+        super().__init__(parent)
+        self.pil_img = pil_img
+        self.lang = lang
+
+    def run(self):
+        text, err = self._try_winrt_ocr()
+        if err:
+            text, err = self._try_rapid_ocr()
+        self.sig_result.emit(text, err)
+
+    def _try_winrt_ocr(self):
+        try:
+            import asyncio
+            import ctypes
+            import ctypes.wintypes
+            from winsdk.windows.media.ocr import OcrEngine
+            import winsdk.windows.globalization as glob
+            import winsdk.windows.graphics.imaging as wgi
+            import winsdk.windows.storage.streams as wss
+
+            pil = self.pil_img.convert("RGBA")
+            w, h = pil.size
+            raw = pil.tobytes()   # RGBA bytes
+
+            async def _do_ocr():
+                # PIL RGBA bytes → IBuffer → SoftwareBitmap
+                data_writer = wss.DataWriter()
+                data_writer.write_bytes(list(raw))
+                ibuf = data_writer.detach_buffer()
+                soft_bmp = wgi.SoftwareBitmap.create_copy_from_buffer(
+                    ibuf, wgi.BitmapPixelFormat.RGBA8, w, h
+                )
+                # 언어 선택 (지원 안 되면 영어 폴백)
+                try:
+                    lang_obj = glob.Language(self.lang)
+                    if not OcrEngine.is_language_supported(lang_obj):
+                        lang_obj = glob.Language("en")
+                except Exception:
+                    lang_obj = glob.Language("en")
+                engine = OcrEngine.try_create_from_language(lang_obj)
+                if engine is None:
+                    return None
+                result = await engine.recognize_async(soft_bmp)
+                return "\n".join([line.text for line in result.lines])
+
+            loop = asyncio.new_event_loop()
+            try:
+                text = loop.run_until_complete(_do_ocr())
+            finally:
+                loop.close()
+            if text is None:
+                return "", "WinRT OCR engine unavailable"
+            return text, ""
+        except Exception as e:
+            return "", str(e)
+
+    def _try_rapid_ocr(self):
+        try:
+            import importlib
+            rapid_mod = importlib.import_module("rapidocr_onnxruntime")
+            RapidOCR = getattr(rapid_mod, "RapidOCR")
+            np = importlib.import_module("numpy")
+            ocr = RapidOCR()
+            img_np = np.array(self.pil_img.convert("RGB"))
+            result, _ = ocr(img_np)
+            if not result:
+                return tr("ocr_no_text", "인식된 텍스트가 없습니다."), ""
+            lines = [item[1] for item in result if item and len(item) > 1]
+            return "\n".join(lines), ""
+        except Exception as e:
+            return "", tr("ocr_engine_error", "OCR 처리 중 오류가 발생했습니다.") + f"\n{e}"
+
+
+class OcrResultDialog(QDialog):
+    """OCR 결과 표시 다이얼로그 — 텍스트 + 클립보드 복사 + 닫기."""
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("ocr_dialog_title", "OCR 텍스트 추출"))
+        self.setMinimumSize(480, 320)
+        self.resize(560, 380)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(8)
+
+        self.text_edit = QTextEdit(self)
+        self.text_edit.setReadOnly(False)
+        self.text_edit.setPlainText(text if text else tr("ocr_no_text", "인식된 텍스트가 없습니다."))
+        self.text_edit.setFont(QFont("Pretendard", 10) if QFont("Pretendard").exactMatch() else QFont("Malgun Gothic", 10))
+        layout.addWidget(self.text_edit, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self.btn_copy = QPushButton(tr("ocr_copy_btn", "클립보드 복사"), self)
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        btn_close = QPushButton(tr("ocr_close_btn", "닫기"), self)
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(self.btn_copy)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+        # 텍스트가 있으면 자동 클립보드 복사
+        if text and text.strip():
+            QApplication.clipboard().setText(text)
+            self.btn_copy.setText(tr("ocr_copy_btn_done", "✓ 복사됨"))
+
+    def _copy_to_clipboard(self):
+        QApplication.clipboard().setText(self.text_edit.toPlainText())
+        self.btn_copy.setText(tr("ocr_copy_btn_done", "✓ 복사됨"))
+
+
 # 주석 직렬화 레지스트리 및 팩토리 (Annotation Registry & Factory)
 # ------------------------------------------------------------------------------
 ITEM_REGISTRY = {
@@ -2275,6 +2591,7 @@ ITEM_REGISTRY = {
     "SpotlightMaskItem": SpotlightMaskItem,
     "ClickRippleItem": ClickRippleItem,
     "MagnifierZoomItem": MagnifierZoomItem,
+    "DimensionLineItem": DimensionLineItem,
 }
 
 def item_from_dict(data):
@@ -2288,6 +2605,564 @@ def item_from_dict(data):
         except Exception as e:
             print(f"[주석 역직렬화 오류] {item_type}: {e}")
     return None
+
+
+# ------------------------------------------------------------------------------
+# 객체 속성 보기 및 편집 다이얼로그 (ItemPropertiesDialog)
+# ------------------------------------------------------------------------------
+class ItemPropertiesDialog(QDialog):
+    """캔버스 내 삽입된 객체의 속성(좌표, 크기, 글꼴, 선색, 배경색, 글자색 등) 조회/수정 및 기본 설정 동기화 다이얼로그"""
+    def __init__(self, item, canvas, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.canvas = canvas
+        self.color_widgets = {}
+
+        type_name = self._get_item_type_name()
+        self.setWindowTitle(f"{tr('prop_dialog_title', '객체 속성')} - {type_name}")
+        self.setMinimumWidth(440)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self._init_ui()
+
+    def _get_item_type_name(self):
+        cls_name = self.item.__class__.__name__
+        mapping = {
+            "StampItem": tr("btn_mode_stamp", "스탬프"),
+            "TextLabelItem": tr("btn_mode_text", "텍스트"),
+            "HighlightBoxItem": tr("btn_mode_box", "사각 박스"),
+            "ArrowItem": tr("btn_mode_arrow", "화살표"),
+            "StepArrowItem": tr("btn_mode_step_arrow", "스탬프 화살표"),
+            "ElbowArrowItem": tr("btn_mode_elbow", "꺾은선"),
+            "CalloutItem": tr("btn_mode_callout", "말풍선"),
+            "BlurMosaicItem": tr("btn_mode_blur", "모자이크 블러"),
+            "HotkeyBadgeItem": tr("btn_mode_hotkey", "단축키 뱃지"),
+            "ImageOverlayItem": tr("btn_mode_sub_capture", "이미지 오버레이"),
+            "DraftStampItem": tr("btn_mode_draft", "드래프트 스탬프"),
+            "WordArtItem": tr("btn_mode_wordart", "워드아트"),
+            "DimensionLineItem": tr("btn_mode_dimension", "치수선"),
+            "SpotlightMaskItem": "스포트라이트",
+            "ClickRippleItem": "클릭 인디케이터",
+            "MagnifierZoomItem": "돋보기 렌즈",
+        }
+        return mapping.get(cls_name, cls_name)
+
+    def _make_color_button(self, initial_hex):
+        btn = QPushButton(initial_hex or "#E53935")
+        btn.setFixedWidth(100)
+        btn.setFixedHeight(28)
+        self._update_button_color(btn, initial_hex or "#E53935")
+        btn.clicked.connect(lambda: self._choose_color(btn))
+        return btn
+
+    def _update_button_color(self, btn, hex_color):
+        qcol = QColor(hex_color)
+        btn.setText(hex_color)
+        text_col = "#000000" if qcol.lightness() > 140 else "#FFFFFF"
+        btn.setStyleSheet(
+            f"QPushButton {{ background-color: {hex_color}; color: {text_col}; "
+            f"font-weight: bold; border: 1px solid #888888; border-radius: 4px; padding: 2px 4px; }}"
+        )
+
+    def _choose_color(self, btn):
+        current_hex = btn.text()
+        col = QColorDialog.getColor(QColor(current_hex), self, "색상 선택")
+        if col.isValid():
+            self._update_button_color(btn, col.name().upper())
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(14, 14, 14, 14)
+        main_layout.setSpacing(12)
+
+        # 1. 좌표 및 위치 그룹
+        grp_coord = QGroupBox(tr("prop_grp_coord", "좌표 및 위치"))
+        coord_layout = QGridLayout(grp_coord)
+        coord_layout.setSpacing(8)
+        self._build_coord_ui(coord_layout)
+        main_layout.addWidget(grp_coord)
+
+        # 2. 크기 및 형태 그룹
+        grp_size = QGroupBox(tr("prop_grp_size", "크기 및 형태"))
+        size_layout = QGridLayout(grp_size)
+        size_layout.setSpacing(8)
+        self._build_size_ui(size_layout)
+        if size_layout.count() > 0:
+            main_layout.addWidget(grp_size)
+        else:
+            grp_size.deleteLater()
+
+        # 3. 글꼴 설정 그룹 (해당 객체만)
+        if self._has_font_properties():
+            grp_font = QGroupBox(tr("prop_grp_font", "글꼴 설정"))
+            font_layout = QGridLayout(grp_font)
+            font_layout.setSpacing(8)
+            self._build_font_ui(font_layout)
+            main_layout.addWidget(grp_font)
+
+        # 4. 색상 설정 그룹
+        grp_colors = QGroupBox(tr("prop_grp_colors", "색상 설정"))
+        colors_layout = QGridLayout(grp_colors)
+        colors_layout.setSpacing(8)
+        self._build_colors_ui(colors_layout)
+        if colors_layout.count() > 0:
+            main_layout.addWidget(grp_colors)
+        else:
+            grp_colors.deleteLater()
+
+        # 5. 기본 설정 반영 체크박스
+        self.config_key = self._get_config_key()
+        if self.config_key:
+            self.chk_apply_defaults = QCheckBox(tr("prop_apply_to_defaults", "이 객체의 스타일을 기본 설정에 반영"))
+            self.chk_apply_defaults.setStyleSheet("font-weight: bold; margin-top: 4px;")
+            main_layout.addWidget(self.chk_apply_defaults)
+
+        # 6. 확인 / 취소 버튼
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+        btn_layout.addStretch(1)
+
+        self.btn_ok = QPushButton(tr("prop_btn_ok", "확인"))
+        self.btn_ok.setStyleSheet("font-weight: bold; min-width: 80px; height: 28px;")
+        self.btn_ok.clicked.connect(self._on_apply_and_accept)
+
+        self.btn_cancel = QPushButton(tr("prop_btn_cancel", "취소"))
+        self.btn_cancel.setStyleSheet("min-width: 80px; height: 28px;")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        main_layout.addLayout(btn_layout)
+
+    def _get_config_key(self):
+        cls_name = self.item.__class__.__name__
+        mapping = {
+            "StampItem": "stamp_style",
+            "TextLabelItem": "text_style",
+            "HighlightBoxItem": "highlight_box_style",
+            "ArrowItem": "arrow_style",
+            "StepArrowItem": "arrow_style",
+            "ElbowArrowItem": "elbow_style",
+            "CalloutItem": "callout_style",
+            "BlurMosaicItem": "blur_style",
+            "HotkeyBadgeItem": "hotkey_style",
+            "WordArtItem": "wordart_style",
+            "DimensionLineItem": "dimension_style",
+        }
+        return mapping.get(cls_name)
+
+    def _build_coord_ui(self, layout):
+        item = self.item
+        if hasattr(item, "start_pos") and hasattr(item, "end_pos"):
+            layout.addWidget(QLabel(tr("prop_coord_start_x", "시작 X")), 0, 0)
+            self.spn_start_x = QSpinBox()
+            self.spn_start_x.setRange(-9999, 9999)
+            self.spn_start_x.setValue(int(item.start_pos.x()))
+            layout.addWidget(self.spn_start_x, 0, 1)
+
+            layout.addWidget(QLabel(tr("prop_coord_start_y", "시작 Y")), 0, 2)
+            self.spn_start_y = QSpinBox()
+            self.spn_start_y.setRange(-9999, 9999)
+            self.spn_start_y.setValue(int(item.start_pos.y()))
+            layout.addWidget(self.spn_start_y, 0, 3)
+
+            layout.addWidget(QLabel(tr("prop_coord_end_x", "끝 X")), 1, 0)
+            self.spn_end_x = QSpinBox()
+            self.spn_end_x.setRange(-9999, 9999)
+            self.spn_end_x.setValue(int(item.end_pos.x()))
+            layout.addWidget(self.spn_end_x, 1, 1)
+
+            layout.addWidget(QLabel(tr("prop_coord_end_y", "끝 Y")), 1, 2)
+            self.spn_end_y = QSpinBox()
+            self.spn_end_y.setRange(-9999, 9999)
+            self.spn_end_y.setValue(int(item.end_pos.y()))
+            layout.addWidget(self.spn_end_y, 1, 3)
+
+        elif hasattr(item, "rect"):
+            layout.addWidget(QLabel(tr("prop_coord_x", "X 좌표")), 0, 0)
+            self.spn_x = QSpinBox()
+            self.spn_x.setRange(-9999, 9999)
+            self.spn_x.setValue(int(item.rect.x()))
+            layout.addWidget(self.spn_x, 0, 1)
+
+            layout.addWidget(QLabel(tr("prop_coord_y", "Y 좌표")), 0, 2)
+            self.spn_y = QSpinBox()
+            self.spn_y.setRange(-9999, 9999)
+            self.spn_y.setValue(int(item.rect.y()))
+            layout.addWidget(self.spn_y, 0, 3)
+
+        elif hasattr(item, "box_rect"):
+            layout.addWidget(QLabel(tr("prop_coord_x", "X 좌표")), 0, 0)
+            self.spn_x = QSpinBox()
+            self.spn_x.setRange(-9999, 9999)
+            self.spn_x.setValue(int(item.box_rect.x()))
+            layout.addWidget(self.spn_x, 0, 1)
+
+            layout.addWidget(QLabel(tr("prop_coord_y", "Y 좌표")), 0, 2)
+            self.spn_y = QSpinBox()
+            self.spn_y.setRange(-9999, 9999)
+            self.spn_y.setValue(int(item.box_rect.y()))
+            layout.addWidget(self.spn_y, 0, 3)
+
+        elif hasattr(item, "pos"):
+            layout.addWidget(QLabel(tr("prop_coord_x", "X 좌표")), 0, 0)
+            self.spn_x = QSpinBox()
+            self.spn_x.setRange(-9999, 9999)
+            self.spn_x.setValue(int(item.pos.x()))
+            layout.addWidget(self.spn_x, 0, 1)
+
+            layout.addWidget(QLabel(tr("prop_coord_y", "Y 좌표")), 0, 2)
+            self.spn_y = QSpinBox()
+            self.spn_y.setRange(-9999, 9999)
+            self.spn_y.setValue(int(item.pos.y()))
+            layout.addWidget(self.spn_y, 0, 3)
+
+    def _build_size_ui(self, layout):
+        item = self.item
+        cls_name = item.__class__.__name__
+        row = 0
+
+        if hasattr(item, "rect") or hasattr(item, "box_rect"):
+            rect = getattr(item, "rect", getattr(item, "box_rect", None))
+            if rect:
+                layout.addWidget(QLabel(tr("prop_size_width", "너비 (W)")), row, 0)
+                self.spn_w = QSpinBox()
+                self.spn_w.setRange(4, 9999)
+                self.spn_w.setValue(int(rect.width()))
+                layout.addWidget(self.spn_w, row, 1)
+
+                layout.addWidget(QLabel(tr("prop_size_height", "높이 (H)")), row, 2)
+                self.spn_h = QSpinBox()
+                self.spn_h.setRange(4, 9999)
+                self.spn_h.setValue(int(rect.height()))
+                layout.addWidget(self.spn_h, row, 3)
+                row += 1
+
+        if cls_name == "StampItem":
+            layout.addWidget(QLabel(tr("prop_size_diameter", "크기")), row, 0)
+            self.spn_stamp_size = QSpinBox()
+            self.spn_stamp_size.setRange(16, 120)
+            self.spn_stamp_size.setValue(int(item.style.get("size", 32)))
+            layout.addWidget(self.spn_stamp_size, row, 1)
+
+            layout.addWidget(QLabel(tr("stamp_shape_label", "바탕 모양")), row, 2)
+            self.cmb_stamp_shape = QComboBox()
+            self.cmb_stamp_shape.addItem(tr("stamp_shape_circle", "원형"), "circle")
+            self.cmb_stamp_shape.addItem(tr("stamp_shape_rounded_rect", "모서리가 둥근 사각형"), "rounded_rect")
+            cur_shape = item.style.get("shape", "circle")
+            self.cmb_stamp_shape.setCurrentIndex(1 if cur_shape == "rounded_rect" else 0)
+            layout.addWidget(self.cmb_stamp_shape, row, 3)
+            row += 1
+
+            layout.addWidget(QLabel(tr("prop_corner_radius", "모서리 반경")), row, 0)
+            self.spn_corner_radius = QSpinBox()
+            self.spn_corner_radius.setRange(0, 50)
+            self.spn_corner_radius.setValue(int(item.style.get("corner_radius", 6)))
+            layout.addWidget(self.spn_corner_radius, row, 1)
+            row += 1
+
+        elif cls_name == "StepArrowItem":
+            layout.addWidget(QLabel(tr("prop_size_diameter", "스탬프 크기")), row, 0)
+            self.spn_stamp_size = QSpinBox()
+            self.spn_stamp_size.setRange(16, 120)
+            self.spn_stamp_size.setValue(int(item.stamp_style.get("size", 32)))
+            layout.addWidget(self.spn_stamp_size, row, 1)
+
+            layout.addWidget(QLabel(tr("stamp_shape_label", "바탕 모양")), row, 2)
+            self.cmb_stamp_shape = QComboBox()
+            self.cmb_stamp_shape.addItem(tr("stamp_shape_circle", "원형"), "circle")
+            self.cmb_stamp_shape.addItem(tr("stamp_shape_rounded_rect", "모서리가 둥근 사각형"), "rounded_rect")
+            cur_shape = item.stamp_style.get("shape", "circle")
+            self.cmb_stamp_shape.setCurrentIndex(1 if cur_shape == "rounded_rect" else 0)
+            layout.addWidget(self.cmb_stamp_shape, row, 3)
+            row += 1
+
+            layout.addWidget(QLabel(tr("prop_line_width", "선 두께")), row, 0)
+            self.spn_line_width = QSpinBox()
+            self.spn_line_width.setRange(1, 30)
+            self.spn_line_width.setValue(int(item.arrow_style.get("width", 3)))
+            layout.addWidget(self.spn_line_width, row, 1)
+
+            layout.addWidget(QLabel(tr("prop_head_size", "화살촉 크기")), row, 2)
+            self.spn_head_size = QSpinBox()
+            self.spn_head_size.setRange(4, 60)
+            self.spn_head_size.setValue(int(item.arrow_style.get("head_size", 14)))
+            layout.addWidget(self.spn_head_size, row, 3)
+            row += 1
+
+        elif cls_name in ("ArrowItem", "ElbowArrowItem"):
+            layout.addWidget(QLabel(tr("prop_line_width", "선 두께")), row, 0)
+            self.spn_line_width = QSpinBox()
+            self.spn_line_width.setRange(1, 30)
+            self.spn_line_width.setValue(int(item.style.get("width", 3)))
+            layout.addWidget(self.spn_line_width, row, 1)
+
+            layout.addWidget(QLabel(tr("prop_head_size", "화살촉 크기")), row, 2)
+            self.spn_head_size = QSpinBox()
+            self.spn_head_size.setRange(4, 60)
+            self.spn_head_size.setValue(int(item.style.get("head_size", 14)))
+            layout.addWidget(self.spn_head_size, row, 3)
+            row += 1
+
+        elif cls_name == "HighlightBoxItem":
+            layout.addWidget(QLabel(tr("prop_line_width", "선 두께")), row, 0)
+            self.spn_line_width = QSpinBox()
+            self.spn_line_width.setRange(1, 30)
+            self.spn_line_width.setValue(int(item.style.get("border_width", 3)))
+            layout.addWidget(self.spn_line_width, row, 1)
+
+            self.chk_box_fill = QCheckBox(tr("opt_box_fill", "영역 채우기"))
+            self.chk_box_fill.setChecked(bool(item.style.get("fill", False)))
+            layout.addWidget(self.chk_box_fill, row, 2, 1, 2)
+            row += 1
+
+        elif cls_name == "DimensionLineItem":
+            layout.addWidget(QLabel(tr("prop_line_width", "선 두께")), row, 0)
+            self.spn_line_width = QSpinBox()
+            self.spn_line_width.setRange(1, 20)
+            self.spn_line_width.setValue(int(item.style.get("width", 2)))
+            layout.addWidget(self.spn_line_width, row, 1)
+
+            layout.addWidget(QLabel(tr("prop_head_size", "틱 크기")), row, 2)
+            self.spn_tick_size = QSpinBox()
+            self.spn_tick_size.setRange(2, 40)
+            self.spn_tick_size.setValue(int(item.style.get("tick_size", 8)))
+            layout.addWidget(self.spn_tick_size, row, 3)
+            row += 1
+
+            layout.addWidget(QLabel("단위 (Unit)"), row, 0)
+            self.cmb_unit = QComboBox()
+            for u in ["px", "dp", "pt", "mm"]:
+                self.cmb_unit.addItem(u, u)
+            self.cmb_unit.setCurrentText(item.style.get("unit", "px"))
+            layout.addWidget(self.cmb_unit, row, 1)
+            row += 1
+
+        elif cls_name == "BlurMosaicItem":
+            layout.addWidget(QLabel("블록 크기"), row, 0)
+            self.spn_block_size = QSpinBox()
+            self.spn_block_size.setRange(2, 80)
+            self.spn_block_size.setValue(int(item.style.get("block_size", 10)))
+            layout.addWidget(self.spn_block_size, row, 1)
+            row += 1
+
+    def _has_font_properties(self):
+        item = self.item
+        cls_name = item.__class__.__name__
+        if cls_name in ("TextLabelItem", "CalloutItem", "HotkeyBadgeItem", "WordArtItem", "DimensionLineItem", "DraftStampItem"):
+            return True
+        return False
+
+    def _build_font_ui(self, layout):
+        item = self.item
+        cls_name = item.__class__.__name__
+        row = 0
+
+        # 텍스트 내용 수정 (지원 객체)
+        if hasattr(item, "text"):
+            layout.addWidget(QLabel(tr("prop_text_content", "텍스트 내용")), row, 0)
+            self.txt_content = QLineEdit(str(item.text))
+            layout.addWidget(self.txt_content, row, 1, 1, 3)
+            row += 1
+        elif hasattr(item, "key_text"):
+            layout.addWidget(QLabel(tr("prop_text_content", "텍스트 내용")), row, 0)
+            self.txt_content = QLineEdit(str(item.key_text))
+            layout.addWidget(self.txt_content, row, 1, 1, 3)
+            row += 1
+
+        # 글꼴 패밀리
+        if "font_family" in getattr(item, "style", {}):
+            layout.addWidget(QLabel(tr("prop_font_family", "글꼴")), row, 0)
+            self.cmb_font_family = QFontComboBox()
+            self.cmb_font_family.setCurrentFont(QFont(item.style.get("font_family", "Malgun Gothic")))
+            layout.addWidget(self.cmb_font_family, row, 1, 1, 3)
+            row += 1
+
+        # 글자 크기
+        style = getattr(item, "style", {})
+        if "font_size" in style:
+            layout.addWidget(QLabel(tr("prop_font_size", "글자 크기")), row, 0)
+            self.spn_font_size = QSpinBox()
+            self.spn_font_size.setRange(6, 120)
+            self.spn_font_size.setValue(int(style.get("font_size", 12)))
+            layout.addWidget(self.spn_font_size, row, 1)
+
+            if "font_bold" in style:
+                self.chk_font_bold = QCheckBox(tr("prop_font_bold", "굵게"))
+                self.chk_font_bold.setChecked(bool(style.get("font_bold", True)))
+                layout.addWidget(self.chk_font_bold, row, 2, 1, 2)
+            row += 1
+
+    def _build_colors_ui(self, layout):
+        item = self.item
+        cls_name = item.__class__.__name__
+        row = 0
+
+        # 1. 선색 / 테두리색
+        stroke_color = None
+        if cls_name in ("ArrowItem", "ElbowArrowItem"):
+            stroke_color = item.style.get("color", "#E53935")
+        elif cls_name == "HighlightBoxItem":
+            stroke_color = item.style.get("color", "#E53935")
+        elif cls_name == "DimensionLineItem":
+            stroke_color = item.style.get("color", "#007AFF")
+        elif cls_name == "StepArrowItem":
+            stroke_color = item.arrow_style.get("color", "#E53935")
+        elif hasattr(item, "style") and "border_color" in item.style:
+            stroke_color = item.style.get("border_color", "#E53935")
+        elif hasattr(item, "style") and "stroke_color" in item.style:
+            stroke_color = item.style.get("stroke_color", "#000000")
+
+        if stroke_color:
+            layout.addWidget(QLabel(tr("prop_stroke_color", "선색")), row, 0)
+            self.btn_stroke_color = self._make_color_button(stroke_color)
+            layout.addWidget(self.btn_stroke_color, row, 1)
+            row += 1
+
+        # 2. 배경색 / 채우기색
+        bg_color = None
+        if cls_name == "StampItem":
+            bg_color = item.style.get("bg_color", "#E53935")
+        elif cls_name == "StepArrowItem":
+            bg_color = item.stamp_style.get("bg_color", "#E53935")
+        elif cls_name == "DimensionLineItem":
+            bg_color = item.style.get("badge_bg", "#007AFF")
+        elif hasattr(item, "style") and "bg_color" in item.style:
+            bg_color = item.style.get("bg_color", "#212121")
+
+        if bg_color:
+            layout.addWidget(QLabel(tr("prop_fill_color", "배경/채우기색")), row, 0)
+            self.btn_bg_color = self._make_color_button(bg_color)
+            layout.addWidget(self.btn_bg_color, row, 1)
+            row += 1
+
+        # 3. 글자색
+        text_color = None
+        if cls_name == "StampItem":
+            text_color = item.style.get("text_color", "#FFFFFF")
+        elif cls_name == "StepArrowItem":
+            text_color = item.stamp_style.get("text_color", "#FFFFFF")
+        elif cls_name == "DimensionLineItem":
+            text_color = item.style.get("badge_text_color", "#FFFFFF")
+        elif hasattr(item, "style") and "text_color" in item.style:
+            text_color = item.style.get("text_color", "#FFFFFF")
+
+        if text_color:
+            layout.addWidget(QLabel(tr("prop_text_color", "글자색")), row, 0)
+            self.btn_text_color = self._make_color_button(text_color)
+            layout.addWidget(self.btn_text_color, row, 1)
+            row += 1
+
+    def _on_apply_and_accept(self):
+        item = self.item
+        cls_name = item.__class__.__name__
+
+        # 1. 좌표 반영
+        if hasattr(self, "spn_start_x") and hasattr(item, "start_pos"):
+            item.start_pos = QPointF(self.spn_start_x.value(), self.spn_start_y.value())
+            item.end_pos = QPointF(self.spn_end_x.value(), self.spn_end_y.value())
+        elif hasattr(self, "spn_x"):
+            if hasattr(item, "rect"):
+                w = self.spn_w.value() if hasattr(self, "spn_w") else item.rect.width()
+                h = self.spn_h.value() if hasattr(self, "spn_h") else item.rect.height()
+                item.rect = QRect(self.spn_x.value(), self.spn_y.value(), w, h)
+            elif hasattr(item, "box_rect"):
+                w = self.spn_w.value() if hasattr(self, "spn_w") else item.box_rect.width()
+                h = self.spn_h.value() if hasattr(self, "spn_h") else item.box_rect.height()
+                item.box_rect = QRectF(self.spn_x.value(), self.spn_y.value(), w, h)
+            elif hasattr(item, "pos"):
+                item.pos = QPointF(self.spn_x.value(), self.spn_y.value())
+
+        # 2. 크기 및 형태 반영
+        if cls_name == "StampItem":
+            item.style["size"] = self.spn_stamp_size.value()
+            item.style["shape"] = self.cmb_stamp_shape.currentData()
+            item.style["corner_radius"] = self.spn_corner_radius.value()
+        elif cls_name == "StepArrowItem":
+            item.stamp_style["size"] = self.spn_stamp_size.value()
+            item.stamp_style["shape"] = self.cmb_stamp_shape.currentData()
+            item.arrow_style["width"] = self.spn_line_width.value()
+            item.arrow_style["head_size"] = self.spn_head_size.value()
+        elif cls_name in ("ArrowItem", "ElbowArrowItem"):
+            item.style["width"] = self.spn_line_width.value()
+            item.style["head_size"] = self.spn_head_size.value()
+        elif cls_name == "HighlightBoxItem":
+            item.style["border_width"] = self.spn_line_width.value()
+            item.style["fill"] = self.chk_box_fill.isChecked()
+        elif cls_name == "DimensionLineItem":
+            item.style["width"] = self.spn_line_width.value()
+            item.style["tick_size"] = self.spn_tick_size.value()
+            item.style["unit"] = self.cmb_unit.currentData()
+        elif cls_name == "BlurMosaicItem":
+            item.style["block_size"] = self.spn_block_size.value()
+
+        # 3. 글꼴 및 내용 반영
+        if hasattr(self, "txt_content"):
+            if hasattr(item, "text"):
+                item.text = self.txt_content.text()
+            elif hasattr(item, "key_text"):
+                item.key_text = self.txt_content.text()
+
+        if hasattr(self, "cmb_font_family") and hasattr(item, "style"):
+            item.style["font_family"] = self.cmb_font_family.currentFont().family()
+        if hasattr(self, "spn_font_size") and hasattr(item, "style"):
+            item.style["font_size"] = self.spn_font_size.value()
+        if hasattr(self, "chk_font_bold") and hasattr(item, "style"):
+            item.style["font_bold"] = self.chk_font_bold.isChecked()
+
+        # 4. 색상 반영
+        if hasattr(self, "btn_stroke_color"):
+            c = self.btn_stroke_color.text()
+            if cls_name in ("ArrowItem", "ElbowArrowItem", "HighlightBoxItem", "DimensionLineItem"):
+                item.style["color"] = c
+            elif cls_name == "StepArrowItem":
+                item.arrow_style["color"] = c
+            elif hasattr(item, "style") and "border_color" in item.style:
+                item.style["border_color"] = c
+            elif hasattr(item, "style") and "stroke_color" in item.style:
+                item.style["stroke_color"] = c
+
+        if hasattr(self, "btn_bg_color"):
+            c = self.btn_bg_color.text()
+            if cls_name == "StampItem":
+                item.style["bg_color"] = c
+            elif cls_name == "StepArrowItem":
+                item.stamp_style["bg_color"] = c
+            elif cls_name == "DimensionLineItem":
+                item.style["badge_bg"] = c
+            elif hasattr(item, "style") and "bg_color" in item.style:
+                item.style["bg_color"] = c
+
+        if hasattr(self, "btn_text_color"):
+            c = self.btn_text_color.text()
+            if cls_name == "StampItem":
+                item.style["text_color"] = c
+            elif cls_name == "StepArrowItem":
+                item.stamp_style["text_color"] = c
+            elif cls_name == "DimensionLineItem":
+                item.style["badge_text_color"] = c
+            elif hasattr(item, "style") and "text_color" in item.style:
+                item.style["text_color"] = c
+
+        # 5. 기본 설정 반영 체크 확인
+        if hasattr(self, "chk_apply_defaults") and self.chk_apply_defaults.isChecked() and self.config_key:
+            cfg = self.canvas.config.get(self.config_key, {})
+            if isinstance(cfg, dict):
+                if cls_name == "StepArrowItem":
+                    if "arrow_style" in self.canvas.config:
+                        self.canvas.config["arrow_style"].update(item.arrow_style)
+                    if "stamp_style" in self.canvas.config:
+                        self.canvas.config["stamp_style"].update(item.stamp_style)
+                else:
+                    cfg.update(item.style)
+                    self.canvas.config[self.config_key] = cfg
+
+                win = self.canvas.window()
+                if win and hasattr(win, "config"):
+                    win.config[self.config_key] = self.canvas.config[self.config_key]
+                    if hasattr(win, "save_config"):
+                        win.save_config()
+
+        self.accept()
 
 
 # ------------------------------------------------------------------------------
@@ -2851,6 +3726,14 @@ class StudioCanvasWidget(QWidget):
         self.drawing_blur = False
         self.blur_start = QPoint()
         self.blur_end = QPoint()
+        self.drawing_ocr = False
+        self.ocr_start = QPoint()
+        self.ocr_end = QPoint()
+
+        # 치수선 그리기용
+        self.drawing_dimension = False
+        self.dimension_start = QPointF()
+        self.dimension_end = QPointF()
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -2860,6 +3743,8 @@ class StudioCanvasWidget(QWidget):
             if self.drawing_elbow:
                 self.current_elbow_route_mode = "VH" if self.current_elbow_route_mode == "HV" else "HV"
                 self.update()
+                self.sig_content_changed.emit()
+                self.sig_item_selected.emit(None)
                 event.accept()
                 return
             elif self.selected_item and isinstance(self.selected_item, ElbowArrowItem):
@@ -2867,6 +3752,7 @@ class StudioCanvasWidget(QWidget):
                 self.selected_item.toggle_route_mode()
                 self.update()
                 self.sig_content_changed.emit()
+                self.sig_item_selected.emit(self.selected_item)
                 event.accept()
                 return
         elif event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
@@ -2966,7 +3852,7 @@ class StudioCanvasWidget(QWidget):
 
     def set_mode(self, mode):
         self.current_mode = mode
-        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "BOX", "CALLOUT", "BLUR"):
+        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "BOX", "CALLOUT", "BLUR", "OCR"):
             self.setCursor(Qt.CrossCursor)
         elif mode in ("TEXT", "HOTKEY"):
             self.setCursor(Qt.IBeamCursor)
@@ -3071,6 +3957,47 @@ class StudioCanvasWidget(QWidget):
         self.sig_content_changed.emit()
         return item
 
+    def _run_ocr_on_region(self, rect):
+        """선택 영역을 OCR 처리하여 OcrResultDialog로 결과 표시."""
+        if self.pixmap is None or self.pixmap.isNull():
+            return
+        # QPixmap → PIL Image (crop 포함)
+        cropped = self.pixmap.copy(rect)
+        img_byte = QByteArray()
+        buf = QBuffer(img_byte)
+        buf.open(QIODevice.WriteOnly)
+        cropped.save(buf, "PNG")
+        buf.close()
+        from PIL import Image
+        import io
+        pil_img = Image.open(io.BytesIO(bytes(img_byte)))
+
+        # OCR 언어 결정 (현재 UI 언어 참조)
+        try:
+            from i18n_manager import I18nManager
+            cur_locale = I18nManager.instance().current_locale if I18nManager._instance else "ko"
+        except Exception:
+            cur_locale = "ko"
+        lang_map = {
+            "ko": "ko", "ja": "ja", "zh": "zh-Hans", "zh_tw": "zh-Hant",
+            "en": "en", "de": "de", "es": "es", "fr": "fr", "it": "it",
+            "pt": "pt", "ru": "ru", "vi": "vi", "id": "id",
+        }
+        ocr_lang = lang_map.get(cur_locale, "en")
+
+        # QThread로 블로킹 없이 OCR 실행
+        self._ocr_thread = OcrWorkerThread(pil_img, ocr_lang)
+        self._ocr_thread.sig_result.connect(self._on_ocr_result)
+        self._ocr_thread.start()
+
+    def _on_ocr_result(self, text, error_msg):
+        if error_msg:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, tr("ocr_dialog_title", "OCR 텍스트 추출"), error_msg)
+            return
+        dlg = OcrResultDialog(text, self.window())
+        dlg.exec()
+
     def export_project_data(self):
         return {
             "raw_pixmap": self.pixmap,
@@ -3137,6 +4064,16 @@ class StudioCanvasWidget(QWidget):
                 self.blur_start = pt
                 self.blur_end = pt
 
+            elif self.current_mode == "OCR":
+                self.drawing_ocr = True
+                self.ocr_start = pt
+                self.ocr_end = pt
+
+            elif self.current_mode == "DIMENSION":
+                self.drawing_dimension = True
+                self.dimension_start = QPointF(pt)
+                self.dimension_end = QPointF(pt)
+
             elif self.current_mode == "TEXT":
                 text, ok = self.prompt_text_dialog("")
                 if ok and text.strip():
@@ -3198,7 +4135,7 @@ class StudioCanvasWidget(QWidget):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
                     elif isinstance(hit_item, CalloutItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.box_rect.x(), pt.y() - hit_item.box_rect.y())
-                    elif isinstance(hit_item, (ArrowItem, ElbowArrowItem, StepArrowItem)):
+                    elif isinstance(hit_item, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
                         self.drag_offset = QPointF(pt.x() - hit_item.start_pos.x(), pt.y() - hit_item.start_pos.y())
                     else:
                         self.drag_offset = QPointF(pt.x() - hit_item.pos.x(), pt.y() - hit_item.pos.y())
@@ -3211,16 +4148,60 @@ class StudioCanvasWidget(QWidget):
                     hit_item = it
                     break
             if hit_item:
-                self.push_undo()
-                self.items.remove(hit_item)
-                if hit_item == self.selected_item:
-                    self.selected_item = None
-                    self.sig_item_selected.emit(None)
-                if isinstance(hit_item, (StampItem, StepArrowItem)):
-                    self.reindex_stamps()
+                self.selected_item = hit_item
+                self.sig_item_selected.emit(hit_item)
                 self.update()
-                self.sig_content_changed.emit()
-                self.sig_request_toast.emit("주석 객체가 삭제되었습니다.")
+                global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                self.show_item_context_menu(hit_item, global_pt)
+
+    def show_item_context_menu(self, item, global_pos):
+        menu = QMenu(self)
+        act_props = menu.addAction(f"⚙️ {tr('menu_item_properties', '속성...')} (P)")
+        menu.addSeparator()
+        act_front = menu.addAction(f"🔝 {tr('menu_item_bring_front', '맨 앞으로 가져오기')}")
+        act_back = menu.addAction(f"🔚 {tr('menu_item_send_back', '맨 뒤로 보내기')}")
+        menu.addSeparator()
+        act_del = menu.addAction(f"🗑️ {tr('menu_item_delete', '삭제')} (Del)")
+
+        chosen = menu.exec_(global_pos)
+        if chosen == act_props:
+            self.open_item_properties_dialog(item)
+        elif chosen == act_front:
+            self.push_undo()
+            self.items.remove(item)
+            self.items.append(item)
+            self.update()
+            self.sig_content_changed.emit()
+        elif chosen == act_back:
+            self.push_undo()
+            self.items.remove(item)
+            self.items.insert(0, item)
+            self.update()
+            self.sig_content_changed.emit()
+        elif chosen == act_del:
+            self.push_undo()
+            self.items.remove(item)
+            if item == self.selected_item:
+                self.selected_item = None
+                self.sig_item_selected.emit(None)
+            if isinstance(item, (StampItem, StepArrowItem)):
+                self.reindex_stamps()
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(tr("menu_item_delete", "삭제"))
+
+    def open_item_properties_dialog(self, item):
+        if not item:
+            return
+        self.push_undo()
+        dlg = ItemPropertiesDialog(item, self, self.window())
+        if dlg.exec_() == QDialog.Accepted:
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_item_selected.emit(item)
+        else:
+            if self.history:
+                self.history.pop()
 
     def mouseMoveEvent(self, event):
         pt = get_mouse_pos(event)
@@ -3241,7 +4222,7 @@ class StudioCanvasWidget(QWidget):
                 dy = new_y - self.dragging_item.box_rect.y()
                 self.dragging_item.box_rect.moveTo(new_x, new_y)
                 self.dragging_item.target_pt += QPointF(dx, dy)
-            elif isinstance(self.dragging_item, (ArrowItem, ElbowArrowItem, StepArrowItem)):
+            elif isinstance(self.dragging_item, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
                 dx = new_x - self.dragging_item.start_pos.x()
                 dy = new_y - self.dragging_item.start_pos.y()
                 self.dragging_item.start_pos = QPointF(new_x, new_y)
@@ -3267,6 +4248,21 @@ class StudioCanvasWidget(QWidget):
             self.update()
         elif self.drawing_blur:
             self.blur_end = pt
+            self.update()
+        elif self.drawing_ocr:
+            self.ocr_end = pt
+            self.update()
+        elif self.drawing_dimension:
+            cur_pt = QPointF(pt)
+            modifiers = QGuiApplication.keyboardModifiers()
+            if not (modifiers & Qt.ShiftModifier):
+                dx = cur_pt.x() - self.dimension_start.x()
+                dy = cur_pt.y() - self.dimension_start.y()
+                if abs(dx) >= abs(dy):
+                    cur_pt = QPointF(cur_pt.x(), self.dimension_start.y())
+                else:
+                    cur_pt = QPointF(self.dimension_start.x(), cur_pt.y())
+            self.dimension_end = cur_pt
             self.update()
         elif self.current_mode == "SELECT":
             if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
@@ -3373,6 +4369,35 @@ class StudioCanvasWidget(QWidget):
                     self.update()
                     self.sig_content_changed.emit()
                 self.set_mode("SELECT")
+            elif self.drawing_ocr:
+                self.drawing_ocr = False
+                r = QRect(self.ocr_start, self.ocr_end).normalized()
+                if r.width() > 20 and r.height() > 10:
+                    self._run_ocr_on_region(r)
+                self.set_mode("SELECT")
+            elif self.drawing_dimension:
+                self.drawing_dimension = False
+                cur_pt = QPointF(pt)
+                modifiers = QGuiApplication.keyboardModifiers()
+                if not (modifiers & Qt.ShiftModifier):
+                    dx = cur_pt.x() - self.dimension_start.x()
+                    dy = cur_pt.y() - self.dimension_start.y()
+                    if abs(dx) >= abs(dy):
+                        cur_pt = QPointF(cur_pt.x(), self.dimension_start.y())
+                    else:
+                        cur_pt = QPointF(self.dimension_start.x(), cur_pt.y())
+                self.dimension_end = cur_pt
+                dist = math.hypot(self.dimension_end.x() - self.dimension_start.x(), self.dimension_end.y() - self.dimension_start.y())
+                if dist > 6:
+                    self.push_undo()
+                    dim_style = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
+                    dim_item = DimensionLineItem(self.dimension_start, self.dimension_end, dim_style)
+                    self.items.append(dim_item)
+                    self.selected_item = dim_item
+                    self.sig_item_selected.emit(dim_item)
+                    self.sig_content_changed.emit()
+                self.set_mode("SELECT")
+                self.update()
 
     def mouseDoubleClickEvent(self, event):
         pt = get_mouse_pos(event)
@@ -3416,6 +4441,9 @@ class StudioCanvasWidget(QWidget):
                     it.text = new_text.strip().upper()
                     self.update()
                     self.sig_content_changed.emit()
+                break
+            elif it.contains(pt):
+                self.open_item_properties_dialog(it)
                 break
 
     def prompt_text_dialog(self, initial_text, title="설명 텍스트 입력"):
@@ -3657,6 +4685,21 @@ class StudioCanvasWidget(QWidget):
                 temp_blur.render_mosaic(painter, self.pixmap)
                 painter.restore()
 
+            elif self.drawing_ocr:
+                painter.save()
+                r = QRect(self.ocr_start, self.ocr_end).normalized()
+                painter.setPen(QPen(QColor(16, 185, 129), 2, Qt.DashLine))
+                painter.setBrush(QBrush(QColor(16, 185, 129, 30)))
+                painter.drawRect(r)
+                painter.restore()
+
+            elif self.drawing_dimension:
+                painter.save()
+                dim_st = dict(self.config.get("dimension_style", DEFAULT_CONFIG["dimension_style"]))
+                temp_dim = DimensionLineItem(self.dimension_start, self.dimension_end, dim_st)
+                temp_dim.render(painter)
+                painter.restore()
+
             # 4. 선택된 객체 하이라이트
             if self.selected_item and self.current_mode == "SELECT":
                 painter.save()
@@ -3665,8 +4708,14 @@ class StudioCanvasWidget(QWidget):
                 if isinstance(self.selected_item, (ImageOverlayItem, DraftStampItem)):
                     pass
                 elif isinstance(self.selected_item, StampItem):
-                    r = self.selected_item.style.get("size", 32) / 2.0 + 3
-                    painter.drawEllipse(self.selected_item.pos, r, r)
+                    sz = self.selected_item.style.get("size", 32)
+                    r = sz / 2.0 + 3
+                    if self.selected_item.style.get("shape") == "rounded_rect":
+                        cr = float(self.selected_item.style.get("corner_radius", max(4, int(sz * 0.25)))) + 2
+                        rect = QRectF(self.selected_item.pos.x() - r, self.selected_item.pos.y() - r, sz + 6, sz + 6)
+                        painter.drawRoundedRect(rect, cr, cr)
+                    else:
+                        painter.drawEllipse(self.selected_item.pos, r, r)
                 elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
                     painter.drawRect(self.selected_item.get_rect().adjusted(-2, -2, 2, 2))
                 elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem)):
@@ -3675,7 +4724,7 @@ class StudioCanvasWidget(QWidget):
                     painter.drawRect(self.selected_item.box_rect.adjusted(-2, -2, 2, 2))
                     painter.setBrush(QBrush(QColor(33, 150, 243)))
                     painter.drawEllipse(self.selected_item.target_pt, 3.5, 3.5)
-                elif isinstance(self.selected_item, (ArrowItem, StepArrowItem)):
+                elif isinstance(self.selected_item, (ArrowItem, StepArrowItem, DimensionLineItem)):
                     p1 = self.selected_item.start_pos
                     p2 = self.selected_item.end_pos
                     painter.drawLine(p1, p2)
@@ -4728,6 +5777,38 @@ class RibbonIconProvider:
             p.drawPolyline(QPolygonF([QPointF(3, s - 3), QPointF(s - 4, s - 3), QPointF(s - 4, 3)]))
             p.drawLine(QPointF(s - 7, 6), QPointF(s - 4, 3))
             p.drawLine(QPointF(s - 1, 6), QPointF(s - 4, 3))
+        elif name == "elbow_tr":
+            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_e)
+            p.drawLine(QPointF(3, 4), QPointF(s - 5, 4))
+            p.drawLine(QPointF(s - 5, 4), QPointF(s - 5, s - 7))
+            poly = QPolygonF([QPointF(s - 5, s - 3), QPointF(s - 8, s - 8), QPointF(s - 2, s - 8)])
+            p.setBrush(QBrush(QColor(color)))
+            p.drawPolygon(poly)
+        elif name == "elbow_br":
+            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_e)
+            p.drawLine(QPointF(3, s - 4), QPointF(s - 5, s - 4))
+            p.drawLine(QPointF(s - 5, s - 4), QPointF(s - 5, 7))
+            poly = QPolygonF([QPointF(s - 5, 3), QPointF(s - 8, 8), QPointF(s - 2, 8)])
+            p.setBrush(QBrush(QColor(color)))
+            p.drawPolygon(poly)
+        elif name == "elbow_bl":
+            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_e)
+            p.drawLine(QPointF(4, 3), QPointF(4, s - 5))
+            p.drawLine(QPointF(4, s - 5), QPointF(s - 7, s - 5))
+            poly = QPolygonF([QPointF(s - 3, s - 5), QPointF(s - 8, s - 8), QPointF(s - 8, s - 2)])
+            p.setBrush(QBrush(QColor(color)))
+            p.drawPolygon(poly)
+        elif name == "elbow_tl":
+            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_e)
+            p.drawLine(QPointF(4, s - 3), QPointF(4, 5))
+            p.drawLine(QPointF(4, 5), QPointF(s - 7, 5))
+            poly = QPolygonF([QPointF(s - 3, 5), QPointF(s - 8, 2), QPointF(s - 8, 8)])
+            p.setBrush(QBrush(QColor(color)))
+            p.drawPolygon(poly)
         elif name == "arrow":
             pen_b = QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
             p.setPen(pen_b)
@@ -4798,11 +5879,30 @@ class RibbonIconProvider:
             p.drawLine(QPointF(8, 5), QPointF(s - 2, 5))
             p.drawLine(QPointF(8, 10), QPointF(s - 2, 10))
             p.drawLine(QPointF(8, 15), QPointF(s - 2, 15))
+        elif name == "dimension":
+            pen_dim = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen_dim)
+            p.drawLine(QPointF(2, s / 2), QPointF(s - 2, s / 2))
+            p.drawLine(QPointF(2, s / 2 - 4), QPointF(2, s / 2 + 4))
+            p.drawLine(QPointF(s - 2, s / 2 - 4), QPointF(s - 2, s / 2 + 4))
+            p.setFont(QFont("Arial", int(s * 0.35), QFont.Bold))
+            p.drawText(QRectF(0, 0, s, s / 2 - 1), Qt.AlignCenter, "px")
         else:
             p.drawRect(QRectF(3, 3, s - 6, s - 6))
 
         p.end()
         icon = QIcon(pixmap)
+        cls._cache[key] = icon
+        return icon
+
+    @classmethod
+    def get_toggle_icon(cls, name: str, size: int = 18, off_color: str = "#475569", on_color: str = "#2563EB") -> QIcon:
+        key = f"toggle_{name}_{size}_{off_color}_{on_color}"
+        if key in cls._cache:
+            return cls._cache[key]
+        icon = QIcon()
+        icon.addPixmap(cls.get_icon(name, size, off_color).pixmap(size, size), QIcon.Normal, QIcon.Off)
+        icon.addPixmap(cls.get_icon(name, size, on_color).pixmap(size, size), QIcon.Normal, QIcon.On)
         cls._cache[key] = icon
         return icon
 
@@ -4820,8 +5920,12 @@ class ManualStudioWindow(QMainWindow):
         self.current_target_monitor = self.config.get("target_monitor", -1)
 
         loc = self.config.get("locale", "auto")
-        if loc != "auto":
-            I18nManager.instance().set_locale(loc)
+        if loc == "auto":
+            # 최초 실행: OS 지역 자동 감지 후 config에 영구 저장
+            loc = I18nManager.detect_system_locale()
+            self.config["locale"] = loc
+            save_config(self.config)
+        I18nManager.instance().set_locale(loc)
 
         self.update_window_title()
         self.resize(1240, 780)
@@ -4840,7 +5944,7 @@ class ManualStudioWindow(QMainWindow):
         self.current_text_bg_color = self.config.get("text_style", {}).get("bg_color", "#212121")
         self.current_title_color = self.config.get("ppt_layout", {}).get("title_font_color", "#000000")
 
-        self.ui_style = self.config.get("ui_style", "windows")
+        self.ui_style = self.config.get("ui_style", "auto")
         self.ribbon_frame = None
         self.traffic_lights = None
 
@@ -5134,6 +6238,32 @@ class ManualStudioWindow(QMainWindow):
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security"))
         tools_layout.addWidget(self.create_separator())
 
+        # 5-OCR) [텍스트 인식] 그룹
+        self.btn_mode_ocr = QPushButton(tr("btn_mode_ocr", "OCR 추출"), self)
+        self.btn_mode_ocr.setCheckable(True)
+        self.btn_mode_ocr.setToolTip(tr("tooltip_ocr", "이미지 영역을 드래그하여 텍스트를 인식합니다. (O)"))
+        self.btn_mode_ocr.clicked.connect(lambda: self.switch_mode("OCR"))
+
+        ocr_grid = QGridLayout()
+        ocr_grid.setContentsMargins(0, 0, 0, 0)
+        ocr_grid.setSpacing(2)
+        ocr_grid.addWidget(self.btn_mode_ocr, 0, 0)
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ocr", "텍스트 인식"), ocr_grid, "grp_ocr"))
+        tools_layout.addWidget(self.create_separator())
+
+        # 5-DIM) [치수선] 그룹
+        self.btn_mode_dimension = QPushButton(tr("btn_mode_dimension", "치수선"), self)
+        self.btn_mode_dimension.setCheckable(True)
+        self.btn_mode_dimension.setToolTip(tr("tooltip_dimension", "두 지점 사이의 거리를 측정하여 브라켓 치수선으로 표시합니다. (D)"))
+        self.btn_mode_dimension.clicked.connect(lambda: self.switch_mode("DIMENSION"))
+
+        dim_grid = QGridLayout()
+        dim_grid.setContentsMargins(0, 0, 0, 0)
+        dim_grid.setSpacing(2)
+        dim_grid.addWidget(self.btn_mode_dimension, 0, 0)
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_dimension", "치수선"), dim_grid, "grp_dimension"))
+        tools_layout.addWidget(self.create_separator())
+
         # 6) [텍스트·워드아트] 그룹
         self.btn_mode_callout = QPushButton(tr("btn_mode_callout", "설명 말풍선"), self)
         self.btn_mode_callout.setToolTip(tr("tooltip_callout", "대상 UI를 꼬리로 가리키며 설명을 기재하는 말풍선을 배치합니다."))
@@ -5294,23 +6424,57 @@ class ManualStudioWindow(QMainWindow):
         self.spin_arrow_head.setFixedWidth(80)
         self.spin_arrow_head.valueChanged.connect(self.on_arrow_head_changed)
 
-        self.combo_elbow_route = QComboBox(self)
-        self.combo_elbow_route.addItem("ㄱ/┘ (가로 우선)", "HV")
-        self.combo_elbow_route.addItem("ㄴ/┌ (세로 우선)", "VH")
-        self.combo_elbow_route.setToolTip("직각 꺾임 축 (단축키 Tab/Space로도 실시간 전환)")
-        self.combo_elbow_route.setFixedWidth(130)
-        self.combo_elbow_route.currentIndexChanged.connect(self.on_elbow_route_combo_changed)
+        self.btn_elbow_tr = QPushButton(self)
+        self.btn_elbow_tr.setObjectName("BtnElbowTR")
+        self.btn_elbow_tr.setIcon(RibbonIconProvider.get_toggle_icon("elbow_tr", 16))
+        self.btn_elbow_tr.setIconSize(QSize(16, 16))
+        self.btn_elbow_tr.setFixedSize(28, 22)
+        self.btn_elbow_tr.setCheckable(True)
+        self.btn_elbow_tr.setToolTip(tr("tooltip_elbow_tr", "우하향 (가로 우선 ㄱ자) [Tab/Space]"))
+        self.btn_elbow_tr.clicked.connect(lambda: self.on_elbow_preset_clicked("tr"))
 
-        self.btn_flip_elbow = QPushButton("반전", self)
-        self.btn_flip_elbow.setToolTip("직각 꺾임 축 반전 (Tab/Space)")
-        self.btn_flip_elbow.setFixedSize(36, 22)
-        self.btn_flip_elbow.clicked.connect(self.action_flip_elbow)
+        self.btn_elbow_br = QPushButton(self)
+        self.btn_elbow_br.setObjectName("BtnElbowBR")
+        self.btn_elbow_br.setIcon(RibbonIconProvider.get_toggle_icon("elbow_br", 16))
+        self.btn_elbow_br.setIconSize(QSize(16, 16))
+        self.btn_elbow_br.setFixedSize(28, 22)
+        self.btn_elbow_br.setCheckable(True)
+        self.btn_elbow_br.setToolTip(tr("tooltip_elbow_br", "우상향 (가로 우선 ┘자) [Tab/Space]"))
+        self.btn_elbow_br.clicked.connect(lambda: self.on_elbow_preset_clicked("br"))
+
+        self.btn_elbow_bl = QPushButton(self)
+        self.btn_elbow_bl.setObjectName("BtnElbowBL")
+        self.btn_elbow_bl.setIcon(RibbonIconProvider.get_toggle_icon("elbow_bl", 16))
+        self.btn_elbow_bl.setIconSize(QSize(16, 16))
+        self.btn_elbow_bl.setFixedSize(28, 22)
+        self.btn_elbow_bl.setCheckable(True)
+        self.btn_elbow_bl.setToolTip(tr("tooltip_elbow_bl", "하우향 (세로 우선 ㄴ자) [Tab/Space]"))
+        self.btn_elbow_bl.clicked.connect(lambda: self.on_elbow_preset_clicked("bl"))
+
+        self.btn_elbow_tl = QPushButton(self)
+        self.btn_elbow_tl.setObjectName("BtnElbowTL")
+        self.btn_elbow_tl.setIcon(RibbonIconProvider.get_toggle_icon("elbow_tl", 16))
+        self.btn_elbow_tl.setIconSize(QSize(16, 16))
+        self.btn_elbow_tl.setFixedSize(28, 22)
+        self.btn_elbow_tl.setCheckable(True)
+        self.btn_elbow_tl.setToolTip(tr("tooltip_elbow_tl", "상우향 (세로 우선 ┌자) [Tab/Space]"))
+        self.btn_elbow_tl.clicked.connect(lambda: self.on_elbow_preset_clicked("tl"))
+
+        self.elbow_btn_group = QButtonGroup(self)
+        self.elbow_btn_group.setExclusive(True)
+        self.elbow_btn_group.addButton(self.btn_elbow_tr)
+        self.elbow_btn_group.addButton(self.btn_elbow_br)
+        self.elbow_btn_group.addButton(self.btn_elbow_bl)
+        self.elbow_btn_group.addButton(self.btn_elbow_tl)
+        self.btn_elbow_tr.setChecked(True)
 
         elbow_box = QHBoxLayout()
         elbow_box.setContentsMargins(0, 0, 0, 0)
         elbow_box.setSpacing(2)
-        elbow_box.addWidget(self.combo_elbow_route)
-        elbow_box.addWidget(self.btn_flip_elbow)
+        elbow_box.addWidget(self.btn_elbow_tr)
+        elbow_box.addWidget(self.btn_elbow_br)
+        elbow_box.addWidget(self.btn_elbow_bl)
+        elbow_box.addWidget(self.btn_elbow_tl)
         elbow_widget = QWidget(self)
         elbow_widget.setLayout(elbow_box)
 
@@ -5322,7 +6486,7 @@ class ManualStudioWindow(QMainWindow):
         ln_grid.setSpacing(2)
         ln_grid.addWidget(self.create_stack_field(tr("lbl_line_width", "선 두께"), self.spin_box_width_tab, "lbl_line_width_tab"), 0, 0)
         ln_grid.addWidget(self.create_stack_field(tr("lbl_head_size", "촉 크기"), self.spin_arrow_head, "lbl_head_size"), 0, 1)
-        ln_grid.addWidget(self.create_stack_field(tr("lbl_align", "꺾임 축"), elbow_widget, "lbl_elbow_route"), 1, 0)
+        ln_grid.addWidget(self.create_stack_field(tr("lbl_elbow_route", "꺾은선 형태"), elbow_widget, "lbl_elbow_route"), 1, 0)
         ln_grid.addWidget(self.create_stack_field(tr("chk_qs_fill", "채우기"), self.chk_box_fill_tab, "lbl_chk_fill_tab"), 1, 1)
         format_layout.addWidget(self.create_ribbon_group(tr("grp_arrow_fmt", "선·화살표"), ln_grid, "grp_arrow_fmt"))
         format_layout.addWidget(self.create_separator())
@@ -5355,7 +6519,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_text_font_size.setFixedWidth(80)
         self.spin_text_font_size.valueChanged.connect(self.on_text_font_size_changed)
 
-        self.btn_text_color = QPushButton("가", self)
+        self.btn_text_color = QPushButton(tr("font_sample_glyph", "A"), self)
         self.btn_text_color.setFixedSize(26, 22)
         self.update_text_color_button()
         self.btn_text_color.clicked.connect(self.choose_text_color)
@@ -5387,7 +6551,8 @@ class ManualStudioWindow(QMainWindow):
         wa_cfg = self.config.get("wordart_style", {})
         self.combo_wordart_preset = QComboBox(self)
         for p_key, p_val in WordArtItem.PRESETS.items():
-            self.combo_wordart_preset.addItem(p_val["name"], p_key)
+            wa_label = tr(f"wordart_preset_{p_key}", p_val.get("name", p_key))
+            self.combo_wordart_preset.addItem(wa_label, p_key)
         cur_preset = wa_cfg.get("preset_id", "white_pop")
         idx_p = self.combo_wordart_preset.findData(cur_preset)
         if idx_p >= 0:
@@ -5530,7 +6695,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_title_font_size.setFixedWidth(80)
         self.spin_title_font_size.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.btn_title_color = QPushButton("가", self)
+        self.btn_title_color = QPushButton(tr("font_sample_glyph", "A"), self)
         self.btn_title_color.setFixedSize(26, 22)
         self.update_title_color_button()
         self.btn_title_color.clicked.connect(self.choose_title_font_color)
@@ -5817,7 +6982,7 @@ class ManualStudioWindow(QMainWindow):
 
         self.traffic_lights = MacTrafficLight(self)
         menubar.setCornerWidget(self.traffic_lights, Qt.TopLeftCorner)
-        if getattr(self, "ui_style", "windows") != "macos":
+        if ThemeManager.get_effective_ui_style(getattr(self, "ui_style", "auto")) != "macos":
             self.traffic_lights.hide()
         menubar.setStyleSheet("""
             QMenuBar {
@@ -6092,6 +7257,8 @@ class ManualStudioWindow(QMainWindow):
         self.retranslate_ribbon()
         self.retranslate_quick_strip()
         self.retranslate_status_and_title()
+        if hasattr(self, "init_monitor_combos"):
+            self.init_monitor_combos()
 
     def retranslate_menu_bar(self):
         if hasattr(self, "menu_file"):
@@ -6213,7 +7380,7 @@ class ManualStudioWindow(QMainWindow):
             "lbl_number_stamp": ("lbl_number", "번호"),
             "lbl_line_width_tab": ("lbl_line_width", "선 두께"),
             "lbl_head_size": ("lbl_head_size", "촉 크기"),
-            "lbl_elbow_route": ("lbl_align", "꺾임 축"),
+            "lbl_elbow_route": ("lbl_elbow_route", "꺾은선 형태"),
             "lbl_chk_fill_tab": ("chk_qs_fill", "채우기"),
             "lbl_font_family": ("lbl_font", "서체"),
             "lbl_size_text": ("lbl_size", "크기"),
@@ -6294,8 +7461,31 @@ class ManualStudioWindow(QMainWindow):
             self.chk_wordart_shadow.setText(tr("chk_shadow", "그림자"))
         if hasattr(self, "chk_title_bold"):
             self.chk_title_bold.setText(tr("lbl_bold", "굵게"))
+        if hasattr(self, "btn_elbow_tr"):
+            self.btn_elbow_tr.setToolTip(tr("tooltip_elbow_tr", "우하향 (가로 우선 ㄱ자) [Tab/Space]"))
+        if hasattr(self, "btn_elbow_br"):
+            self.btn_elbow_br.setToolTip(tr("tooltip_elbow_br", "우상향 (가로 우선 ┘자) [Tab/Space]"))
+        if hasattr(self, "btn_elbow_bl"):
+            self.btn_elbow_bl.setToolTip(tr("tooltip_elbow_bl", "하우향 (세로 우선 ㄴ자) [Tab/Space]"))
+        if hasattr(self, "btn_elbow_tl"):
+            self.btn_elbow_tl.setToolTip(tr("tooltip_elbow_tl", "상우향 (세로 우선 ┌자) [Tab/Space]"))
         if hasattr(self, "btn_title_align"):
             self.btn_title_align.setText(tr("lbl_align", "정렬"))
+        if hasattr(self, "btn_text_color"):
+            self.update_text_color_button()
+        if hasattr(self, "btn_title_color"):
+            self.update_title_color_button()
+        if hasattr(self, "combo_wordart_preset"):
+            cur_data = self.combo_wordart_preset.currentData()
+            self.combo_wordart_preset.blockSignals(True)
+            self.combo_wordart_preset.clear()
+            for p_key, p_val in WordArtItem.PRESETS.items():
+                wa_label = tr(f"wordart_preset_{p_key}", p_val.get("name", p_key))
+                self.combo_wordart_preset.addItem(wa_label, p_key)
+            idx_p = self.combo_wordart_preset.findData(cur_data)
+            if idx_p >= 0:
+                self.combo_wordart_preset.setCurrentIndex(idx_p)
+            self.combo_wordart_preset.blockSignals(False)
 
         cur_mode = self.config.get("ribbon_display_mode", "text")
         self.toggle_ribbon_display_mode(mode=cur_mode)
@@ -6667,7 +7857,9 @@ class ManualStudioWindow(QMainWindow):
             "CALLOUT": ("btn_mode_callout", "설명 말풍선"),
             "TEXT": ("btn_mode_text", "텍스트 라벨"),
             "HOTKEY": ("btn_mode_hotkey", "단축키 배지"),
-            "WORDART": ("btn_mode_wordart", "워드아트")
+            "WORDART": ("btn_mode_wordart", "워드아트"),
+            "OCR": ("btn_mode_ocr", "OCR 텍스트 추출"),
+            "DIMENSION": ("btn_mode_dimension", "치수선"),
         }
         cur_mode = mode_or_name or self.canvas.current_mode
         if cur_mode in mode_keys:
@@ -6710,6 +7902,10 @@ class ManualStudioWindow(QMainWindow):
             self.btn_mode_hotkey.setChecked(mode == "HOTKEY")
         if hasattr(self, "btn_mode_wordart"):
             self.btn_mode_wordart.setChecked(mode == "WORDART")
+        if hasattr(self, "btn_mode_ocr"):
+            self.btn_mode_ocr.setChecked(mode == "OCR")
+        if hasattr(self, "btn_mode_dimension"):
+            self.btn_mode_dimension.setChecked(mode == "DIMENSION")
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -6728,21 +7924,23 @@ class ManualStudioWindow(QMainWindow):
 
     def update_text_color_button(self):
         c = self.current_text_color
-        self.btn_text_color.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #2B2B2B;
-                color: {c};
-                font-weight: bold;
-                font-size: 12px;
-                border: 1px solid #777777;
-                border-radius: 4px;
-                padding: 0px;
-            }}
-            QPushButton:hover {{
-                border: 2px solid #2196F3;
-            }}
-        """)
-        self.btn_text_color.setToolTip(f"텍스트 글자 색상: {c}")
+        if hasattr(self, "btn_text_color"):
+            self.btn_text_color.setText(tr("font_sample_glyph", "A"))
+            self.btn_text_color.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #2B2B2B;
+                    color: {c};
+                    font-weight: bold;
+                    font-size: 12px;
+                    border: 1px solid #777777;
+                    border-radius: 4px;
+                    padding: 0px;
+                }}
+                QPushButton:hover {{
+                    border: 2px solid #2196F3;
+                }}
+            """)
+            self.btn_text_color.setToolTip(f"{tr('lbl_color_text', '글자색')}: {c}")
 
     def update_text_bg_color_button(self):
         c = self.current_text_bg_color
@@ -6763,6 +7961,7 @@ class ManualStudioWindow(QMainWindow):
         qcol = QColor(c)
         text_fg = "#FFFFFF" if (qcol.red() * 0.299 + qcol.green() * 0.587 + qcol.blue() * 0.114) < 140 else "#000000"
         if hasattr(self, "btn_title_color"):
+            self.btn_title_color.setText(tr("font_sample_glyph", "A"))
             self.btn_title_color.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {c};
@@ -6778,7 +7977,7 @@ class ManualStudioWindow(QMainWindow):
                     border: 2px solid #2196F3;
                 }}
             """)
-            self.btn_title_color.setToolTip(f"제목 글자 색상: {c}")
+            self.btn_title_color.setToolTip(f"{tr('lbl_title_color', '색상')}: {c}")
 
     def choose_title_font_color(self):
         col = QColorDialog.getColor(QColor(self.current_title_color), self, "제목 글자 색상 선택")
@@ -6937,12 +8136,8 @@ class ManualStudioWindow(QMainWindow):
             self.combo_text_font.setCurrentFont(QFont(tx_style.get("font_family", "Malgun Gothic")))
             self.combo_text_font.blockSignals(False)
 
-        # 꺾임 축
-        if hasattr(self, "combo_elbow_route"):
-            self.combo_elbow_route.blockSignals(True)
-            cur_route = getattr(self.canvas, "current_elbow_route_mode", "HV")
-            self.combo_elbow_route.setCurrentIndex(0 if cur_route == "HV" else 1)
-            self.combo_elbow_route.blockSignals(False)
+        # 꺾은선 형태 버튼 동기화
+        self.sync_elbow_buttons_from_item(getattr(self.canvas, "selected_item", None))
 
         # 워드아트
         wa_cfg = self.config.get("wordart_style", {})
@@ -7314,10 +8509,7 @@ class ManualStudioWindow(QMainWindow):
                 self.spin_arrow_head.setValue(head_s)
                 self.spin_arrow_head.blockSignals(False)
             self.canvas.current_arrow_color = arrow_col
-            if hasattr(self, "combo_elbow_route"):
-                self.combo_elbow_route.blockSignals(True)
-                self.combo_elbow_route.setCurrentIndex(0 if item.route_mode == "HV" else 1)
-                self.combo_elbow_route.blockSignals(False)
+            self.sync_elbow_buttons_from_item(item)
             if hasattr(self, "lbl_active_mode"):
                 self.lbl_active_mode.setText(f"선택: 직각 화살표 ({item.route_mode})")
         elif isinstance(item, ArrowItem):
@@ -7634,7 +8826,7 @@ class ManualStudioWindow(QMainWindow):
         for cb in combos:
             cb.blockSignals(True)
             cb.clear()
-            cb.addItem("전체 가상 화면 (모든 모니터)", -1)
+            cb.addItem(tr("settings_monitor_all", "전체 가상 화면 (모든 모니터)"), -1)
             for m in monitors:
                 cb.addItem(m["label"], m["index"])
 
@@ -7729,29 +8921,98 @@ class ManualStudioWindow(QMainWindow):
                 self.canvas.update()
                 self.canvas.sig_content_changed.emit()
 
-    def on_elbow_route_combo_changed(self, idx):
-        if hasattr(self, "combo_elbow_route"):
-            mode = self.combo_elbow_route.currentData() or ("HV" if idx == 0 else "VH")
-            self.canvas.current_elbow_route_mode = mode
-            if self.canvas.selected_item and isinstance(self.canvas.selected_item, ElbowArrowItem):
-                self.canvas.push_undo()
-                self.canvas.selected_item.route_mode = mode
-                self.canvas.update()
-                self.canvas.sig_content_changed.emit()
+    def on_elbow_preset_clicked(self, preset: str):
+        """4대 꺾은선 형태 아이콘 버튼 클릭 시 경로 모드 및 좌표 즉시 반영"""
+        mode = "HV" if preset in ("tr", "br") else "VH"
+        self.canvas.current_elbow_route_mode = mode
+
+        # 버튼 체크 상태 동기화
+        btn_map = {
+            "tr": getattr(self, "btn_elbow_tr", None),
+            "br": getattr(self, "btn_elbow_br", None),
+            "bl": getattr(self, "btn_elbow_bl", None),
+            "tl": getattr(self, "btn_elbow_tl", None)
+        }
+        target_btn = btn_map.get(preset)
+        if target_btn and hasattr(self, "elbow_btn_group"):
+            target_btn.setChecked(True)
+
+        if self.canvas.selected_item and isinstance(self.canvas.selected_item, ElbowArrowItem):
+            item = self.canvas.selected_item
+            self.canvas.push_undo()
+            item.route_mode = mode
+            p1 = item.start_pos
+            p2 = item.end_pos
+
+            # 아이콘 형태와 완벽 일치하도록 Y좌표 방향성 보정
+            if preset == "tr":  # 우하향 (가로 우선 -> 아래 방향 화살촉)
+                if p1.y() > p2.y():
+                    item.start_pos = QPointF(p1.x(), p2.y())
+                    item.end_pos = QPointF(p2.x(), p1.y())
+            elif preset == "br":  # 우상향 (가로 우선 -> 위 방향 화살촉)
+                if p1.y() < p2.y():
+                    item.start_pos = QPointF(p1.x(), p2.y())
+                    item.end_pos = QPointF(p2.x(), p1.y())
+            elif preset == "bl":  # 하우향 (세로 우선 -> 아래 방향 경유)
+                if p1.y() > p2.y():
+                    item.start_pos = QPointF(p1.x(), p2.y())
+                    item.end_pos = QPointF(p2.x(), p1.y())
+            elif preset == "tl":  # 상우향 (세로 우선 -> 위 방향 경유)
+                if p1.y() < p2.y():
+                    item.start_pos = QPointF(p1.x(), p2.y())
+                    item.end_pos = QPointF(p2.x(), p1.y())
+
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
+            if hasattr(self, "lbl_active_mode"):
+                self.lbl_active_mode.setText(f"선택: 직각 화살표 ({preset.upper()})")
+
+    def sync_elbow_buttons_from_item(self, item=None):
+        """현재 선택된 꺾은선 화살표 또는 기본 꺾임 모드에 따라 4개 아이콘 버튼 체크 상태 동기화"""
+        if not hasattr(self, "btn_elbow_tr"):
+            return
+        if not item or not isinstance(item, ElbowArrowItem):
+            cur_route = getattr(self.canvas, "current_elbow_route_mode", "HV")
+            if cur_route == "HV":
+                self.btn_elbow_tr.setChecked(True)
+            else:
+                self.btn_elbow_bl.setChecked(True)
+            return
+
+        is_down = item.start_pos.y() <= item.end_pos.y()
+        if item.route_mode == "HV":
+            if is_down:
+                self.btn_elbow_tr.setChecked(True)
+            else:
+                self.btn_elbow_br.setChecked(True)
+        else:  # VH
+            if is_down:
+                self.btn_elbow_bl.setChecked(True)
+            else:
+                self.btn_elbow_tl.setChecked(True)
+
+    def on_elbow_route_combo_changed(self, idx=0):
+        """하위 호환성 래퍼: HV/VH 꺾임 변경"""
+        mode = "HV" if idx in (0, "HV") else "VH"
+        self.canvas.current_elbow_route_mode = mode
+        if mode == "HV":
+            self.on_elbow_preset_clicked("tr")
+        else:
+            self.on_elbow_preset_clicked("bl")
 
     def action_flip_elbow(self):
+        """꺾임 축 실시간 반전 (HV ↔ VH) 및 4개 버튼 동기화"""
         cur = getattr(self.canvas, "current_elbow_route_mode", "HV")
         nxt = "VH" if cur == "HV" else "HV"
         self.canvas.current_elbow_route_mode = nxt
-        if hasattr(self, "combo_elbow_route"):
-            self.combo_elbow_route.blockSignals(True)
-            self.combo_elbow_route.setCurrentIndex(0 if nxt == "HV" else 1)
-            self.combo_elbow_route.blockSignals(False)
         if self.canvas.selected_item and isinstance(self.canvas.selected_item, ElbowArrowItem):
             self.canvas.push_undo()
             self.canvas.selected_item.toggle_route_mode()
             self.canvas.update()
             self.canvas.sig_content_changed.emit()
+            self.sync_elbow_buttons_from_item(self.canvas.selected_item)
+        else:
+            self.sync_elbow_buttons_from_item(None)
         self.show_toast(f"직각 꺾임 축 전환: {nxt}")
 
     def on_wordart_preset_changed(self, idx):
@@ -8339,13 +9600,16 @@ class ManualStudioWindow(QMainWindow):
                 Qt.Key_T: "TEXT",
                 Qt.Key_K: "HOTKEY",
                 Qt.Key_R: "WORDART",
+                Qt.Key_O: "OCR",
+                Qt.Key_D: "DIMENSION",
             }
             if key in mode_map:
                 self.switch_mode(mode_map[key])
                 self.hide_keytips()
                 return
-            elif key == Qt.Key_D:
-                self.action_add_draft_stamp()
+            elif key == Qt.Key_P:
+                if self.canvas.selected_item:
+                    self.canvas.open_item_properties_dialog(self.canvas.selected_item)
                 self.hide_keytips()
                 return
 
@@ -8522,7 +9786,7 @@ class ManualStudioWindow(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             self.config = dlg.get_config()
             save_config(self.config)
-            new_style = self.config.get("ui_style", "windows")
+            new_style = self.config.get("ui_style", "auto")
             self.apply_ui_theme(new_style)
             new_loc = self.config.get("locale", "auto")
             if new_loc != old_loc and new_loc != "auto":
@@ -9193,9 +10457,10 @@ class SettingsDialog(QDialog):
         lbl_style.setMinimumWidth(120)
         ht.addWidget(lbl_style)
         self.combo_ui_style = QComboBox(self)
+        self.combo_ui_style.addItem(tr("settings_ui_style_auto", "자동 감지 (OS 기본값)"), "auto")
         self.combo_ui_style.addItem(tr("ui_style_windows", "Windows 스타일 (Fluent)"), "windows")
         self.combo_ui_style.addItem(tr("ui_style_macos", "Macintosh 스타일 (Cupertino)"), "macos")
-        cur_style = self.config.get("ui_style", "windows")
+        cur_style = self.config.get("ui_style", "auto")
         idx_style = self.combo_ui_style.findData(cur_style)
         if idx_style >= 0:
             self.combo_ui_style.setCurrentIndex(idx_style)
@@ -9704,7 +10969,7 @@ class SettingsDialog(QDialog):
         if hasattr(self, "chk_slides_return"):
             self.config["slides_return_focus"] = self.chk_slides_return.isChecked()
         if hasattr(self, "combo_ui_style"):
-            new_style = self.combo_ui_style.currentData() or "windows"
+            new_style = self.combo_ui_style.currentData() or "auto"
             self.config["ui_style"] = new_style
             if self.parent() and hasattr(self.parent(), "apply_ui_theme"):
                 self.parent().apply_ui_theme(new_style)

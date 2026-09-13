@@ -16,7 +16,7 @@ It automates the full workflow: **Screen Capture -> Annotation Overlay -> Presen
 | `manual_capture_studio.py` | Main GUI, Canvas, Annotations, Export | `ManualStudioWindow`, `ExportEngine`, `ProjectManager`, `ThemeManager` |
 | `manual_cli.py` | Headless Command-Line Interface | `handle_cli()`, `cli_capture()`, `cli_annotate()`, `cli_batch()`, `cli_export()` |
 | `mcp_server.py` | Anthropic Model Context Protocol Server | `MCPServer`, 9 Core MCP Tools |
-| `i18n_manager.py` | Global 9-Language Engine | `I18nManager`, `tr(key)` (KO, EN, ZH, JA, DE, ES, FR, PT, RU) |
+| `i18n_manager.py` | Global 13-Language Engine | `I18nManager`, `tr(key)` (KO, EN, ZH, ZH-TW, JA, DE, ES, FR, IT, PT, RU, VI, ID) |
 | `license_engine.py` | License Validator (HMAC-SHA256) | `LicenseEngine`, `LicenseType`, `get_hwid()` |
 | `updater_engine.py` | Smart Auto-Updater Client | `UpdateCheckerThread`, `VersionComparator` |
 
@@ -57,12 +57,14 @@ ManualStudio.exe --cli annotate \
   --stamp "1:150,220:#007AFF:32" \
   --box "100,180,300,120:#007AFF:3:fill" \
   --arrow "120,100,150,200:#007AFF:3" \
+  --elbow "120,100,250,220:#007AFF:3:tr" \
   --callout "Click Here:450,250,300,200" \
   --spotlight "100,180,300,120:#007AFF:160:2" \
   --click "250,240:left:CLICK" \
   --magnifier "100,180,60,40:450,180,180,120:2.5" \
   --output captures/step1_annotated.png
 ```
+- `--elbow <x1,y1,x2,y2[:color:width:route_mode]>`: Right-angle elbow arrow (`route_mode`: `HV`, `VH`, `tr`, `br`, `bl`, `tl`).
 - `--spotlight <x,y,w,h[:border:opacity:bw]>`: Dims surrounding area to spotlight target.
 - `--click <x,y[:left|right|double:label]>`: Renders concentric ripple indicator.
 - `--magnifier <sx,sy,sw,sh:lx,ly,lw,lh[:zoom:border]>`: Lens magnifying UI detail.
@@ -111,7 +113,7 @@ Add to `claude_desktop_config.json` (or Cowork agent settings):
 ### Registered MCP Tools (9)
 1. **`manual_studio_status()`**: Returns application status, version, display geometry, and license validity.
 2. **`manual_studio_capture_screen(rect=None, monitor=0, fixed=False, output_path=None)`**: High-resolution screenshot.
-3. **`manual_studio_add_annotations(input_path, output_path=None, stamps=None, boxes=None, ...)`**: Injects graphic annotations.
+3. **`manual_studio_add_annotations(input_path, output_path=None, stamps=None, boxes=None, arrows=None, elbows=None, ...)`**: Injects graphic annotations.
 4. **`manual_studio_add_spotlight(input_path, rect, border_color="#007AFF", dim_opacity=160, output_path=None)`**: Spotlight focus mask.
 5. **`manual_studio_render_project(project_path, output_path=None, export_ppt=False, export_slides=False)`**: Renders `.mcs.json`.
 6. **`manual_studio_export_presentation(input_path, target="powerpoint", title=None)`**: Direct PPT/Google Slides export.
@@ -136,6 +138,8 @@ Add to `claude_desktop_config.json` (or Cowork agent settings):
       "annotations": {
         "stamps": ["1:150,220:#007AFF:32"],
         "boxes": ["100,180,300,120:#007AFF:3:fill"],
+        "arrows": ["120,100,150,200:#007AFF:3"],
+        "elbows": ["120,100,250,220:#007AFF:3:tr"],
         "spotlights": ["100,180,300,120:#007AFF:160:2"],
         "clicks": ["250,240:left:LOGIN"]
       }
@@ -165,6 +169,13 @@ Manual Studio uses a simple JSON schema for multi-layered annotation projects:
       "type": "HighlightBoxItem",
       "rect": [200, 280, 450, 120],
       "style": { "color": "#007AFF", "border_width": 3, "fill": false }
+    },
+    {
+      "type": "ElbowArrowItem",
+      "start_pos": [120.0, 100.0],
+      "end_pos": [250.0, 220.0],
+      "route_mode": "HV",
+      "style": { "color": "#007AFF", "width": 3, "head_size": 14 }
     }
   ]
 }
@@ -175,11 +186,17 @@ Manual Studio uses a simple JSON schema for multi-layered annotation projects:
 ## 6. UI Automation (UIA) & Shortcuts Map
 
 - Window Title Pattern: `매뉴얼 스튜디오 - Manual Studio*`
-- Key UI Elements:
+- OS UI Auto-Branching: `ui_style: "auto"` (Auto-detects macOS Cupertino on darwin, Windows Fluent on win32).
+- Key UI Elements & Controls:
   - `BtnFixedCapture` / F9: Quick fixed capture.
   - `BtnVariableCapture` / Shift+F9: Interactive region capture.
   - `BtnSubCapture` / F8: Modal sub-window capture.
   - `BtnExportPpt` / F10: PowerPoint slide insertion.
   - `BtnSendSlides` / F11: Direct Google Slides browser injection.
   - `BtnSaveProject` / Ctrl+S: Save `.mcs.json`.
+  - `BtnElbowTR`: Elbow arrow Right then Down (`─┐`, Top-Right corner).
+  - `BtnElbowBR`: Elbow arrow Right then Up (`─┘`, Bottom-Right corner).
+  - `BtnElbowBL`: Elbow arrow Down then Right (`│└`, Bottom-Left corner).
+  - `BtnElbowTL`: Elbow arrow Up then Right (`│┌`, Top-Left corner).
+  - `Tab` / `Space`: Toggle right-angle routing axis (`HV` ↔ `VH`).
   - Mode switches: `V` (Select), `S` (Stamp), `B` (Box).

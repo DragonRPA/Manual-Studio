@@ -68,6 +68,11 @@ TOOLS_SPEC = [
                     "items": {"type": "string"},
                     "description": "List of arrows in format 'x1,y1,x2,y2[:color:width]' (e.g. '120,100,150,200')"
                 },
+                "elbows": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of right-angle elbow arrows in format 'x1,y1,x2,y2[:color:width:route_mode]' where route_mode is 'HV'/'VH' or preset 'tr'/'br'/'bl'/'tl'"
+                },
                 "callouts": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -132,6 +137,7 @@ TOOLS_SPEC = [
                         "stamps": {"type": "array", "items": {"type": "string"}},
                         "boxes": {"type": "array", "items": {"type": "string"}},
                         "arrows": {"type": "array", "items": {"type": "string"}},
+                        "elbows": {"type": "array", "items": {"type": "string"}},
                         "callouts": {"type": "array", "items": {"type": "string"}},
                         "texts": {"type": "array", "items": {"type": "string"}}
                     }
@@ -327,6 +333,7 @@ class MCPServer:
                 stamps=args.get("stamps"),
                 boxes=args.get("boxes"),
                 arrows=args.get("arrows"),
+                elbows=args.get("elbows"),
                 callouts=args.get("callouts"),
                 texts=args.get("texts"),
                 raw_items=args.get("raw_items")
@@ -406,6 +413,7 @@ class MCPServer:
                 stamps=ann_spec.get("stamps"),
                 boxes=ann_spec.get("boxes"),
                 arrows=ann_spec.get("arrows"),
+                elbows=ann_spec.get("elbows"),
                 callouts=ann_spec.get("callouts"),
                 texts=ann_spec.get("texts")
             )

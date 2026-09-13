@@ -1112,15 +1112,25 @@ def test_license_validator():
     is_valid, reason = LicenseValidator.check_license()
     assert is_valid is True, f"License check should pass for current date, got {reason}"
 
-    # 3. 가상 만료 시점 검증 (2027-01-01)
+    # 3. 가상 만료 시점 검증 (2025-01-01, 이미 만료)
+    # 레지스트리에 유효 라이선스가 저장된 경우 is_licensed()가 True를 반환하여
+    # check_license()가 만료일 검증을 건너뛰므로, 테스트 전 임시 제거 필요
+    from license_engine import LicenseEngine as _LE
+    orig_saved = _LE.load_saved_license()
     orig_exp = LicenseValidator.EXPIRATION_DATE
     try:
+        if orig_saved:
+            _LE.save_license("")   # 레지스트리 라이선스 키 임시 비움
+            _LE._cached_status = None  # 캐시 무효화
         LicenseValidator.EXPIRATION_DATE = datetime(2025, 1, 1)
         exp_valid, exp_msg = LicenseValidator.check_license()
         assert exp_valid is False, "Expired date must fail validation"
         assert "만료되었습니다" in exp_msg
     finally:
         LicenseValidator.EXPIRATION_DATE = orig_exp
+        if orig_saved:
+            _LE.save_license(orig_saved)   # 원래 라이선스 복원
+            _LE._cached_status = None
 
     print("[PASS] test_license_validator (2026-12-31 Time-Bomb, Obfuscation, Anti-Rollback valid)")
 
@@ -1207,7 +1217,45 @@ def test_elbow_arrow_four_directions_and_toggle():
     assert restored.start_pos == test_item.start_pos
     assert restored.end_pos == test_item.end_pos
 
-    print("[PASS] test_elbow_arrow_four_directions_and_toggle (4 Quadrants, HV/VH, Tab toggle, Serialization valid)")
+    # 5. UI 4대 직관적 아이콘 버튼 및 프리셋 동기화 검증
+    from manual_capture_studio import ManualStudioWindow
+    from manual_cli import parse_item_specs
+    win = ManualStudioWindow()
+    assert hasattr(win, "btn_elbow_tr")
+    assert hasattr(win, "btn_elbow_br")
+    assert hasattr(win, "btn_elbow_bl")
+    assert hasattr(win, "btn_elbow_tl")
+
+    # TR 클릭 -> HV 모드 & 체크
+    win.on_elbow_preset_clicked("tr")
+    assert win.canvas.current_elbow_route_mode == "HV"
+    assert win.btn_elbow_tr.isChecked() is True
+
+    # BL 클릭 -> VH 모드 & 체크
+    win.on_elbow_preset_clicked("bl")
+    assert win.canvas.current_elbow_route_mode == "VH"
+    assert win.btn_elbow_bl.isChecked() is True
+
+    # 아이템 선택 시 버튼 동기화 검증
+    target_arrow = ElbowArrowItem(QPointF(100, 100), QPointF(200, 200), route_mode="HV")
+    win.sync_elbow_buttons_from_item(target_arrow)
+    assert win.btn_elbow_tr.isChecked() is True
+
+    target_arrow_up = ElbowArrowItem(QPointF(100, 200), QPointF(200, 100), route_mode="HV")
+    win.sync_elbow_buttons_from_item(target_arrow_up)
+    assert win.btn_elbow_br.isChecked() is True
+
+    # 6. CLI/MCP 꺾은선 인자 파싱 검증
+    parsed = parse_item_specs(elbows=["100,100,250,220:#2563EB:3:tr", "50,50,150,150:#DC2626:4:vh"])
+    assert len(parsed) == 2
+    assert isinstance(parsed[0], ElbowArrowItem)
+    assert parsed[0].route_mode == "HV"
+    assert parsed[0].style["color"] == "#2563EB"
+    assert isinstance(parsed[1], ElbowArrowItem)
+    assert parsed[1].route_mode == "VH"
+    assert parsed[1].style["color"] == "#DC2626"
+
+    print("[PASS] test_elbow_arrow_four_directions_and_toggle (4 Quadrants, 4 Icon Buttons, HV/VH, Tab toggle, CLI Parsing valid)")
 
 def test_wordart_item_and_presets():
     from PySide6.QtGui import QImage, QPainter
@@ -1252,8 +1300,9 @@ def test_global_i18n_manager():
     from i18n_manager import I18nManager, t, tr
     mgr = I18nManager.instance()
     locales = mgr.get_supported_locales()
-    assert len(locales) == 9
-    for code in ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]:
+    assert len(locales) == 13, f"Expected 13 locales, got {len(locales)}"
+    all_13_codes = ["ko", "en", "zh", "zh_tw", "ja", "de", "es", "fr", "it", "pt", "ru", "vi", "id"]
+    for code in all_13_codes:
         assert code in locales
         val = t("btn_fixed_capture", locale=code)
         assert val and len(val) > 0
@@ -1261,6 +1310,7 @@ def test_global_i18n_manager():
     fonts = mgr.get_font_families()
     assert "Malgun Gothic" in fonts
     assert "Segoe UI" in fonts
+    assert "Microsoft JhengHei" in fonts
 
     for code in locales:
         tmpl = mgr.get_step_template(code)
@@ -1272,7 +1322,18 @@ def test_global_i18n_manager():
 
     mgr.set_locale("ko")
     assert mgr.get_locale() == "ko"
-    print("[PASS] test_global_i18n_manager (9 Global Locales, Font Fallback, Dynamic Switch valid)")
+
+    # 언어 목록 알파벳 정렬 검증 (display name 기준)
+    locale_items = list(locales.items())
+    display_names = [name for _, name in locale_items]
+    assert display_names == sorted(display_names), \
+        f"SUPPORTED_LOCALES not alphabetically sorted by display name: {display_names}"
+
+    # detect_system_locale 클래스메서드 직접 호출 검증
+    detected = I18nManager.detect_system_locale()
+    assert detected in locales, f"detect_system_locale() returned unknown locale: {detected}"
+
+    print("[PASS] test_global_i18n_manager (13 Global Locales, Font Fallback, Dynamic Switch valid, Alphabetical Order, OS Detect)")
 
 def test_license_engine_and_verification():
     from license_engine import LicenseEngine, LicenseType
@@ -1516,6 +1577,9 @@ def test_dynamic_language_retranslation():
     assert "File(&F)" in win.menu_file.title()
     assert win._ribbon_groups["grp_capture"].text() == "Capture"
     assert win.lbl_qs_width.text() == "Width:"
+    assert win.btn_text_color.text() == "A"
+    assert win.btn_title_color.text() == "A"
+    assert "White Pop" in win.combo_wordart_preset.itemText(0)
     
     # 2. Switch to Japanese
     win.switch_language("ja")
@@ -1523,20 +1587,60 @@ def test_dynamic_language_retranslation():
     assert "固定" in win.btn_capture.text()
     assert "ファイル(&F)" in win.menu_file.title()
     assert win._ribbon_groups["grp_capture"].text() == "キャプチャ"
+    assert win.btn_text_color.text() == "あ"
+    assert win.btn_title_color.text() == "あ"
+    assert "ホワイトポップ" in win.combo_wordart_preset.itemText(0)
+
+    # 3. Switch to Chinese Simplified
+    win.switch_language("zh")
+    assert win.btn_text_color.text() == "字"
+    assert win.btn_title_color.text() == "字"
+    assert "高对比白色" in win.combo_wordart_preset.itemText(0)
+
+    # 4. Switch to Chinese Traditional
+    win.switch_language("zh_tw")
+    assert win.btn_text_color.text() == "字"
+    assert win.btn_title_color.text() == "字"
+    assert "高對比白色" in win.combo_wordart_preset.itemText(0)
+    assert "固定擷取" in win.btn_capture.text()
+
+    # 5. Switch to Vietnamese
+    win.switch_language("vi")
+    assert win.btn_text_color.text() == "A"
+    assert win.btn_title_color.text() == "A"
+    assert "Trắng Pop" in win.combo_wordart_preset.itemText(0)
+    assert "Chụp cố định" in win.btn_capture.text()
+
+    # 6. Switch to Italian
+    win.switch_language("it")
+    assert win.btn_text_color.text() == "A"
+    assert win.btn_title_color.text() == "A"
+    assert "Bianco Pop" in win.combo_wordart_preset.itemText(0)
+    assert "Cattura fissa" in win.btn_capture.text()
+
+    # 7. Switch to Indonesian
+    win.switch_language("id")
+    assert win.btn_text_color.text() == "A"
+    assert win.btn_title_color.text() == "A"
+    assert "Putih Pop" in win.combo_wordart_preset.itemText(0)
+    assert "Tangkapan Tetap" in win.btn_capture.text()
     
-    # 3. Switch back to Korean
+    # 8. Switch back to Korean
     win.switch_language("ko")
     assert win.ribbon_tabs.tabText(0) == "도구"
     assert "고정" in win.btn_capture.text()
     assert "파일(&F)" in win.menu_file.title()
     assert win._ribbon_groups["grp_capture"].text() == "캡처"
+    assert win.btn_text_color.text() == "가"
+    assert win.btn_title_color.text() == "가"
+    assert "화이트 팝" in win.combo_wordart_preset.itemText(0)
 
     from manual_capture_studio import save_config
     win.config["locale"] = "auto"
     save_config(win.config)
     
     win.close()
-    print("[PASS] test_dynamic_language_retranslation (0.05s hot-swap across Menus, Ribbon Tabs, Groups, Fields, Buttons, and QuickStrip valid)")
+    print("[PASS] test_dynamic_language_retranslation (13 languages, Glyphs, WordArt Presets, and Ribbon hot-swap valid)")
 
 def test_compact_ui_button_labels():
     from PySide6.QtWidgets import QApplication
@@ -1580,7 +1684,7 @@ def test_multilingual_tooltips_completeness():
         "tooltip_export", "tooltip_ppt_fit", "tooltip_renumber"
     ]
     m = I18nManager.instance()
-    for loc in ["ko", "en", "ja", "zh", "de", "es", "fr", "pt", "ru"]:
+    for loc in ["ko", "en", "ja", "zh", "zh_tw", "de", "es", "fr", "it", "pt", "ru", "vi", "id"]:
         m.set_locale(loc)
         win.retranslate_ui()
         for tk in tooltip_keys:
@@ -1591,7 +1695,7 @@ def test_multilingual_tooltips_completeness():
     m.set_locale("ko")
     win.retranslate_ui()
     win.close()
-    print("[PASS] test_multilingual_tooltips_completeness (All 24 action tooltips in 9 languages fully structured with brackets and descriptions valid)")
+    print("[PASS] test_multilingual_tooltips_completeness (All 24 action tooltips in 13 languages fully structured with brackets and descriptions valid)")
 
 def test_multilingual_eula_manager():
     from eula_manager import EulaManager
@@ -1602,8 +1706,8 @@ def test_multilingual_eula_manager():
 
     # 1. Check supported locales
     locales = EulaManager.get_supported_locales()
-    assert len(locales) == 9, f"Expected 9 locales, got {len(locales)}"
-    expected_locs = ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]
+    assert len(locales) == 13, f"Expected 13 locales, got {len(locales)}"
+    expected_locs = ["ko", "en", "zh", "zh_tw", "ja", "de", "es", "fr", "it", "pt", "ru", "vi", "id"]
     for loc in expected_locs:
         assert loc in locales, f"Locale {loc} missing from supported locales"
 
@@ -1617,7 +1721,7 @@ def test_multilingual_eula_manager():
         assert "DragonRPA" in html or "드래곤알피에이" in html or "龙软科技" in html
         assert "2026.09.11" in html and "77.victor.lee@gmail.com" in html
         # Liquidated damages 5x check
-        assert ("5" in html and ("배" in html or "times" in html or "倍" in html or "fachen" in html or "veces" in html or "fois" in html or "vezes" in html or "кратной" in html)), f"5x liquidated damages missing in {loc}"
+        assert ("5" in html and ("배" in html or "times" in html or "倍" in html or "fachen" in html or "veces" in html or "fois" in html or "vezes" in html or "кратной" in html or "volte" in html or "lần" in html or "kali" in html)), f"5x liquidated damages missing in {loc}"
 
         # Plain text should not contain HTML tags
         assert "<b>" not in plain and "<br/>" not in plain and "<h3" not in plain
@@ -1640,7 +1744,7 @@ def test_multilingual_eula_manager():
     dlg.show()
     app.processEvents()
     assert dlg.current_locale == "en"
-    assert dlg.combo_lang.count() == 9
+    assert dlg.combo_lang.count() == 13, f"Expected 13 languages in EULA dialog, got {dlg.combo_lang.count()}"
 
     # Switch to Korean
     ko_idx = dlg.combo_lang.findData("ko")
@@ -1663,7 +1767,7 @@ def test_multilingual_eula_manager():
 
     dlg.close()
     app.processEvents()
-    print("[PASS] test_multilingual_eula_manager (All 9 languages EULA HTML/plain text, 5x damages, Seoul court jurisdiction, and dialog switching 100% valid)")
+    print("[PASS] test_multilingual_eula_manager (All 13 languages EULA HTML/plain text, 5x damages, Seoul court jurisdiction, and dialog switching 100% valid)")
 
 def test_ribbon_overhaul_and_slim_layout():
     from PySide6.QtWidgets import QApplication, QFrame
@@ -1799,6 +1903,7 @@ def test_dialog_multilingual_localization():
     from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QCheckBox
     from i18n_manager import I18nManager
     from manual_capture_studio import AboutDialog, SettingsDialog, LicenseRegistrationDialog, DEFAULT_CONFIG
+    from license_engine import LicenseEngine as _LE
 
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -1807,43 +1912,57 @@ def test_dialog_multilingual_localization():
             return False
         return bool(re.search(r'[\uac00-\ud7a3]', text))
 
-    mgr = I18nManager.instance()
-    # Test English
-    mgr.set_locale("en")
-    about = AboutDialog()
-    assert not has_hangul(about.windowTitle())
-    for w in about.findChildren(QLabel):
-        assert not has_hangul(w.text())
-    for b in about.findChildren(QPushButton):
-        assert not has_hangul(b.text())
-    about.close()
+    # 레지스트리에 유효 라이선스가 저장되면 AboutDialog가 한국어 라이선스 상태 텍스트를
+    # 렌더링하여 영어 로케일 검증이 실패함. 테스트 전 임시 제거 후 복원.
+    _saved_lic = _LE.load_saved_license()
+    if _saved_lic:
+        _LE.save_license("")
+        _LE._cached_status = None
 
-    settings = SettingsDialog(DEFAULT_CONFIG)
-    assert not has_hangul(settings.windowTitle())
-    for w in settings.findChildren(QLabel):
-        assert not has_hangul(w.text())
-    for b in settings.findChildren(QPushButton):
-        assert not has_hangul(b.text())
-    for c in settings.findChildren(QCheckBox):
-        assert not has_hangul(c.text())
-    settings.close()
+    try:
+        mgr = I18nManager.instance()
+        # Test English
+        mgr.set_locale("en")
+        about = AboutDialog()
+        assert not has_hangul(about.windowTitle())
+        for w in about.findChildren(QLabel):
+            assert not has_hangul(w.text()), f"Hangul in AboutDialog label: {w.text()!r}"
+        for b in about.findChildren(QPushButton):
+            assert not has_hangul(b.text())
+        about.close()
 
-    lic = LicenseRegistrationDialog()
-    assert not has_hangul(lic.windowTitle())
-    for w in lic.findChildren(QLabel):
-        assert not has_hangul(w.text())
-    for b in lic.findChildren(QPushButton):
-        assert not has_hangul(b.text())
-    lic.close()
+        settings = SettingsDialog(DEFAULT_CONFIG)
+        assert not has_hangul(settings.windowTitle())
+        for w in settings.findChildren(QLabel):
+            assert not has_hangul(w.text())
+        for b in settings.findChildren(QPushButton):
+            assert not has_hangul(b.text())
+        for c in settings.findChildren(QCheckBox):
+            assert not has_hangul(c.text())
+        settings.close()
 
-    # Test Japanese
-    mgr.set_locale("ja")
-    about_ja = AboutDialog()
-    assert not has_hangul(about_ja.windowTitle())
-    about_ja.close()
+        lic = LicenseRegistrationDialog()
+        assert not has_hangul(lic.windowTitle())
+        for w in lic.findChildren(QLabel):
+            assert not has_hangul(w.text())
+        for b in lic.findChildren(QPushButton):
+            assert not has_hangul(b.text())
+        lic.close()
 
-    # Reset
-    mgr.set_locale("ko")
+        # Test Japanese
+        mgr.set_locale("ja")
+        about_ja = AboutDialog()
+        assert not has_hangul(about_ja.windowTitle())
+        about_ja.close()
+
+        # Reset
+        mgr.set_locale("ko")
+
+    finally:
+        if _saved_lic:
+            _LE.save_license(_saved_lic)
+            _LE._cached_status = None
+
     print("[PASS] test_dialog_multilingual_localization (AboutDialog, SettingsDialog, LicenseDialog 100% localized in 9 languages without residual Hangul)")
 
 def test_google_slides_integration():
@@ -1958,11 +2077,15 @@ def test_ui_theme_styles_windows_and_macos():
 
     # 1. DEFAULT_CONFIG 검증
     assert "ui_style" in DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["ui_style"] == "windows"
+    assert DEFAULT_CONFIG["ui_style"] == "auto"
 
-    # 2. ThemeManager QSS 반환값 검증
+    # 2. ThemeManager QSS 반환값 및 auto 판정 검증
+    assert ThemeManager.AUTO == "auto"
     assert ThemeManager.WINDOWS == "windows"
     assert ThemeManager.MACOS == "macos"
+    assert ThemeManager.get_effective_ui_style("auto") in ("windows", "macos")
+    assert ThemeManager.get_effective_ui_style("windows") == "windows"
+    assert ThemeManager.get_effective_ui_style("macos") == "macos"
 
     win_ribbon_qss = ThemeManager.get_windows_ribbon_qss()
     mac_ribbon_qss = ThemeManager.get_macos_ribbon_qss()
@@ -1979,10 +2102,11 @@ def test_ui_theme_styles_windows_and_macos():
     # 3. SettingsDialog UI 및 설정 저장 검증
     app = QApplication.instance() or QApplication(sys.argv)
     cfg = DEFAULT_CONFIG.copy()
-    cfg["ui_style"] = "windows"
+    cfg["ui_style"] = "auto"
     dlg = SettingsDialog(cfg)
     assert hasattr(dlg, "combo_ui_style")
-    assert dlg.combo_ui_style.count() >= 2
+    assert dlg.combo_ui_style.count() >= 3
+    assert dlg.combo_ui_style.findData("auto") >= 0
     assert dlg.combo_ui_style.findData("windows") >= 0
     assert dlg.combo_ui_style.findData("macos") >= 0
 
@@ -1998,6 +2122,11 @@ def test_ui_theme_styles_windows_and_macos():
     win = ManualStudioWindow()
     assert hasattr(win, "traffic_lights")
     assert isinstance(win.traffic_lights, MacTrafficLight)
+
+    # auto 테마 적용 (OS에 따라 자동 판정)
+    win.apply_ui_theme("auto")
+    assert win.ui_style == "auto"
+    assert win.traffic_lights.isHidden() == (sys.platform != "darwin")
 
     # Windows 테마 적용
     win.apply_ui_theme("windows")
@@ -2017,7 +2146,11 @@ def test_ui_theme_styles_windows_and_macos():
 
     # 5. 다국어 9개 언어 키 무결성 검증
     mgr = I18nManager.instance()
-    for k in ["settings_group_ui_theme", "settings_lbl_ui_style", "ui_style_windows", "ui_style_macos"]:
+    for k in [
+        "settings_group_ui_theme", "settings_lbl_ui_style", "settings_ui_style_auto",
+        "ui_style_windows", "ui_style_macos", "lbl_elbow_route",
+        "tooltip_elbow_tr", "tooltip_elbow_br", "tooltip_elbow_bl", "tooltip_elbow_tl"
+    ]:
         for loc in ["ko", "en", "zh", "ja", "de", "es", "fr", "pt", "ru"]:
             mgr.set_locale(loc)
             val = tr(k)
@@ -2266,6 +2399,421 @@ def test_ai_agent_advanced_annotations_batch_and_doc_export():
 
     print("[PASS] test_ai_agent_advanced_annotations_batch_and_doc_export (Spotlight, Click, Magnifier, Batch Pipeline, MD/HTML export, and 9 MCP tools fully valid)")
 
+
+# ================================================================================
+# [v1.4.0.Build.18] 하이브리드 라이선스 인증 엔진 테스트 (4종)
+# ================================================================================
+
+def test_cache_token_save_load():
+    """캐시 토큰 저장 → 로드 → 무결성 검증 → 만료 시뮬레이션"""
+    print("\n[TEST] test_cache_token_save_load")
+    from license_engine import OnlineLicenseVerifier
+    from datetime import datetime, timedelta
+
+    v = OnlineLicenseVerifier
+    now = datetime.now()
+
+    token = {
+        "serial_key": "MS1P-TEST0000-dGVzdA",
+        "hwid": "DRPA-TEST-1234-ABCD",
+        "issued_to": "테스트 주식회사",
+        "license_type": "PERPETUAL",
+        "expiry": "NONE",
+        "cached_at": now.strftime("%Y-%m-%d"),
+        "cache_expires_at": (now + timedelta(days=30)).strftime("%Y-%m-%d"),
+        "last_online_at": now.strftime("%Y-%m-%d"),
+    }
+
+    ok = v.save_cache_token(token)
+    assert ok, "캐시 토큰 저장 실패"
+
+    loaded = v.load_cache_token()
+    assert loaded is not None, "캐시 토큰 로드 실패"
+    assert loaded["issued_to"] == "테스트 주식회사", f"issued_to 불일치: {loaded['issued_to']}"
+    assert loaded["license_type"] == "PERPETUAL", "license_type 불일치"
+    assert v.is_cache_valid(loaded), "30일 캐시 유효 기간 판정 오류"
+    assert not v.is_license_expired(loaded), "NONE 영구 라이선스 만료 판정 오류"
+
+    expired_token = dict(loaded)
+    expired_token["cache_expires_at"] = "2000-01-01"
+    expired_token.pop("sig", None)
+    assert not v.is_cache_valid(expired_token), "만료된 캐시를 유효로 잘못 판정"
+
+    print("[PASS] test_cache_token_save_load")
+
+
+def test_grace_period_logic():
+    """오프라인 유예 기간 14일 경계값 정확도 검증"""
+    print("\n[TEST] test_grace_period_logic")
+    from license_engine import OnlineLicenseVerifier
+    from datetime import datetime, timedelta
+
+    v = OnlineLicenseVerifier
+    assert v.GRACE_PERIOD_DAYS == 14, f"유예 기간이 14일이 아님: {v.GRACE_PERIOD_DAYS}"
+    now = datetime.now()
+
+    token_13d = {"last_online_at": (now - timedelta(days=13)).strftime("%Y-%m-%d")}
+    grace = v.get_grace_remaining_days(token_13d)
+    assert grace == 1, f"13일 경과 시 잔여 유예일이 1이어야 함: {grace}"
+
+    token_14d = {"last_online_at": (now - timedelta(days=14)).strftime("%Y-%m-%d")}
+    assert v.get_grace_remaining_days(token_14d) == 0, "14일 경과 시 잔여 유예일이 0이어야 함"
+
+    token_today = {"last_online_at": now.strftime("%Y-%m-%d")}
+    assert v.get_grace_remaining_days(token_today) == 14, "당일 인증 시 잔여 유예일이 14이어야 함"
+
+    expired_token = {"expiry": (now - timedelta(days=1)).strftime("%Y-%m-%d")}
+    assert v.is_license_expired(expired_token), "어제 만료된 라이선스를 유효로 잘못 판정"
+    assert not v.is_license_expired({"expiry": "NONE"}), "영구 라이선스를 만료로 잘못 판정"
+
+    print("[PASS] test_grace_period_logic")
+
+
+def test_offline_lic_file_verify():
+    """폐쇄망 .lic 파일 생성 → 정상 검증 → 위변조 감지"""
+    print("\n[TEST] test_offline_lic_file_verify")
+    import os as _os, json, tempfile
+    from license_engine import LicenseFileGenerator, OnlineLicenseVerifier, LicenseType
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lic_path = _os.path.join(tmpdir, "license.lic")
+
+        ok, path, msg = LicenseFileGenerator.generate_offline_lic(
+            hwid="DRPA-TEST-9999-ZZZZ",
+            issued_to="폐쇄망 테스트 공장",
+            expiry="NONE",
+            license_type=LicenseType.AIR_GAPPED_SITE,
+            output_path=lic_path,
+        )
+        assert ok, f".lic 파일 생성 실패: {msg}"
+        assert _os.path.exists(lic_path), ".lic 파일이 생성되지 않음"
+
+        v_ok, v_data, v_msg = OnlineLicenseVerifier.verify_offline_lic_file(lic_path)
+        assert v_ok, f".lic 정상 검증 실패: {v_msg}"
+        assert v_data.get("issued_to") == "폐쇄망 테스트 공장", f"issued_to 불일치: {v_data.get('issued_to')}"
+
+        with open(lic_path, encoding="utf-8") as f:
+            lic_json = json.load(f)
+        lic_json["sig"] = "FAKESIG" + "A" * 57
+        with open(lic_path, "w", encoding="utf-8") as f:
+            json.dump(lic_json, f)
+
+        t_ok, _, t_msg = OnlineLicenseVerifier.verify_offline_lic_file(lic_path)
+        assert not t_ok, "위변조된 .lic 파일을 정상으로 잘못 판정"
+        assert "위변조" in t_msg, f"위변조 오류 메시지 미포함: {t_msg}"
+
+        expired_path = _os.path.join(tmpdir, "expired.lic")
+        e_ok, _, _ = LicenseFileGenerator.generate_offline_lic(
+            hwid="DRPA-TEST-9999-ZZZZ",
+            issued_to="만료 테스트",
+            expiry="2000-01-01",
+            license_type=LicenseType.AIR_GAPPED_SITE,
+            output_path=expired_path,
+        )
+        assert e_ok
+        exp_ok, _, exp_msg = OnlineLicenseVerifier.verify_offline_lic_file(expired_path)
+        assert not exp_ok, "만료된 .lic를 유효로 잘못 판정"
+        assert "만료" in exp_msg, f"만료 오류 메시지 미포함: {exp_msg}"
+
+    print("[PASS] test_offline_lic_file_verify")
+
+
+def test_hybrid_license_flow_offline():
+    """HybridLicenseCheck.run() 3-레이어 폴백 시나리오"""
+    print("\n[TEST] test_hybrid_license_flow_offline")
+    from datetime import datetime, timedelta
+    from license_engine import (
+        HybridLicenseCheck, OnlineLicenseVerifier,
+        LicenseEngine, LicenseType
+    )
+
+    v = OnlineLicenseVerifier
+    now = datetime.now()
+
+    # 시나리오 A: 캐시 유효 → mode=="cache"
+    token_valid = {
+        "serial_key": "MS1P-DUMMY0-dGVzdA",
+        "hwid": LicenseEngine.get_hwid(),
+        "issued_to": "캐시 테스트",
+        "license_type": "PERPETUAL",
+        "expiry": "NONE",
+        "cached_at": now.strftime("%Y-%m-%d"),
+        "cache_expires_at": (now + timedelta(days=20)).strftime("%Y-%m-%d"),
+        "last_online_at": now.strftime("%Y-%m-%d"),
+    }
+    v.save_cache_token(token_valid)
+    result = HybridLicenseCheck.run(serial_key="MS1P-DUMMY0-dGVzdA", async_refresh=False)
+    assert result["mode"] == "cache", f"캐시 유효 시 mode가 'cache'이어야 함: {result['mode']}"
+    assert result["is_licensed"] is True
+
+    # 시나리오 B: 캐시 만료 + 온라인 실패 → grace
+    hwid = LicenseEngine.get_hwid()
+    valid_key = LicenseEngine.generate_license_key(LicenseType.PERPETUAL, hwid, "유예 테스트", "NONE")
+    LicenseEngine.save_license(valid_key)
+
+    token_cache_exp = {
+        "serial_key": valid_key,
+        "hwid": hwid,
+        "issued_to": "유예 테스트",
+        "license_type": "PERPETUAL",
+        "expiry": "NONE",
+        "cached_at": (now - timedelta(days=35)).strftime("%Y-%m-%d"),
+        "cache_expires_at": (now - timedelta(days=5)).strftime("%Y-%m-%d"),
+        "last_online_at": (now - timedelta(days=10)).strftime("%Y-%m-%d"),
+    }
+    v.save_cache_token(token_cache_exp)
+    result_grace = HybridLicenseCheck.run(serial_key=valid_key, async_refresh=False)
+    assert result_grace["is_licensed"] is True, f"유예 기간 중 is_licensed가 False: {result_grace}"
+    assert result_grace["mode"] in ("grace", "cache"), f"기대: grace/cache, 실제: {result_grace['mode']}"
+    if result_grace["mode"] == "grace":
+        assert result_grace["grace_days_left"] == 4, f"유예 잔여일 4 기대: {result_grace['grace_days_left']}"
+
+    # 시나리오 C: 라이선스 만료 → mode=="expired" 즉시 차단
+    expired_key = LicenseEngine.generate_license_key(LicenseType.SUBSCRIPTION_1M, hwid, "만료 테스트", "2000-01-01")
+    token_exp = {
+        "serial_key": expired_key, "hwid": hwid,
+        "issued_to": "만료 테스트", "license_type": "SUB_1M",
+        "expiry": "2000-01-01",
+        "cached_at": now.strftime("%Y-%m-%d"),
+        "cache_expires_at": (now + timedelta(days=20)).strftime("%Y-%m-%d"),
+        "last_online_at": now.strftime("%Y-%m-%d"),
+    }
+    v.save_cache_token(token_exp)
+    result_exp = HybridLicenseCheck.run(serial_key=expired_key, async_refresh=False)
+    assert result_exp["mode"] == "expired", f"만료 시 mode='expired' 기대: {result_exp['mode']}"
+    assert result_exp["is_licensed"] is False
+
+    print("[PASS] test_hybrid_license_flow_offline")
+
+
+def test_ocr_i18n_keys():
+    """OCR 기능의 i18n 키가 13개 언어 모두에 존재하는지 검증."""
+    import sys
+    sys.path.insert(0, r"d:\01.AntiGravity\999.매뉴얼제작")
+    from i18n_manager import I18nManager
+
+    mgr = I18nManager()
+    catalog = mgr.CATALOG
+    all_locales = list(mgr.SUPPORTED_LOCALES.keys())
+
+    ocr_keys = [
+        "btn_mode_ocr",
+        "grp_ocr",
+        "tooltip_ocr",
+        "ocr_dialog_title",
+        "ocr_copy_btn",
+        "ocr_copy_btn_done",
+        "ocr_close_btn",
+        "ocr_no_text",
+        "ocr_engine_error",
+    ]
+
+    for key in ocr_keys:
+        assert key in catalog, f"OCR i18n 키 누락: '{key}'"
+        for loc in all_locales:
+            val = catalog[key].get(loc, "")
+            assert val, f"OCR i18n 키 '{key}' 언어 '{loc}' 번역 없음"
+
+    print("[PASS] test_ocr_i18n_keys")
+
+
+def test_dimension_line_item():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QImage, QPainter
+    from manual_capture_studio import DimensionLineItem, item_from_dict
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # 1. 수평 치수선 및 거리 계산
+    item_h = DimensionLineItem(QPointF(100, 200), QPointF(420, 200), {"unit": "px"})
+    assert item_h.get_distance() == 320
+    assert item_h.contains(QPointF(250, 200)) is True
+    assert item_h.contains(QPointF(250, 250)) is False
+
+    # 2. 수직 치수선 및 거리 계산
+    item_v = DimensionLineItem(QPointF(150, 100), QPointF(150, 280), {"unit": "dp"})
+    assert item_v.get_distance() == 180
+    assert item_v.contains(QPointF(150, 190)) is True
+
+    # 3. 대각선 치수선
+    item_diag = DimensionLineItem(QPointF(0, 0), QPointF(30, 40))
+    assert item_diag.get_distance() == 50
+
+    # 4. 직렬화 및 역직렬화 (to_dict / from_dict / item_from_dict)
+    d = item_h.to_dict()
+    assert d["type"] == "DimensionLineItem"
+    assert d["start_pos"] == [100.0, 200.0]
+    assert d["end_pos"] == [420.0, 200.0]
+    assert d["style"]["unit"] == "px"
+
+    restored = item_from_dict(d)
+    assert restored is not None
+    assert isinstance(restored, DimensionLineItem)
+    assert restored.get_distance() == 320
+
+    # 5. QPainter 렌더링 무결성
+    img = QImage(500, 300, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    item_h.render(p)
+    item_v.render(p)
+    p.end()
+
+    print("[PASS] test_dimension_line_item (Horizontal/Vertical distance, hit-test, serialization, rendering valid)")
+
+
+def test_stamp_item_rounded_rect_shape():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QImage, QPainter
+    from manual_capture_studio import StampItem, StepArrowItem, item_from_dict
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # 1. 기본 원형 스탬프
+    s_circle = StampItem(1, 100, 100, {"size": 32, "shape": "circle"})
+    assert s_circle.contains(QPointF(100, 100)) is True
+    assert s_circle.contains(QPointF(114, 114)) is False
+
+    # 2. 둥근 사각형 스탬프
+    s_rect = StampItem(2, 200, 200, {"size": 32, "shape": "rounded_rect", "corner_radius": 6})
+    assert s_rect.contains(QPointF(200, 200)) is True
+    assert s_rect.contains(QPointF(214, 214)) is True
+    assert s_rect.contains(QPointF(225, 225)) is False
+
+    # 3. StepArrowItem에서 둥근 사각형 스탬프 연동
+    step_arr = StepArrowItem(
+        3, QPointF(50, 50), QPointF(120, 120),
+        {"size": 32, "shape": "rounded_rect"},
+        {"color": "#E53935", "width": 3}
+    )
+    assert step_arr.contains(QPointF(50, 50)) is True
+    assert step_arr.contains(QPointF(64, 64)) is True
+
+    # 4. 렌더링 무결성 검증
+    img = QImage(300, 300, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    s_circle.render(p)
+    s_rect.render(p)
+    step_arr.render(p)
+    p.end()
+
+    # 5. 직렬화 무결성
+    d = s_rect.to_dict()
+    assert d["style"]["shape"] == "rounded_rect"
+    restored = item_from_dict(d)
+    assert restored.style["shape"] == "rounded_rect"
+
+    print("[PASS] test_stamp_item_rounded_rect_shape (Circle & RoundedRect hit-test, rendering, serialization valid)")
+
+
+def test_item_properties_dialog_and_sync():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF
+    from manual_capture_studio import (
+        StampItem, DimensionLineItem, HighlightBoxItem,
+        StudioCanvasWidget, ItemPropertiesDialog, DEFAULT_CONFIG
+    )
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    canvas = StudioCanvasWidget()
+    canvas.config = DEFAULT_CONFIG.copy()
+
+    # 1. StampItem에 대한 ItemPropertiesDialog 검증
+    stamp = StampItem(1, 100, 100, {"size": 32, "bg_color": "#E53935", "shape": "circle"})
+    canvas.items.append(stamp)
+    dlg = ItemPropertiesDialog(stamp, canvas)
+    assert hasattr(dlg, "spn_stamp_size")
+    assert hasattr(dlg, "cmb_stamp_shape")
+    assert hasattr(dlg, "chk_apply_defaults")
+
+    # 속성 변경 적용
+    dlg.spn_stamp_size.setValue(40)
+    dlg.cmb_stamp_shape.setCurrentIndex(1)  # rounded_rect
+    dlg.chk_apply_defaults.setChecked(True)
+    dlg._on_apply_and_accept()
+
+    assert stamp.style["size"] == 40
+    assert stamp.style["shape"] == "rounded_rect"
+    assert canvas.config["stamp_style"]["size"] == 40
+    assert canvas.config["stamp_style"]["shape"] == "rounded_rect"
+
+    # 2. DimensionLineItem에 대한 ItemPropertiesDialog 검증
+    dim = DimensionLineItem(QPointF(50, 50), QPointF(250, 50), {"color": "#007AFF", "width": 2})
+    canvas.items.append(dim)
+    dlg_dim = ItemPropertiesDialog(dim, canvas)
+    assert hasattr(dlg_dim, "spn_start_x")
+    assert hasattr(dlg_dim, "spn_end_x")
+    assert hasattr(dlg_dim, "spn_line_width")
+
+    dlg_dim.spn_line_width.setValue(4)
+    dlg_dim.chk_apply_defaults.setChecked(True)
+    dlg_dim._on_apply_and_accept()
+
+    assert dim.style["width"] == 4
+    assert canvas.config["dimension_style"]["width"] == 4
+
+    print("[PASS] test_item_properties_dialog_and_sync (Dialog UI, item property update, and default config sync valid)")
+
+
+def test_dimension_and_properties_i18n_keys():
+    from i18n_manager import I18nManager
+
+    mgr = I18nManager()
+    catalog = mgr.CATALOG
+    all_locales = list(mgr.SUPPORTED_LOCALES.keys())
+
+    new_keys = [
+        "btn_mode_dimension",
+        "tooltip_dimension",
+        "grp_dimension",
+        "stamp_shape_circle",
+        "stamp_shape_rounded_rect",
+        "stamp_shape_label",
+        "menu_item_properties",
+        "menu_item_delete",
+        "menu_item_bring_front",
+        "menu_item_send_back",
+        "prop_dialog_title",
+        "prop_grp_coord",
+        "prop_coord_x",
+        "prop_coord_y",
+        "prop_coord_start_x",
+        "prop_coord_start_y",
+        "prop_coord_end_x",
+        "prop_coord_end_y",
+        "prop_grp_size",
+        "prop_size_width",
+        "prop_size_height",
+        "prop_size_diameter",
+        "prop_line_width",
+        "prop_head_size",
+        "prop_corner_radius",
+        "prop_grp_font",
+        "prop_font_family",
+        "prop_font_size",
+        "prop_font_bold",
+        "prop_text_content",
+        "prop_grp_colors",
+        "prop_stroke_color",
+        "prop_fill_color",
+        "prop_text_color",
+        "prop_apply_to_defaults",
+        "prop_btn_ok",
+        "prop_btn_cancel",
+    ]
+
+    for key in new_keys:
+        assert key in catalog, f"신규 i18n 키 누락: '{key}'"
+        for loc in all_locales:
+            val = catalog[key].get(loc, "")
+            assert val, f"신규 i18n 키 '{key}' 언어 '{loc}' 번역 없음"
+
+    print("[PASS] test_dimension_and_properties_i18n_keys (All 37 dimension & property keys in 13 languages 100% verified)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -2312,8 +2860,14 @@ if __name__ == "__main__":
     test_ui_theme_styles_windows_and_macos()
     test_ai_agent_cli_and_mcp_server()
     test_ai_agent_advanced_annotations_batch_and_doc_export()
-    print("\nALL 45 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP TESTS PASSED 100%!")
+    test_cache_token_save_load()
+    test_grace_period_logic()
+    test_offline_lic_file_verify()
+    test_hybrid_license_flow_offline()
+    test_ocr_i18n_keys()
+    test_dimension_line_item()
+    test_stamp_item_rounded_rect_shape()
+    test_item_properties_dialog_and_sync()
+    test_dimension_and_properties_i18n_keys()
+    print("\nALL 54 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR, DIMENSION LINE & PROPERTIES TESTS PASSED 100%!")
     os._exit(0)
-
-
-

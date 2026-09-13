@@ -14,7 +14,9 @@
     "font_family": "Malgun Gothic",
     "font_bold": true,
     "border_color": "#FFFFFF",
-    "border_width": 2
+    "border_width": 2,
+    "shape": "circle",
+    "corner_radius": 6
   },
   "text_style": {
     "font_family": "Malgun Gothic",
@@ -75,6 +77,18 @@
     "shadow_offset_y": 2.0,
     "preset_id": "white_pop"
   },
+  "dimension_style": {
+    "color": "#007AFF",
+    "width": 2,
+    "tick_size": 8,
+    "font_size": 11,
+    "font_family": "Malgun Gothic",
+    "font_bold": true,
+    "badge_bg": "#007AFF",
+    "badge_text_color": "#FFFFFF",
+    "unit": "px",
+    "cap_style": "bracket"
+  },
   "custom_fonts": [],
   "target_monitor": 0,
   "fixed_rect_enabled": true,
@@ -100,7 +114,7 @@
     "title_font_color": "#1E88E5",
     "title_template": "Step {n}. [단계명 입력]"
   },
-  "locale": "auto",
+  "locale": "ko",
   "auto_save_enabled": true,
   "auto_save_interval_min": 5,
   "ribbon_display_mode": "text",

@@ -12,6 +12,10 @@ import hmac
 import hashlib
 import base64
 import winreg
+import threading
+import urllib.request
+import urllib.error
+from pathlib import Path
 from datetime import datetime, timedelta
 
 class LicenseType:
@@ -244,3 +248,517 @@ class LicenseEngine:
     @classmethod
     def is_licensed(cls) -> bool:
         return cls.check_license_status().get("is_licensed", False)
+
+
+# ================================================================================
+# [v1.4.0.Build.18] 하이브리드 라이선스 인증 엔진 (3-레이어 아키텍처)
+# OnlineLicenseVerifier / HybridLicenseCheck / LicenseFileGenerator
+# ================================================================================
+
+class OnlineLicenseVerifier:
+    """
+    중앙 인증 서버 통신 + 로컬 캐시 토큰 관리 + 오프라인 .lic 파일 검증
+
+    인증 레이어:
+    1. 로컬 캐시 토큰 (유효기간 30일) → 즉시 실행
+    2. 온라인 서버 인증 → 캐시 갱신
+    3. 오프라인 유예 기간 (14일, 마지막 온라인 성공 기준)
+    4. 폐쇄망 .lic 파일 (HMAC 서명 검증)
+    """
+
+    VERIFY_URL = "https://license.dragonrpa.co.kr/v1/verify"  # 플레이스홀더 — 서버 구축 후 교체
+    CACHE_TOKEN_DAYS = 30           # 캐시 토큰 유효 기간 (일)
+    GRACE_PERIOD_DAYS = 14          # 오프라인 유예 기간 (일)
+    ONLINE_TIMEOUT_SEC = 5          # 서버 응답 타임아웃 (초)
+    OFFLINE_LIC_FILENAME = "license.lic"
+
+    REG_CACHE_SUBKEY = r"Software\DragonRPA\ManualStudio\License"
+    REG_CACHE_VAL = "CacheToken"
+
+    _cache_dir = Path(os.environ.get("APPDATA", ".")) / "DragonRPA" / "ManualStudio"
+
+    # ── 내부 유틸 ─────────────────────────────────────────────────────────────
+
+    @classmethod
+    def _get_cache_file(cls) -> Path:
+        cls._cache_dir.mkdir(parents=True, exist_ok=True)
+        return cls._cache_dir / "auth_cache.bin"
+
+    @classmethod
+    def _sign_token(cls, data: dict) -> str:
+        """dict → HMAC-SHA256 서명 (sig 필드 자신은 제외)"""
+        payload_json = json.dumps(data, separators=(',', ':'), sort_keys=True)
+        return hmac.new(LicenseEngine.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+
+    # ── 캐시 토큰 저장 / 로드 ─────────────────────────────────────────────────
+
+    @classmethod
+    def save_cache_token(cls, token_dict: dict) -> bool:
+        """암호화 캐시 토큰을 레지스트리(1순위) + 파일(2순위) 이중 저장"""
+        try:
+            sign_data = {k: v for k, v in token_dict.items() if k != "sig"}
+            token_dict["sig"] = cls._sign_token(sign_data)
+            token_b64 = base64.urlsafe_b64encode(
+                json.dumps(token_dict, separators=(',', ':')).encode("utf-8")
+            ).decode("ascii")
+
+            try:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cls.REG_CACHE_SUBKEY) as key:
+                    winreg.SetValueEx(key, cls.REG_CACHE_VAL, 0, winreg.REG_SZ, token_b64)
+            except Exception:
+                pass
+
+            try:
+                cls._get_cache_file().write_text(token_b64, encoding="utf-8")
+            except Exception:
+                pass
+
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def load_cache_token(cls) -> dict | None:
+        """캐시 토큰 로드 → HMAC 무결성 검증 후 반환. 위변조/없음이면 None."""
+        token_b64 = ""
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, cls.REG_CACHE_SUBKEY, 0, winreg.KEY_READ) as key:
+                token_b64, _ = winreg.QueryValueEx(key, cls.REG_CACHE_VAL)
+        except Exception:
+            pass
+
+        if not token_b64:
+            try:
+                cache_file = cls._get_cache_file()
+                if cache_file.exists():
+                    token_b64 = cache_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
+        if not token_b64:
+            return None
+
+        try:
+            missing = len(token_b64) % 4
+            if missing:
+                token_b64 += "=" * (4 - missing)
+            token_dict = json.loads(base64.urlsafe_b64decode(token_b64.encode("ascii")).decode("utf-8"))
+        except Exception:
+            return None
+
+        stored_sig = token_dict.get("sig", "")
+        sign_data = {k: v for k, v in token_dict.items() if k != "sig"}
+        if not hmac.compare_digest(stored_sig, cls._sign_token(sign_data)):
+            return None  # 위변조 감지
+
+        return token_dict
+
+    # ── 유효성 판정 ───────────────────────────────────────────────────────────
+
+    @classmethod
+    def is_cache_valid(cls, token_dict: dict) -> bool:
+        """캐시 토큰 30일 유효 기간 이내인지 확인"""
+        if not token_dict:
+            return False
+        try:
+            cache_exp = datetime.strptime(token_dict["cache_expires_at"], "%Y-%m-%d")
+            return datetime.now() <= cache_exp.replace(hour=23, minute=59, second=59)
+        except Exception:
+            return False
+
+    @classmethod
+    def is_license_expired(cls, token_dict: dict) -> bool:
+        """
+        라이선스 자체 만료일 즉시 판정 — 유예 기간 없음.
+        expiry == "NONE" 이면 영구 라이선스(False).
+        """
+        if not token_dict:
+            return True
+        expiry_str = token_dict.get("expiry", "NONE")
+        if expiry_str == "NONE":
+            return False
+        try:
+            exp_dt = datetime.strptime(expiry_str, "%Y-%m-%d")
+            return datetime.now() > exp_dt.replace(hour=23, minute=59, second=59)
+        except Exception:
+            return True
+
+    @classmethod
+    def get_grace_remaining_days(cls, token_dict: dict) -> int:
+        """
+        마지막 온라인 인증 성공 시각 기준 오프라인 유예 잔여 일수.
+        0 이하 → 유예 초과.
+        """
+        if not token_dict:
+            return 0
+        try:
+            last_online = datetime.strptime(token_dict["last_online_at"], "%Y-%m-%d")
+            elapsed = (datetime.now() - last_online).days
+            return max(0, cls.GRACE_PERIOD_DAYS - elapsed)
+        except Exception:
+            return 0
+
+    # ── 온라인 서버 인증 ──────────────────────────────────────────────────────
+
+    @classmethod
+    def verify_online(cls, serial_key: str, hwid: str) -> tuple:
+        """
+        중앙 서버 POST 인증.
+        성공 시 내부적으로 캐시 토큰 자동 저장.
+        반환: (success: bool, token_dict: dict, message: str)
+
+        서버 요청 페이로드:
+            {"serial_key": "...", "hwid": "...", "client_version": "1.4.0"}
+        서버 응답 예시:
+            {"status": "ok", "issued_to": "...", "license_type": "PERPETUAL", "expiry": "NONE"}
+        """
+        try:
+            req_body = json.dumps({
+                "serial_key": serial_key.strip(),
+                "hwid": hwid.strip(),
+                "client_version": "1.4.0",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                cls.VERIFY_URL,
+                data=req_body,
+                headers={"Content-Type": "application/json", "User-Agent": "ManualStudio/1.4.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=cls.ONLINE_TIMEOUT_SEC) as resp:
+                resp_body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.URLError:
+            return False, {}, "서버에 연결할 수 없습니다. (네트워크 오류)"
+        except Exception as e:
+            return False, {}, f"인증 서버 통신 오류: {e}"
+
+        if resp_body.get("status") != "ok":
+            return False, {}, resp_body.get("message", "서버 인증 거부")
+
+        now_str = datetime.now().strftime("%Y-%m-%d")
+        token_dict = {
+            "serial_key": serial_key.strip(),
+            "hwid": hwid.strip(),
+            "issued_to": resp_body.get("issued_to", "Registered User"),
+            "license_type": resp_body.get("license_type", "PERPETUAL"),
+            "expiry": resp_body.get("expiry", "NONE"),
+            "cached_at": now_str,
+            "cache_expires_at": (datetime.now() + timedelta(days=cls.CACHE_TOKEN_DAYS)).strftime("%Y-%m-%d"),
+            "last_online_at": now_str,
+        }
+        cls.save_cache_token(token_dict)
+        return True, token_dict, "온라인 인증 성공"
+
+    # ── 폐쇄망 .lic 파일 검증 ────────────────────────────────────────────────
+
+    @classmethod
+    def verify_offline_lic_file(cls, lic_path: str = None) -> tuple:
+        """
+        폐쇄망 오프라인 .lic 파일 HMAC 검증.
+        탐색 순서: ① 지정 경로 ② 실행파일 디렉터리 ③ APPDATA ④ 현재 디렉터리
+
+        반환: (success: bool, lic_data: dict, message: str)
+        """
+        search_paths = []
+        if lic_path:
+            search_paths.append(Path(lic_path))
+        try:
+            search_paths.append(Path(sys.executable).parent / cls.OFFLINE_LIC_FILENAME)
+        except Exception:
+            pass
+        search_paths.append(cls._cache_dir / cls.OFFLINE_LIC_FILENAME)
+        search_paths.append(Path(".") / cls.OFFLINE_LIC_FILENAME)
+
+        lic_data = None
+        found_path = None
+        for p in search_paths:
+            try:
+                if p.exists():
+                    lic_data = json.loads(p.read_text(encoding="utf-8"))
+                    found_path = p
+                    break
+            except Exception:
+                continue
+
+        if not lic_data:
+            return False, {}, ".lic 파일을 찾을 수 없습니다."
+
+        # 서명 분리 후 검증
+        stored_sig = lic_data.pop("sig", "")
+        payload_json = json.dumps(lic_data, separators=(',', ':'), sort_keys=True)
+        expected_sig = hmac.new(LicenseEngine.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+        if not hmac.compare_digest(stored_sig, expected_sig):
+            return False, {}, f".lic 파일이 위변조되었습니다. ({found_path})"
+
+        # HWID 노드락 (ENTERPRISE / AIR_GAPPED 제외)
+        lic_type = lic_data.get("type", "")
+        if lic_type not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
+            curr = LicenseEngine.get_hwid()
+            if lic_data.get("hwid", "") != curr:
+                return False, {}, f".lic 파일이 다른 PC용으로 발급되었습니다. (발급 HWID: {lic_data.get('hwid')})"
+
+        # 만료일 즉시 판정 (유예 없음)
+        expiry_str = lic_data.get("expiry", "NONE")
+        if expiry_str != "NONE":
+            try:
+                exp_dt = datetime.strptime(expiry_str, "%Y-%m-%d")
+                if datetime.now() > exp_dt.replace(hour=23, minute=59, second=59):
+                    return False, {}, f".lic 라이선스 만료일({expiry_str})이 지났습니다."
+            except Exception:
+                return False, {}, ".lic 만료일 형식 오류"
+
+        return True, lic_data, f"오프라인 .lic 인증 성공 ({found_path})"
+
+
+class HybridLicenseCheck:
+    """
+    3-레이어 하이브리드 라이선스 인증 플로우 통합 실행기
+
+    mode 반환값:
+    - "cache"       : 로컬 캐시 토큰 유효 (0초 즉시 실행)
+    - "online"      : 온라인 서버 인증 성공 (캐시 갱신)
+    - "grace"       : 오프라인 유예 기간 이내 (경고 배너 표시 후 실행)
+    - "offline_lic" : 폐쇄망 .lic 파일 인증 성공
+    - "trial"       : 미등록 평가판
+    - "expired"     : 라이선스 만료 (즉시 차단, 유예 없음)
+    - "blocked"     : 유예 초과 / 인증 완전 실패
+    """
+
+    _TYPE_NAMES = {
+        LicenseType.PERPETUAL: "정식 영구 라이선스",
+        LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스",
+        LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스",
+        LicenseType.ENTERPRISE: "엔터프라이즈 볼륨 라이선스",
+        LicenseType.AIR_GAPPED_SITE: "오프라인 사이트 라이선스",
+        LicenseType.TRIAL_EXT_14D: "14일 평가 연장 라이선스",
+    }
+
+    @classmethod
+    def run(cls, serial_key: str = None, async_refresh: bool = True) -> dict:
+        """
+        하이브리드 인증 실행. 비블로킹(async_refresh=True)이 기본.
+
+        Returns:
+            {
+              "is_licensed": bool,
+              "mode": str,
+              "license_type": str,
+              "issued_to": str,
+              "expiry": str,
+              "badge_text": str,
+              "message": str,
+              "grace_days_left": int,
+            }
+        """
+        v = OnlineLicenseVerifier
+
+        # 시리얼 키 확보
+        if not serial_key:
+            serial_key = LicenseEngine.load_saved_license()
+        if not serial_key:
+            return cls._trial("미등록 평가판 모드입니다.")
+
+        # ── 1단계: 로컬 캐시 토큰 ──────────────────────────────────────────
+        token = v.load_cache_token()
+        if token:
+            if v.is_license_expired(token):          # 만료 즉시 차단
+                return cls._expired(token.get("expiry", ""))
+            if v.is_cache_valid(token):               # 캐시 유효 → 즉시 실행
+                if async_refresh:
+                    cls._schedule_bg_refresh(serial_key, token)
+                return cls._ok("cache", token, "로컬 캐시 인증 (즉시 실행)")
+
+        # ── 로컬 HMAC 시리얼 키 선행 검증 ──────────────────────────────────
+        hwid = LicenseEngine.get_hwid()
+        local_valid, local_payload, local_msg = LicenseEngine.verify_license_key(serial_key, hwid)
+        if not local_valid:
+            return cls._blocked(local_msg)
+
+        # 라이선스 자체 만료 즉시 판정
+        expiry_str = local_payload.get("expiry", "NONE")
+        if expiry_str != "NONE":
+            try:
+                if datetime.now() > datetime.strptime(expiry_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59):
+                    return cls._expired(expiry_str)
+            except Exception:
+                pass
+
+        # ── 2단계: 온라인 서버 인증 ─────────────────────────────────────────
+        ok, new_token, msg = v.verify_online(serial_key, hwid)
+        if ok:
+            return cls._ok("online", new_token, "온라인 서버 인증 성공")
+
+        # ── 3단계: 오프라인 유예 기간 (14일) ────────────────────────────────
+        if token:
+            grace = v.get_grace_remaining_days(token)
+            if grace > 0:
+                return cls._grace(token, grace)
+
+        # ── 4단계: 폐쇄망 .lic 파일 ─────────────────────────────────────────
+        lic_ok, lic_data, lic_msg = v.verify_offline_lic_file()
+        if lic_ok:
+            return {
+                "is_licensed": True,
+                "mode": "offline_lic",
+                "license_type": lic_data.get("type", LicenseType.AIR_GAPPED_SITE),
+                "issued_to": lic_data.get("issued_to", "Offline User"),
+                "expiry": lic_data.get("expiry", "NONE"),
+                "badge_text": "오프라인 사이트 라이선스",
+                "message": lic_msg,
+                "grace_days_left": 0,
+            }
+
+        # ── 전 레이어 실패 ────────────────────────────────────────────────────
+        return cls._blocked(f"인증 실패: 서버 연결 불가, 유예 기간 초과, .lic 파일 없음. ({msg})")
+
+    # ── 백그라운드 캐시 갱신 ──────────────────────────────────────────────────
+
+    @classmethod
+    def _schedule_bg_refresh(cls, serial_key: str, token: dict):
+        """캐시 만료 7일 전부터 백그라운드 스레드로 조용히 서버 갱신"""
+        try:
+            cache_exp = datetime.strptime(token.get("cache_expires_at", "2000-01-01"), "%Y-%m-%d")
+            if (cache_exp - datetime.now()).days > 7:
+                return
+        except Exception:
+            pass
+
+        def _refresh():
+            OnlineLicenseVerifier.verify_online(serial_key, LicenseEngine.get_hwid())
+
+        threading.Thread(target=_refresh, daemon=True, name="LicenseRefreshBG").start()
+
+    # ── 결과 빌더 헬퍼 ───────────────────────────────────────────────────────
+
+    @classmethod
+    def _ok(cls, mode: str, token: dict, message: str) -> dict:
+        l_type = token.get("license_type", LicenseType.PERPETUAL)
+        return {
+            "is_licensed": True,
+            "mode": mode,
+            "license_type": l_type,
+            "issued_to": token.get("issued_to", "Registered User"),
+            "expiry": token.get("expiry", "NONE"),
+            "badge_text": cls._TYPE_NAMES.get(l_type, "정식 라이선스"),
+            "message": message,
+            "grace_days_left": 0,
+        }
+
+    @classmethod
+    def _grace(cls, token: dict, grace_days: int) -> dict:
+        return {
+            "is_licensed": True,
+            "mode": "grace",
+            "license_type": token.get("license_type", LicenseType.PERPETUAL),
+            "issued_to": token.get("issued_to", "Registered User"),
+            "expiry": token.get("expiry", "NONE"),
+            "badge_text": f"오프라인 유예 ({grace_days}일 남음)",
+            "message": f"서버 연결 불가 — 오프라인 유예 {grace_days}일 남음. 인터넷 연결 시 자동 갱신됩니다.",
+            "grace_days_left": grace_days,
+        }
+
+    @classmethod
+    def _expired(cls, expiry_str: str) -> dict:
+        return {
+            "is_licensed": False,
+            "mode": "expired",
+            "license_type": "EXPIRED",
+            "issued_to": "",
+            "expiry": expiry_str,
+            "badge_text": "라이선스 만료",
+            "message": f"라이선스 유효 기간({expiry_str})이 만료되었습니다. 갱신 후 사용하십시오.",
+            "grace_days_left": 0,
+        }
+
+    @classmethod
+    def _blocked(cls, message: str) -> dict:
+        return {
+            "is_licensed": False,
+            "mode": "blocked",
+            "license_type": "INVALID",
+            "issued_to": "",
+            "expiry": "",
+            "badge_text": "인증 실패",
+            "message": message,
+            "grace_days_left": 0,
+        }
+
+    @classmethod
+    def _trial(cls, message: str) -> dict:
+        return {
+            "is_licensed": False,
+            "mode": "trial",
+            "license_type": "TRIAL",
+            "issued_to": "Evaluation User",
+            "expiry": "",
+            "badge_text": "평가판 (Trial)",
+            "message": message,
+            "grace_days_left": 0,
+        }
+
+
+class LicenseFileGenerator:
+    """
+    폐쇄망 오프라인 .lic 파일 생성기 (관리자 / 서버 전용 도구)
+
+    고객 PC의 HWID를 받아 암호화 서명된 .lic 파일을 생성.
+    생성된 파일을 USB로 복사하여 폐쇄망 PC에 배포.
+
+    .lic 파일 탐색 위치 (OnlineLicenseVerifier.verify_offline_lic_file 참조):
+    ① 실행파일 디렉터리  ② %APPDATA%\\DragonRPA\\ManualStudio\\  ③ 현재 디렉터리
+    """
+
+    @classmethod
+    def generate_offline_lic(
+        cls,
+        hwid: str,
+        issued_to: str,
+        expiry: str = "NONE",
+        license_type: str = LicenseType.AIR_GAPPED_SITE,
+        max_seats: int = 1,
+        output_path: str = None,
+    ) -> tuple:
+        """
+        폐쇄망 .lic 파일 생성.
+
+        Args:
+            hwid         : 대상 PC HWID (DRPA-XXXX-XXXX-XXXX). ENTERPRISE/AIR_GAPPED는 "ENTERPRISE" 로 통일.
+            issued_to    : 발급 대상 회사명
+            expiry       : 만료일 "YYYY-MM-DD" 또는 "NONE" (영구)
+            license_type : LicenseType 상수
+            max_seats    : 허용 시트 수
+            output_path  : 저장 경로 (None → 현재 디렉터리 license.lic)
+
+        Returns:
+            (success: bool, file_path: str, message: str)
+        """
+        now_str = datetime.now().strftime("%Y-%m-%d")
+        clean_hwid = (
+            "ENTERPRISE"
+            if license_type in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE)
+            else hwid.strip().upper()
+        )
+
+        lic_data = {
+            "version": "1.0",
+            "type": license_type,
+            "hwid": clean_hwid,
+            "issued_to": issued_to.strip().replace(":", "_").replace("|", "_"),
+            "expiry": expiry,
+            "seats": max_seats,
+            "issued_at": now_str,
+        }
+
+        payload_json = json.dumps(lic_data, separators=(',', ':'), sort_keys=True)
+        sig = hmac.new(LicenseEngine.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+        lic_data["sig"] = sig
+
+        if not output_path:
+            output_path = OnlineLicenseVerifier.OFFLINE_LIC_FILENAME
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(lic_data, f, ensure_ascii=False, indent=2)
+            return True, output_path, f"오프라인 .lic 파일 생성 완료: {output_path}"
+        except Exception as e:
+            return False, "", f".lic 파일 저장 실패: {e}"

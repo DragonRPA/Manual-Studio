@@ -19,13 +19,17 @@ class EulaManager:
     SUPPORTED_LOCALES: Dict[str, str] = {
         "ko": "한국어 (Korean)",
         "en": "English",
-        "zh": "简体中文 (Chinese)",
+        "zh": "简体中文 (Chinese Simplified)",
+        "zh_tw": "繁體中文 (Chinese Traditional)",
         "ja": "日本語 (Japanese)",
         "de": "Deutsch (German)",
         "es": "Español (Spanish)",
         "fr": "Français (French)",
+        "it": "Italiano (Italian)",
         "pt": "Português (Portuguese)",
-        "ru": "Русский (Russian)"
+        "ru": "Русский (Russian)",
+        "vi": "Tiếng Việt (Vietnamese)",
+        "id": "Bahasa Indonesia (Indonesian)"
     }
 
     _DATA = {
@@ -451,6 +455,82 @@ class EulaManager:
             "btn_close": "Закрыть",
             "btn_copy": "📋 Копировать всё",
             "copied_toast": "Текст EULA скопирован в буфер обмена."
+        },
+        "zh_tw": {
+            "title": "龍信軟體有限公司 軟體最終使用者授權合約 (EULA)",
+            "subtitle": "End User License Agreement for Manual Studio | DragonRPA Co., Ltd.",
+            "preamble": "本合約是 <b>DragonRPA Co., Ltd.</b>（以下簡稱『公司』）與下載、複製、安裝或使用本軟體<b>『Manual Studio』</b>（以下簡稱『本軟體』）的個人或法人（以下簡稱『使用者』）之間簽訂的具法律約束力之授權合約。使用者下載、安裝或使用本軟體，即視為同意本合約的所有條款與條件。",
+            "articles": [
+                ("第1條 (目的)", "本合約旨在向使用者授予本公司開發之本軟體的非專屬且不可轉讓之使用權限，並規範雙方之間的權利與義務。"),
+                ("第2條 (智慧財產權歸屬)", "1. 本軟體及其相關說明文件、原始碼、二進位程式碼、圖形與 UI/UX 設計之所有著作權、專利權、商標權及營業秘密等智慧財產權，均專屬於 <b>DragonRPA Co., Ltd.</b>。<br/>2. 本合約項下之提供不構成所有權之移轉，僅在明示條款範圍內授予有限之<b>『授權使用權 (License)』</b>。"),
+                ("第3條 (授權範圍與條件)", "1. <b>[試用版 (Trial License)]</b>: 僅限於指定有效期限內（至2026年12月31日止）進行非商業性功能測試與評估。<br/>2. <b>[商業授權 (Commercial License)]</b>: 實施單機單碼綁定 (1PC-1Key 節點鎖定)，僅允許於綁定之單一硬體設備上安裝與執行。"),
+                ("第4條 (禁止行為)", "禁止逆向工程、反編譯、規避授權驗證機制、未授權散布或移除軟體著作權標識。違反者應依法承擔相應民事與刑事法律責任。"),
+                ("第5條 (免責聲明與責任限制)", "1. 本軟體按『現狀 (AS-IS)』提供，不作任何明示或默示之保證。<br/>2. 公司對於因使用或無法使用本軟體所產生之任何間接、附帶或衍生性損害不承擔責任。"),
+                ("第6條 (違約罰金與損害賠償)", "使用者若違反第4條規定，應立即向公司支付相當於商業授權售價 5 倍之懲罰性違約金，且不影響公司請求全額損害賠償之權利。"),
+                ("第7條 (準據法與管轄法院)", "本合約受大韓民國法律管轄並依其解釋。因本合約引起之爭議，以首爾中央地方法院為第一審專屬管轄法院。")
+            ],
+            "footer": "公告日期: 2026.09.11 | 施行日期: 2026.09.11<br/>DragonRPA Co., Ltd. | 諮詢: 77.victor.lee@gmail.com",
+            "dialog_title": "使用者授權合約 (EULA) - DragonRPA Co., Ltd.",
+            "btn_close": "關閉",
+            "btn_copy": "📋 複製全文",
+            "copied_toast": "EULA 內容已複製到剪貼簿。"
+        },
+        "it": {
+            "title": "DragonRPA Co., Ltd. - Contratto di licenza con l'utente finale (EULA)",
+            "subtitle": "End User License Agreement for Manual Studio | DragonRPA Co., Ltd.",
+            "preamble": "Il presente accordo è un contratto legalmente vincolante tra <b>DragonRPA Co., Ltd.</b> ('Società') e l'individuo o entità giuridica ('Utente') che scarica, installa o utilizza il software <b>'Manual Studio'</b> ('Software').",
+            "articles": [
+                ("Articolo 1 (Oggetto)", "Il presente accordo concede all'Utente una licenza non esclusiva e non trasferibile per l'utilizzo del Software sviluppato dalla Società."),
+                ("Articolo 2 (Diritti di proprietà intellettuale)", "Tutti i diritti d'autore, brevetti, marchi e segreti commerciali relativi al Software appartengono esclusivamente a <b>DragonRPA Co., Ltd.</b>"),
+                ("Articolo 3 (Ambito di applicazione e condizioni)", "1. Licenza di prova limitata fino al 31 dicembre 2026.<br/>2. Licenza commerciale vincolata all'hardware (blocco nodo 1PC-1Key)."),
+                ("Articolo 4 (Attività vietate)", "È severamente vietato il reverse engineering, la decompilazione, la rimozione della protezione della licenza o la ridistribuzione non autorizzata."),
+                ("Articolo 5 (Limitazione di responsabilità)", "Il software viene fornito 'NELLO STATO IN CUI SI TROVA (AS-IS)' senza garanzie di alcun tipo."),
+                ("Articolo 6 (Indennizzo e penalità)", "In caso di violazione dell'Articolo 4, l'Utente sarà tenuto a pagare una penale pari a 5 volte il prezzo della licenza commerciale."),
+                ("Articolo 7 (Legge applicabile e foro competente)", "Il presente contratto è regolato dalla legge della Repubblica di Corea con foro competente esclusivo a Seul.")
+            ],
+            "footer": "Data di pubblicazione: 2026.09.11 | Data di entrata in vigore: 2026.09.11<br/>DragonRPA Co., Ltd. | Contatto: 77.victor.lee@gmail.com",
+            "dialog_title": "Contratto di licenza con l'utente finale (EULA) - DragonRPA Co., Ltd.",
+            "btn_close": "Chiudi",
+            "btn_copy": "📋 Copia testo completo",
+            "copied_toast": "Contenuto EULA copiato negli appunti."
+        },
+        "vi": {
+            "title": "Thỏa thuận cấp phép người dùng cuối phần mềm DragonRPA Co., Ltd. (EULA)",
+            "subtitle": "End User License Agreement for Manual Studio | DragonRPA Co., Ltd.",
+            "preamble": "Thỏa thuận này là hợp đồng pháp lý ràng buộc giữa <b>DragonRPA Co., Ltd.</b> ('Công ty') và cá nhân hoặc tổ chức ('Người dùng') tải xuống, cài đặt hoặc sử dụng phần mềm <b>'Manual Studio'</b> ('Phần mềm').",
+            "articles": [
+                ("Điều 1 (Mục đích)", "Thỏa thuận này cấp cho Người dùng quyền sử dụng không độc quyền, không thể chuyển nhượng đối với Phần mềm do Công ty phát triển."),
+                ("Điều 2 (Quyền sở hữu trí tuệ)", "Mọi bản quyền, bằng sáng chế, nhãn hiệu và bí mật thương mại liên quan đến Phần mềm thuộc sở hữu độc quyền của <b>DragonRPA Co., Ltd.</b>"),
+                ("Điều 3 (Phạm vi cấp phép)", "1. Bản dùng thử có thời hạn đến hết ngày 31 tháng 12 năm 2026.<br/>2. Bản quyền thương mại khóa theo phần cứng thiết bị (1PC-1Key)."),
+                ("Điều 4 (Hành vi nghiêm cấm)", "Nghiêm cấm dịch ngược mã nguồn (reverse engineering), bẻ khóa giấy phép hoặc phân phối lại trái phép."),
+                ("Điều 5 (Miễn trừ trách nhiệm)", "Phần mềm được cung cấp 'NGUYÊN TRẠNG (AS-IS)' mà không có bảo đảm dưới bất kỳ hình thức nào."),
+                ("Điều 6 (Bồi thường vi phạm)", "Nếu vi phạm Điều 4, Người dùng phải bồi thường khoản phạt tương đương 5 lần giá trị giấy phép thương mại."),
+                ("Điều 7 (Luật điều chỉnh và giải quyết tranh chấp)", "Thỏa thuận được điều chỉnh theo luật pháp Hàn Quốc với tòa án có thẩm quyền tại Seoul.")
+            ],
+            "footer": "Ngày công bố: 2026.09.11 | Ngày hiệu lực: 2026.09.11<br/>DragonRPA Co., Ltd. | Liên hệ: 77.victor.lee@gmail.com",
+            "dialog_title": "Thỏa thuận cấp phép người dùng cuối (EULA) - DragonRPA Co., Ltd.",
+            "btn_close": "Đóng",
+            "btn_copy": "📋 Sao chép toàn văn",
+            "copied_toast": "Đã sao chép nội dung EULA vào khay nhớ tạm."
+        },
+        "id": {
+            "title": "Perjanjian Lisensi Pengguna Akhir Perangkat Lunak DragonRPA Co., Ltd. (EULA)",
+            "subtitle": "End User License Agreement for Manual Studio | DragonRPA Co., Ltd.",
+            "preamble": "Perjanjian ini adalah kontrak yang mengikat secara hukum antara <b>DragonRPA Co., Ltd.</b> ('Perusahaan') dan individu atau badan hukum ('Pengguna') yang mengunduh, memasang, atau menggunakan perangkat lunak <b>'Manual Studio'</b> ('Perangkat Lunak').",
+            "articles": [
+                ("Pasal 1 (Tujuan)", "Perjanjian ini memberikan lisensi non-eksklusif dan tidak dapat dialihkan kepada Pengguna untuk menggunakan Perangkat Lunak."),
+                ("Pasal 2 (Hak Kekayaan Intelektual)", "Semua hak cipta, paten, merek dagang, dan rahasia dagang terkait Perangkat Lunak adalah milik eksklusif <b>DragonRPA Co., Ltd.</b>"),
+                ("Pasal 3 (Ruang Lingkup Lisensi)", "1. Lisensi uji coba berlaku hingga 31 Desember 2026.<br/>2. Lisensi komersial terikat pada satu perangkat keras (1PC-1Key node-lock)."),
+                ("Pasal 4 (Tindakan Terlarang)", "Dilarang keras melakukan rekayasa balik (reverse engineering), membongkar kode, atau mendistribusikan ulang tanpa izin."),
+                ("Pasal 5 (Batasan Tanggung Jawab)", "Perangkat lunak ini disediakan 'SEBAGAIMANA ADANYA (AS-IS)' tanpa jaminan apa pun."),
+                ("Pasal 6 (Ganti Rugi dan Denda)", "Pelanggaran terhadap Pasal 4 akan dikenakan denda penalti sebesar 5 kali harga lisensi komersial."),
+                ("Pasal 7 (Hukum yang Berlaku dan Yurisdiksi)", "Perjanjian ini diatur oleh hukum Republik Korea dengan yurisdiksi eksklusif di Pengadilan Distrik Pusat Seoul.")
+            ],
+            "footer": "Tanggal Pengumuman: 2026.09.11 | Tanggal Efektif: 2026.09.11<br/>DragonRPA Co., Ltd. | Kontak: 77.victor.lee@gmail.com",
+            "dialog_title": "Perjanjian Lisensi Pengguna Akhir (EULA) - DragonRPA Co., Ltd.",
+            "btn_close": "Tutup",
+            "btn_copy": "📋 Salin Teks Lengkap",
+            "copied_toast": "Konten EULA berhasil disalin ke papan klip."
         }
     }
 
@@ -460,6 +540,8 @@ class EulaManager:
         if not locale_code:
             return "ko"
         loc = locale_code.strip().lower()
+        if loc in cls._DATA:
+            return loc
         if "_" in loc:
             loc = loc.split("_")[0]
         if "-" in loc:

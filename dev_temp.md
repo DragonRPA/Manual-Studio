@@ -1,5 +1,23 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-13 12:30] PixelSnap 1안 치수선 구현, 스탬프 둥근 사각 바탕 및 객체 우클릭 속성 편집 다이얼로그
+- [x] DimensionLineItem 치수선 주석 클래스 신규 구현
+  - 수평/수직 거리 자동 판정 및 Shift 직교 잠금
+  - 양 끝 수직 틱(├ ─ ┤) 브라켓 및 중앙 둥근 캡슐 뱃지([ 320 px ]) 렌더링
+  - 단축키 D 및 리본 메뉴 치수선 도구 버튼, 벡터 아이콘 추가
+  - to_dict, from_dict 직렬화 및 ITEM_REGISTRY 등록
+- [x] 숫자 스탬프 "모서리가 둥근 사각형(rounded_rect)" 바탕 형태 지원
+  - StampItem 및 StepArrowItem 둥근 사각형 본체 및 드롭 섀도우 렌더링
+  - 둥근 사각형 모서리 곡률(corner_radius) 조절 및 hit_test 지원
+- [x] 캔버스 객체 마우스 우클릭 컨텍스트 메뉴 및 통합 속성 다이얼로그(ItemPropertiesDialog) 구현
+  - 우클릭 시 속성...(P), 맨 앞으로, 맨 뒤로, 삭제(Del) 메뉴 표출
+  - 객체 더블클릭 시에도 속성 다이얼로그 즉시 실행
+  - 좌표(X/Y, Start/End), 크기(W/H, 직경, 선두께, 촉크기), 글꼴(패밀리, 크기, 굵기, 내용), 선색, 배경색, 글자색 실시간 편집
+  - "이 객체의 스타일을 기본 설정에 반영" 체크박스 (앱 전역 config.json 동기화)
+- [x] 13개 글로벌 언어 i18n 신규 키 37개 전수 등록 (13개국어 100% 지원)
+- [x] 단위 테스트 54개 전 항목 100% 통과 (test_core_engine.py 4대 신규 테스트 추가)
+- [x] 릴리즈 노트(RELEASE_NOTES.md v1.4.0.Build.21) 작성 및 build_c.bat C-컴파일 배치
+
 ## [2026-09-12 23:25] AI 에이전트 전용 호출 API, CLI 헤드리스 엔진 및 MCP 서버 구축
 - [x] AGENTS.md 기계 판독형 초고밀도 에이전트 가이드 작성 및 프로젝트 루트 배치
   - 시스템 아키텍처 및 핵심 모듈 맵
