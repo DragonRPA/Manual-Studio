@@ -1014,7 +1014,13 @@ class StampItem:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(int(data["index"]), float(data["x"]), float(data["y"]), data.get("style", {}))
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
+        return cls(int(data.get("index", 1)), x, y, data.get("style", {}))
 
     def contains(self, pt):
         size = self.style.get("size", 32)
@@ -1099,7 +1105,13 @@ class TextLabelItem:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(str(data["text"]), float(data["x"]), float(data["y"]), data.get("style", {}))
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
+        return cls(str(data.get("text", "")), x, y, data.get("style", {}))
 
     def get_font(self):
         font_family = self.style.get("font_family", "Malgun Gothic")
@@ -1699,7 +1711,13 @@ class HotkeyBadgeItem:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(str(data.get("key_text", "")), float(data.get("x", 0.0)), float(data.get("y", 0.0)), data.get("style", {}))
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
+        return cls(str(data.get("key_text", "")), x, y, data.get("style", {}))
 
     def get_rect(self):
         font = QFont("Malgun Gothic", int(self.style.get("font_size", 12)))
@@ -2012,8 +2030,12 @@ class DraftStampItem:
     @classmethod
     def from_dict(cls, data):
         text = str(data.get("text", "DRAFT"))
-        x = float(data.get("x", 0.0))
-        y = float(data.get("y", 0.0))
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
         item = cls(text=text, pos=QPointF(x, y), style=data.get("style", {}))
         if "angle" in data:
             item.angle = float(data["angle"])
@@ -2104,10 +2126,16 @@ class WordArtItem:
 
     @classmethod
     def from_dict(cls, data):
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 100.0))
+            y = float(data.get("y", 100.0))
         return cls(
             text=str(data.get("text", "주요 확인")),
-            x=float(data.get("x", 100.0)),
-            y=float(data.get("y", 100.0)),
+            x=x,
+            y=y,
             style=data.get("style", {})
         )
 
@@ -2236,6 +2264,10 @@ class SpotlightMaskItem:
             painter.drawRoundedRect(QRectF(self.rect), radius, radius)
         painter.restore()
 
+    def contains(self, pt):
+        qpt = QPoint(int(pt.x()), int(pt.y())) if hasattr(pt, "x") else QPoint(int(pt[0]), int(pt[1]))
+        return self.rect.adjusted(-6, -6, 6, 6).contains(qpt)
+
     def render(self, painter: QPainter):
         self.render_spotlight(painter, 1920, 1080)
 
@@ -2261,7 +2293,22 @@ class ClickRippleItem:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(data.get("x", 0.0), data.get("y", 0.0), data.get("click_type", "left"), data.get("style", {}))
+        pos = data.get("pos")
+        if pos and len(pos) >= 2:
+            x, y = float(pos[0]), float(pos[1])
+        else:
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
+        return cls(x, y, data.get("click_type", "left"), data.get("style", {}))
+
+    def contains(self, pt):
+        size = float(self.style.get("size", 36))
+        r = size / 2.0 + 8.0
+        px = pt.x() if hasattr(pt, "x") else pt[0]
+        py = pt.y() if hasattr(pt, "y") else pt[1]
+        dx = px - self.pos.x()
+        dy = py - self.pos.y()
+        return (dx * dx + dy * dy) <= (r * r)
 
     def render(self, painter: QPainter):
         painter.save()
@@ -2364,6 +2411,10 @@ class MagnifierZoomItem:
         else:
             painter.drawRoundedRect(lens_f, radius, radius)
         painter.restore()
+
+    def contains(self, pt):
+        qpt = QPoint(int(pt.x()), int(pt.y())) if hasattr(pt, "x") else QPoint(int(pt[0]), int(pt[1]))
+        return self.lens_rect.adjusted(-4, -4, 4, 4).contains(qpt) or self.source_rect.adjusted(-4, -4, 4, 4).contains(qpt)
 
     def render(self, painter: QPainter):
         self.render_zoom(painter, None)
@@ -3328,6 +3379,11 @@ class RecordingFloatWidget(QWidget):
 
 # 주석 직렬화 레지스트리 및 팩토리 (Annotation Registry & Factory)
 # ------------------------------------------------------------------------------
+BlurItem = BlurMosaicItem
+SpotlightItem = SpotlightMaskItem
+MagnifierItem = MagnifierZoomItem
+ClickItem = ClickRippleItem
+
 ITEM_REGISTRY = {
     "StampItem": StampItem,
     "TextLabelItem": TextLabelItem,
@@ -3346,6 +3402,13 @@ ITEM_REGISTRY = {
     "MagnifierZoomItem": MagnifierZoomItem,
     "DimensionLineItem": DimensionLineItem,
     "BoxDimensionItem": BoxDimensionItem,
+    # Aliases
+    "BlurItem": BlurMosaicItem,
+    "SpotlightItem": SpotlightMaskItem,
+    "MagnifierItem": MagnifierZoomItem,
+    "ClickItem": ClickRippleItem,
+    "BoxItem": HighlightBoxItem,
+    "TextItem": TextLabelItem,
 }
 
 def item_from_dict(data):
@@ -5450,12 +5513,12 @@ class StudioCanvasWidget(QWidget):
                 hit_item = None
                 # 오버레이 객체(스티커 레이어)보다 일반 주석(스탬프, 박스, 텍스트 등)을 최우선 선택
                 for it in reversed(self.items):
-                    if not isinstance(it, ImageOverlayItem) and it.contains(pt):
+                    if not isinstance(it, ImageOverlayItem) and hasattr(it, "contains") and it.contains(pt):
                         hit_item = it
                         break
                 if not hit_item:
                     for it in reversed(self.items):
-                        if isinstance(it, ImageOverlayItem) and it.contains(pt):
+                        if isinstance(it, ImageOverlayItem) and hasattr(it, "contains") and it.contains(pt):
                             hit_item = it
                             break
 
@@ -5465,26 +5528,30 @@ class StudioCanvasWidget(QWidget):
                     self.dragging_item = hit_item
                     if isinstance(hit_item, ImageOverlayItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
-                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
+                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
+                    elif isinstance(hit_item, MagnifierZoomItem):
+                        self.drag_offset = QPointF(pt.x() - hit_item.lens_rect.x(), pt.y() - hit_item.lens_rect.y())
                     elif isinstance(hit_item, CalloutItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.box_rect.x(), pt.y() - hit_item.box_rect.y())
                     elif isinstance(hit_item, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
                         self.drag_offset = QPointF(pt.x() - hit_item.start_pos.x(), pt.y() - hit_item.start_pos.y())
-                    else:
+                    elif hasattr(hit_item, "pos"):
                         self.drag_offset = QPointF(pt.x() - hit_item.pos.x(), pt.y() - hit_item.pos.y())
+                    else:
+                        self.drag_offset = QPointF(0, 0)
                 self.update()
 
         elif event.button() == Qt.RightButton:
             hit_item = None
             # 오버레이 객체보다 일반 주석을 최우선 선택하여 우클릭 속성창 표시
             for it in reversed(self.items):
-                if not isinstance(it, ImageOverlayItem) and it.contains(pt):
+                if not isinstance(it, ImageOverlayItem) and hasattr(it, "contains") and it.contains(pt):
                     hit_item = it
                     break
             if not hit_item:
                 for it in reversed(self.items):
-                    if isinstance(it, ImageOverlayItem) and it.contains(pt):
+                    if isinstance(it, ImageOverlayItem) and hasattr(it, "contains") and it.contains(pt):
                         hit_item = it
                         break
             if hit_item:
@@ -5555,8 +5622,13 @@ class StudioCanvasWidget(QWidget):
             new_y = pt.y() - self.drag_offset.y()
             if isinstance(self.dragging_item, ImageOverlayItem):
                 self.dragging_item.rect.moveTo(new_x, new_y)
-            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
+            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
                 self.dragging_item.rect.moveTo(int(new_x), int(new_y))
+            elif isinstance(self.dragging_item, MagnifierZoomItem):
+                dx = int(new_x) - self.dragging_item.lens_rect.x()
+                dy = int(new_y) - self.dragging_item.lens_rect.y()
+                self.dragging_item.lens_rect.moveTo(int(new_x), int(new_y))
+                self.dragging_item.source_rect.moveTo(self.dragging_item.source_rect.x() + dx, self.dragging_item.source_rect.y() + dy)
             elif isinstance(self.dragging_item, CalloutItem):
                 dx = new_x - self.dragging_item.box_rect.x()
                 dy = new_y - self.dragging_item.box_rect.y()
@@ -5567,7 +5639,7 @@ class StudioCanvasWidget(QWidget):
                 dy = new_y - self.dragging_item.start_pos.y()
                 self.dragging_item.start_pos = QPointF(new_x, new_y)
                 self.dragging_item.end_pos = QPointF(self.dragging_item.end_pos.x() + dx, self.dragging_item.end_pos.y() + dy)
-            else:
+            elif hasattr(self.dragging_item, "pos"):
                 self.dragging_item.pos = QPointF(new_x, new_y)
             self.update()
             self.sig_content_changed.emit()
@@ -5985,6 +6057,10 @@ class StudioCanvasWidget(QWidget):
                 try:
                     if isinstance(item, BlurMosaicItem):
                         item.render_mosaic(painter, self.pixmap)
+                    elif isinstance(item, MagnifierZoomItem):
+                        item.render_zoom(painter, self.pixmap)
+                    elif isinstance(item, SpotlightMaskItem):
+                        item.render_spotlight(painter, self.pixmap.width() if self.pixmap else 1920, self.pixmap.height() if self.pixmap else 1080)
                     elif isinstance(item, (ImageOverlayItem, DraftStampItem)):
                         item.render(painter, is_selected=(item == self.selected_item and self.current_mode == "SELECT"))
                     else:
@@ -6104,8 +6180,15 @@ class StudioCanvasWidget(QWidget):
                         painter.drawEllipse(self.selected_item.pos, r, r)
                 elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
                     painter.drawRect(self.selected_item.get_rect().adjusted(-2, -2, 2, 2))
-                elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem)):
+                elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
                     painter.drawRect(self.selected_item.rect.adjusted(-2, -2, 2, 2))
+                elif isinstance(self.selected_item, MagnifierZoomItem):
+                    painter.drawRect(self.selected_item.lens_rect.adjusted(-2, -2, 2, 2))
+                    painter.drawRect(self.selected_item.source_rect.adjusted(-2, -2, 2, 2))
+                elif isinstance(self.selected_item, ClickRippleItem):
+                    size = float(self.selected_item.style.get("size", 36))
+                    r = size / 2.0 + 4
+                    painter.drawEllipse(self.selected_item.pos, r, r)
                 elif isinstance(self.selected_item, CalloutItem):
                     painter.drawRect(self.selected_item.box_rect.adjusted(-2, -2, 2, 2))
                     painter.setBrush(QBrush(QColor(33, 150, 243)))
@@ -11618,7 +11701,7 @@ class ManualStudioWindow(QMainWindow):
 
         # 새 캡처 완료 시 캔버스에 안착 (작업 세션 시작)
         self.current_project_path = None
-        self.setWindowTitle("매뉴얼 스튜디오 (Manual Studio) - DragonRPA Co. [평가판]")
+        self.update_window_title()
         self.canvas.set_pixmap(pixmap)
         self.canvas.items.clear()
         self.canvas.next_stamp_index = 1
@@ -11745,8 +11828,7 @@ class ManualStudioWindow(QMainWindow):
             )
             if bundle_res:
                 self.current_project_path = bundle_res["project_path"]
-                base_name = os.path.basename(self.current_project_path)
-                self.setWindowTitle(f"매뉴얼 스튜디오 - [{base_name}]")
+                self.update_window_title()
 
         # 결과 알림 (세션은 절대 초기화하지 않고 그대로 보존!)
         msg_parts = []
@@ -12595,14 +12677,7 @@ class ManualStudioWindow(QMainWindow):
         if target_idx == self.current_step_idx and self.canvas.pixmap is not None:
             return
 
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [item.clone() for item in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
-            comp_qimg = self.canvas.get_composed_image()
-            if comp_qimg:
-                curr_step["thumbnail"] = QPixmap.fromImage(comp_qimg)
+        self._sync_canvas_to_current_step()
 
         self.current_step_idx = target_idx
         self.load_step_to_canvas(target_idx)
@@ -12619,14 +12694,7 @@ class ManualStudioWindow(QMainWindow):
             self.show_toast(f"Step {target_idx + 1} 작업대로 전환되었습니다.")
 
     def on_filmstrip_add_step(self):
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [item.clone() for item in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
-            comp_qimg = self.canvas.get_composed_image()
-            if comp_qimg:
-                curr_step["thumbnail"] = QPixmap.fromImage(comp_qimg)
+        self._sync_canvas_to_current_step()
 
         new_idx = len(self.storyboard_steps)
         new_step = {
@@ -12672,6 +12740,7 @@ class ManualStudioWindow(QMainWindow):
         """선택된 슬라이드들을 복제하여 바로 뒤에 삽입"""
         if not self.storyboard_steps:
             return
+        self._sync_canvas_to_current_step()
         selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
         new_steps = []
         new_selected = set()
@@ -12686,7 +12755,8 @@ class ManualStudioWindow(QMainWindow):
                     "desc": orig.get("desc", ""),
                     "raw_pixmap": QPixmap(orig.get("raw_pixmap")) if orig.get("raw_pixmap") else None,
                     "thumbnail": QPixmap(orig.get("thumbnail")) if orig.get("thumbnail") else None,
-                    "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")]
+                    "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
+                    "next_stamp_index": orig.get("next_stamp_index", 1)
                 }
                 new_steps.append(dup)
                 new_selected.add(len(new_steps) - 1)
@@ -12706,6 +12776,7 @@ class ManualStudioWindow(QMainWindow):
         """선택된 슬라이드들을 앞(-1) 또는 뒤(+1)로 이동"""
         if not self.storyboard_steps:
             return
+        self._sync_canvas_to_current_step()
         selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
         n = len(self.storyboard_steps)
 
@@ -12794,6 +12865,7 @@ class ManualStudioWindow(QMainWindow):
 
     def on_filmstrip_duplicate_step(self, dup_idx: int):
         if 0 <= dup_idx < len(self.storyboard_steps):
+            self._sync_canvas_to_current_step()
             src_step = self.storyboard_steps[dup_idx]
             new_step = {
                 "step_num": len(self.storyboard_steps) + 1,
@@ -12810,6 +12882,7 @@ class ManualStudioWindow(QMainWindow):
 
     def on_filmstrip_move_step(self, from_idx: int, to_idx: int):
         if 0 <= from_idx < len(self.storyboard_steps) and 0 <= to_idx < len(self.storyboard_steps):
+            self._sync_canvas_to_current_step()
             item = self.storyboard_steps.pop(from_idx)
             self.storyboard_steps.insert(to_idx, item)
             for i, s in enumerate(self.storyboard_steps):
@@ -12817,6 +12890,7 @@ class ManualStudioWindow(QMainWindow):
             self.current_step_idx = to_idx
             if hasattr(self, "filmstrip"):
                 self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+            self.load_step_to_canvas(self.current_step_idx)
             self.show_toast(f"Step 순서 변경: {from_idx + 1} ➔ {to_idx + 1}")
 
     def _prepare_export_step_image(self, step: dict, target_w: int = 960, auto_resize: bool = True, enable_frame: bool = True, frame_cfg: dict = None) -> Image.Image:

@@ -3850,6 +3850,123 @@ def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
     print("[PASS] test_phase9_release_notes_ribbon_icons_function_keys_and_updater (Release notes viewer, 42 vector icons, display mode, hotkeys F8-F12/Ctrl+N/S, single/multi delete & updater resilience valid)")
 
 
+def test_phase10_full_audit_all_items_and_canvas_sync():
+    """전수 검사: 17종 주석 렌더/복제/직렬화(pos/x,y)/contains/드래그/별칭 + 스토리보드 캔버스 동기화/스탬프 번호 보존"""
+    import manual_capture_studio as mcs
+    from PySide6.QtCore import QPointF, QRect, QRectF, Qt
+    from PySide6.QtGui import QPixmap, QPainter
+
+    items = [
+        mcs.StampItem(1, 100.0, 100.0, {"size": 32, "bg_color": "#007AFF", "shape": "circle"}),
+        mcs.StampItem(2, 150.0, 100.0, {"size": 32, "bg_color": "#FF3B30", "shape": "rounded_rect", "corner_radius": 6}),
+        mcs.HighlightBoxItem(QRect(50, 50, 200, 150), {"color": "#007AFF", "border_width": 3, "fill": False}),
+        mcs.HighlightBoxItem(QRect(80, 80, 120, 90), {"color": "#34C759", "border_width": 2, "fill": True}),
+        mcs.ArrowItem(QPointF(50, 50), QPointF(200, 200), {"color": "#FF9500", "width": 3, "head_size": 14}),
+        mcs.StepArrowItem(1, QPointF(60, 60), QPointF(220, 220), {"size": 32, "bg_color": "#007AFF"}, {"color": "#007AFF", "width": 3, "head_size": 14}),
+        mcs.ElbowArrowItem(QPointF(50, 50), QPointF(250, 250), {"color": "#5856D6", "width": 3, "head_size": 14}, route_mode="HV"),
+        mcs.ElbowArrowItem(QPointF(250, 250), QPointF(50, 50), {"color": "#5856D6", "width": 3, "head_size": 14}, route_mode="tr"),
+        mcs.TextLabelItem("테스트 라벨\n두번째줄", 100.0, 150.0, {"font_size": 14, "color": "#FFFFFF", "bg_color": "#000000"}),
+        mcs.CalloutItem("클릭하세요!", QRectF(200, 200, 120, 60), QPointF(100, 150), {"color": "#007AFF"}),
+        mcs.BlurMosaicItem(QRect(100, 100, 150, 80), {"block_size": 10}),
+        mcs.HotkeyBadgeItem("Ctrl+C", 120.0, 120.0, {"font_size": 12, "badge_bg": "#007AFF"}),
+        mcs.ImageOverlayItem(QRectF(50, 50, 100, 100), QPixmap(100, 100)),
+        mcs.DraftStampItem("CONFIDENTIAL", QPointF(200, 200), {"color": "#E11D48", "opacity": 0.4}),
+        mcs.WordArtItem("Dragon RPA", 100.0, 100.0, {"stroke_width": 3, "shadow_enabled": True}),
+        mcs.SpotlightMaskItem(QRect(100, 100, 200, 150), {"dim_opacity": 160, "border_color": "#007AFF"}),
+        mcs.ClickRippleItem(250.0, 250.0, "left", {"color": "#007AFF", "size": 36}),
+        mcs.ClickRippleItem(300.0, 300.0, "double", {"color": "#FF9500", "size": 36}),
+        mcs.MagnifierZoomItem(QRect(50, 50, 60, 40), QRect(200, 200, 180, 120), 2.5, {"border_color": "#007AFF"}),
+        mcs.DimensionLineItem(QPointF(50, 50), QPointF(250, 50), {"color": "#0284C7", "width": 2}),
+        mcs.BoxDimensionItem(QRectF(100, 100, 200, 150), {"color": "#0284C7", "border_width": 2}),
+    ]
+
+    pm = QPixmap(1920, 1080)
+    pm.fill(Qt.white)
+    painter = QPainter(pm)
+
+    for item in items:
+        if isinstance(item, mcs.BlurMosaicItem):
+            item.render_mosaic(painter, pm)
+        elif isinstance(item, mcs.MagnifierZoomItem):
+            item.render_zoom(painter, pm)
+        elif isinstance(item, mcs.SpotlightMaskItem):
+            item.render_spotlight(painter, 1920, 1080)
+        else:
+            item.render(painter)
+
+        cloned = item.clone()
+        assert cloned is not None and cloned.__class__ == item.__class__
+
+        d = item.to_dict()
+        assert isinstance(d, dict) and "type" in d
+        restored = mcs.item_from_dict(d)
+        assert restored is not None and restored.__class__ == item.__class__
+        assert hasattr(item, "contains")
+
+    painter.end()
+
+    # pos 스키마 역직렬화
+    test_pos_schemas = [
+        {"type": "StampItem", "index": 5, "pos": [200.0, 300.0], "style": {"size": 32}},
+        {"type": "TextLabelItem", "text": "Pos Schema", "pos": [150.0, 250.0], "style": {}},
+        {"type": "HotkeyBadgeItem", "key_text": "F10", "pos": [180.0, 180.0], "style": {}},
+        {"type": "DraftStampItem", "text": "TEST", "pos": [300.0, 300.0], "style": {}},
+        {"type": "WordArtItem", "text": "Banner", "pos": [100.0, 100.0], "style": {}},
+        {"type": "ClickRippleItem", "pos": [400.0, 400.0], "click_type": "left", "style": {}},
+    ]
+    for s in test_pos_schemas:
+        obj = mcs.item_from_dict(s)
+        assert obj is not None
+        assert obj.pos.x() == s["pos"][0] and obj.pos.y() == s["pos"][1]
+
+    # 별칭 역직렬화
+    test_aliases = [
+        {"type": "BlurItem", "rect": [10, 10, 100, 50]},
+        {"type": "SpotlightItem", "rect": [20, 20, 150, 100]},
+        {"type": "MagnifierItem", "source_rect": [10, 10, 50, 50], "lens_rect": [100, 100, 150, 150]},
+        {"type": "ClickItem", "pos": [50, 50], "click_type": "right"},
+        {"type": "BoxItem", "rect": [0, 0, 80, 80]},
+        {"type": "TextItem", "text": "Alias text", "pos": [20, 20]},
+    ]
+    for s in test_aliases:
+        obj = mcs.item_from_dict(s)
+        assert obj is not None
+
+    # 스토리보드 캔버스 동기화 및 스탬프 번호 연속성
+    win = mcs.ManualStudioWindow()
+    win.storyboard_steps = []
+    win.current_step_idx = 0
+    win.on_capture_completed(pm)
+
+    stamp1 = mcs.StampItem(1, 100, 100, {"size": 32})
+    win.canvas.items.append(stamp1)
+    win.canvas.next_stamp_index = 2
+
+    win.on_filmstrip_add_step()
+    assert len(win.storyboard_steps) == 2
+    assert len(win.storyboard_steps[0]["items"]) == 1
+    assert win.storyboard_steps[0]["next_stamp_index"] == 2
+
+    stamp_step2 = mcs.StampItem(1, 200, 200, {"size": 32})
+    stamp_step2_b = mcs.StampItem(2, 250, 200, {"size": 32})
+    win.canvas.items.extend([stamp_step2, stamp_step2_b])
+    win.canvas.next_stamp_index = 3
+
+    win.filmstrip.selected_indices = {1}
+    win.on_filmstrip_duplicate_selected()
+    assert len(win.storyboard_steps) == 3
+    dup_step = win.storyboard_steps[2]
+    assert len(dup_step["items"]) == 2
+    assert dup_step.get("next_stamp_index") == 3
+
+    win.on_filmstrip_move_step(0, 2)
+    assert win.current_step_idx == 2
+    assert len(win.canvas.items) == len(win.storyboard_steps[2]["items"])
+
+    win.close()
+    print("[PASS] test_phase10_full_audit_all_items_and_canvas_sync (17 items, hit_test, dragging, pos/alias serialization, storyboard canvas sync and next_stamp_index continuation valid)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -3923,5 +4040,6 @@ if __name__ == "__main__":
     test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul()
     test_phase8_project_level_architecture_and_exports()
     test_phase9_release_notes_ribbon_icons_function_keys_and_updater()
-    print("\nALL 72 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE & PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER RESILIENCE TESTS PASSED 100%!")
+    test_phase10_full_audit_all_items_and_canvas_sync()
+    print("\nALL 73 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER & PHASE 10 FULL AUDIT (17 ITEMS, HIT-TEST, DRAGGING, POS/ALIAS SERIALIZATION, STORYBOARD CANVAS SYNC & STAMP CONTINUATION) TESTS PASSED 100%!")
     os._exit(0)

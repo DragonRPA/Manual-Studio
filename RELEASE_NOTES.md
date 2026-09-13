@@ -1,5 +1,27 @@
 # Manual Studio Release Notes
 
+## [v1.5.0.Build.5] - 2026-09-13 23:30
+
+### 매뉴얼 스튜디오 Phase 10 전수 오류 검사 및 결함 디버깅 릴리즈
+- **17종 전 주석 객체 역직렬화 포맷 및 판정 함수 무결화**:
+  - `StampItem`, `TextLabelItem`, `HotkeyBadgeItem`, `DraftStampItem`, `WordArtItem`, `ClickRippleItem`의 `from_dict`에서 `pos: [x, y]` 배열 포맷과 `x, y` 속성 양방향 지원 (외부 AI 에이전트/MCP 스키마 역직렬화 시 KeyError 'x' 예방).
+  - `SpotlightMaskItem`, `ClickRippleItem`, `MagnifierZoomItem`에 `contains(self, pt)` 메서드 추가로 캔버스 클릭 선택 및 우클릭 시 `AttributeError` 크래시 원천 차단.
+  - `ITEM_REGISTRY` 및 모듈 스코프에 `BlurItem`, `SpotlightItem`, `MagnifierItem`, `ClickItem`, `BoxItem`, `TextItem` 별칭 완전 등록.
+- **캔버스 주석 드래그 이동 및 실시간 렌더링 무결화**:
+  - `mousePressEvent` 및 `mouseMoveEvent`에서 사각 영역형(`HighlightBoxItem`, `BlurMosaicItem`, `BoxDimensionItem`, `SpotlightMaskItem`), 돋보기 렌즈형(`MagnifierZoomItem`), 위치형 객체 드래그 오프셋 및 이동 좌표 갱신 완비 (스포트라이트 미이동 및 돋보기 드래그 결함 해결).
+  - `paintEvent`에서 `MagnifierZoomItem.render_zoom` 및 `SpotlightMaskItem.render_spotlight` 실시간 캔버스 픽스맵 바인딩 렌더링 지원 (돋보기 회색 화면 및 스포트라이트 해상도 왜곡 해결).
+  - 선택 객체 점선 테두리 표시 17종 전 주석 대응 완비.
+- **타임라인 스토리보드 슬라이드 조작 시 캔버스 동기화 및 번호 보존**:
+  - 슬라이드 선택, 새 슬라이드 추가, 복제, 이동 조작 시 `_sync_canvas_to_current_step()` 선행 호출로 주석 유실 원천 방지.
+  - 슬라이드 복제 시 `next_stamp_index` 상속 복제로 스탬프 번호 ① 리셋 버그 해결.
+  - 슬라이드 순서 이동 시 `load_step_to_canvas()` 호출로 캔버스 뷰와 타임라인 불일치 해결.
+- **윈도우 타이틀 라이선스 표기 정합성**:
+  - 캡처 완료 및 번들 저장 시 하드코딩 `[평가판]` 제거 ➔ `update_window_title()` 일원화로 정식 라이선스 사용자 뱃지 유지.
+- **Phase 10 전수 통합 검증 스위트 신설**:
+  - `test_phase10_full_audit_all_items_and_canvas_sync` 신설 및 `test_core_engine.py` 총 73개 전 테스트 100% 무결점 통과 달성.
+
+---
+
 ## [v1.5.0.Build.4] - 2026-09-13 22:50
 
 ### 타임라인 스토리보드 슬라이드 선택 삭제 중복 방출(2개씩 삭제) 버그 픽스
