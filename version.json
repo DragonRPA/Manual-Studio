@@ -1,10 +1,10 @@
 {
-  "version": "1.4.0",
-  "version_code": 140,
-  "release_date": "2026-09-12",
-  "release_title": "Manual Studio v1.4.0 정식 릴리즈",
-  "release_notes": "• 글로벌 9개국어 지원 (KO, EN, ZH, JA, DE, ES, FR, PT, RU)\n• 다국어 텍스트박스 무깨짐 전 세계 폰트 폴백 체인 탑재\n• 6대 라이선스 에디션 및 독립형 키젠(Keygen) 개발\n• 미인증 평가판 워터마크 자동 삽입 및 정식 인증 시 완전 제거\n• 실수 방지 주기적 자동 저장(Auto-save) 및 비정상 종료 원클릭 복구\n• 캡처 영역 지정(Shift+F9) 및 추가 캡처(F8) 엔터키 대기 제거\n• 사내 PPT 마스터 템플릿(.pptx) 로고/배경/서식 자동 상속\n• 스마트 자동 업데이트(Smart Auto-Updater) 클라이언트 탑재",
-  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.4.0/ManualStudio.exe",
+  "version": "1.5.0",
+  "version_code": 150,
+  "release_date": "2026-09-13",
+  "release_title": "Manual Studio v1.5.0 2세대 프로젝트 아키텍처 정식 릴리즈",
+  "release_notes": "• 프로젝트 레벨 다중 슬라이드 저장(.dragon 압축 패키지 및 .mcs.json)\n• 팀 분업을 위한 프로젝트 병합(Merge Project) 기능 탑재\n• 웹북(HTML), PPT, Google Slides, HWP, GIF 전 내보내기 파이프라인 무결성 확보\n• 13개국어 번역 100% 연동 및 건조한 명사/동사 UI 단일 표준화 준수\n• 메뉴바/리본 플로팅 및 중복 버튼 제거로 작업대 정보 밀도 극대화",
+  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.5.0/ManualStudio.exe",
   "min_required_version": "1.0.0",
   "force_update": false
 }

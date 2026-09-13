@@ -4127,22 +4127,53 @@ class ItemPropertiesDialog(QDialog):
 # ------------------------------------------------------------------------------
 # 프로젝트 관리자 (ProjectManager: .mcs.json & _raw.png 영구 분리 보존)
 # ------------------------------------------------------------------------------
+import zipfile
+
+class ProjectData:
+    """하위 호환 4-tuple 언패킹 및 현대식 객체 프로퍼티 동시 지원 래퍼"""
+    def __init__(self, steps: list, active_step_idx: int = 0, metadata: dict = None):
+        self.steps = steps or []
+        self.active_step_idx = active_step_idx
+        self.metadata = metadata or {}
+
+    def __iter__(self):
+        first = self.steps[0] if self.steps else {}
+        return iter([first.get("raw_pixmap"), first.get("items", []), first.get("next_stamp_index", 1), self.metadata])
+
+    def __len__(self):
+        return 4
+
+    def __getitem__(self, idx):
+        first = self.steps[0] if self.steps else {}
+        t = (first.get("raw_pixmap"), first.get("items", []), first.get("next_stamp_index", 1), self.metadata)
+        return t[idx]
+
+
 class ProjectManager:
-    """매뉴얼 스튜디오 프로젝트 파일(.mcs.json) 입출력 및 무결성 관리 전담 클래스"""
+    """다중 슬라이드 프로젝트(.dragon 단일 패키지 및 .mcs.json) 입출력 및 무결성 관리 전담 엔진"""
+
+    @staticmethod
+    def pixmap_to_bytes(pixmap: QPixmap) -> bytes:
+        if pixmap is None or pixmap.isNull():
+            return b""
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        pixmap.save(buf, "PNG")
+        return bytes(ba.data())
+
+    @staticmethod
+    def bytes_to_pixmap(raw_bytes: bytes) -> QPixmap:
+        if not raw_bytes:
+            return None
+        px = QPixmap()
+        px.loadFromData(raw_bytes, "PNG")
+        return px if not px.isNull() else None
 
     @staticmethod
     def pixmap_to_base64(pixmap: QPixmap) -> str:
-        if pixmap is None or pixmap.isNull():
-            return ""
-        try:
-            ba = QByteArray()
-            buf = QBuffer(ba)
-            buf.open(QIODevice.WriteOnly)
-            pixmap.save(buf, "PNG")
-            return base64.b64encode(ba.data()).decode("utf-8")
-        except Exception as e:
-            print(f"[ProjectManager Base64 인코딩 오류]: {e}")
-            return ""
+        b = ProjectManager.pixmap_to_bytes(pixmap)
+        return base64.b64encode(b).decode("utf-8") if b else ""
 
     @staticmethod
     def base64_to_pixmap(b64_str: str) -> QPixmap:
@@ -4150,91 +4181,286 @@ class ProjectManager:
             return None
         try:
             raw_bytes = base64.b64decode(b64_str.encode("utf-8"))
-            pixmap = QPixmap()
-            pixmap.loadFromData(raw_bytes, "PNG")
-            return pixmap
-        except Exception as e:
-            print(f"[ProjectManager Base64 디코딩 오류]: {e}")
+            return ProjectManager.bytes_to_pixmap(raw_bytes)
+        except Exception:
             return None
 
-    @staticmethod
-    def save_project(project_path: str, raw_pixmap: QPixmap, items: list, next_stamp_index: int, metadata: dict = None) -> bool:
+    @classmethod
+    def save_project(cls, project_path: str, data, items: list = None, next_stamp_index: int = 1, metadata: dict = None, active_step_idx: int = 0) -> bool:
         """
-        프로젝트 파일(.mcs.json)과 원본 비트맵(_raw.png)을 동시 저장합니다.
-        파일 이동 및 포터블 호환성을 위해 base64 백업도 JSON에 자동 포함합니다.
+        다중 슬라이드 프로젝트(.dragon 압축 패키지 또는 .mcs.json)를 안전 저장합니다.
+        구형 호출 save_project(path, raw_pixmap, items, next_idx, metadata)도 100% 자동 지원합니다.
         """
         try:
-            if not project_path.endswith(".mcs.json") and not project_path.endswith(".json"):
-                project_path += ".mcs.json"
+            if not project_path:
+                return False
 
-            project_dir = os.path.dirname(os.path.abspath(project_path))
-            os.makedirs(project_dir, exist_ok=True)
-            base_file = os.path.basename(project_path)
-            clean_name = base_file.replace(".mcs.json", "").replace(".json", "")
-            raw_img_filename = f"{clean_name}_raw.png"
-            raw_img_path = os.path.join(project_dir, raw_img_filename)
+            # 구형 단일 슬라이드 호출 호환성 처리
+            if not isinstance(data, list):
+                raw_pixmap = data
+                storyboard_steps = [{
+                    "step_num": 1,
+                    "title": "Step 1. [단계명 입력]",
+                    "description": "",
+                    "raw_pixmap": raw_pixmap,
+                    "thumbnail": raw_pixmap.copy() if raw_pixmap else None,
+                    "items": items or [],
+                    "next_stamp_index": next_stamp_index
+                }]
+            else:
+                storyboard_steps = data
 
-            # 1. 원본 비트맵 저장 및 base64 추출
-            b64_str = ""
-            canvas_w = 0
-            canvas_h = 0
-            if raw_pixmap and not raw_pixmap.isNull():
-                raw_pixmap.save(raw_img_path, "PNG")
-                b64_str = ProjectManager.pixmap_to_base64(raw_pixmap)
-                canvas_w = raw_pixmap.width()
-                canvas_h = raw_pixmap.height()
+            is_dragon = project_path.lower().endswith(".dragon")
+            if not is_dragon and not project_path.lower().endswith(".mcs.json") and not project_path.lower().endswith(".json"):
+                # 기본 확장자 .dragon 채택
+                project_path += ".dragon"
+                is_dragon = True
 
-            # 2. 주석 객체 직렬화
-            serialized_items = []
-            for it in items:
-                if hasattr(it, "to_dict"):
-                    serialized_items.append(it.to_dict())
+            out_dir = os.path.dirname(os.path.abspath(project_path))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
 
-            # 3. 프로젝트 메타데이터 조립
-            project_dict = {
-                "format": "ManualCaptureStudio_Project",
-                "version": "1.0",
-                "created_at": datetime.now().isoformat(),
-                "canvas_size": [canvas_w, canvas_h],
-                "raw_image_file": raw_img_filename,
-                "raw_image_b64": b64_str,
-                "next_stamp_index": int(next_stamp_index),
-                "items": serialized_items,
-                "metadata": metadata or {}
-            }
+            if is_dragon:
+                # 1. .dragon 단일 ZIP 압축 패키지 생성 (manifest.json + slides/step_{i:03d}.png)
+                temp_zip = project_path + ".tmp"
+                with zipfile.ZipFile(temp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                    manifest_steps = []
+                    for i, step in enumerate(storyboard_steps):
+                        step_num = step.get("step_num", i + 1)
+                        s_title = step.get("title", f"Step {step_num}")
+                        s_desc = step.get("description", "")
+                        next_stamp = step.get("next_stamp_index", 1)
 
-            with open(project_path, "w", encoding="utf-8") as f:
-                json.dump(project_dict, f, indent=2, ensure_ascii=False)
+                        items_serialized = []
+                        for it in step.get("items", []):
+                            if hasattr(it, "to_dict"):
+                                items_serialized.append(it.to_dict())
 
-            return True
+                        raw_px = step.get("raw_pixmap")
+                        img_rel_path = None
+                        canvas_size = [0, 0]
+                        if raw_px and not raw_px.isNull():
+                            canvas_size = [raw_px.width(), raw_px.height()]
+                            img_name = f"slides/step_{step_num:03d}_raw.png"
+                            zf.writestr(img_name, cls.pixmap_to_bytes(raw_px))
+                            img_rel_path = img_name
+
+                        thumb_px = step.get("thumbnail")
+                        thumb_rel_path = None
+                        if thumb_px and not thumb_px.isNull():
+                            thumb_name = f"slides/step_{step_num:03d}_thumb.png"
+                            zf.writestr(thumb_name, cls.pixmap_to_bytes(thumb_px))
+                            thumb_rel_path = thumb_name
+
+                        manifest_steps.append({
+                            "step_num": step_num,
+                            "title": s_title,
+                            "description": s_desc,
+                            "canvas_size": canvas_size,
+                            "image_file": img_rel_path,
+                            "thumb_file": thumb_rel_path,
+                            "next_stamp_index": int(next_stamp),
+                            "items": items_serialized,
+                        })
+
+                    manifest = {
+                        "format": "DragonManualStudio_Project",
+                        "version": "2.0",
+                        "generator": "DragonRPA Manual Studio v1.5.0",
+                        "created_at": datetime.now().isoformat(),
+                        "active_step_idx": int(active_step_idx),
+                        "metadata": metadata or {},
+                        "total_steps": len(manifest_steps),
+                        "steps": manifest_steps
+                    }
+                    zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+
+                if os.path.exists(project_path):
+                    os.remove(project_path)
+                os.rename(temp_zip, project_path)
+                return True
+            else:
+                # 2. .mcs.json 다중 슬라이드 포맷 (Base64 인코딩 원본 보존)
+                base_file = os.path.basename(project_path)
+                clean_name = base_file.replace(".mcs.json", "").replace(".json", "")
+                raw_img_filename = f"{clean_name}_raw.png"
+                raw_img_path = os.path.join(out_dir, raw_img_filename)
+
+                if len(storyboard_steps) == 1:
+                    raw_px0 = storyboard_steps[0].get("raw_pixmap")
+                    if raw_px0 and not raw_px0.isNull():
+                        raw_px0.save(raw_img_path, "PNG")
+
+                serialized_steps = []
+                for i, step in enumerate(storyboard_steps):
+                    step_num = step.get("step_num", i + 1)
+                    s_title = step.get("title", f"Step {step_num}")
+                    s_desc = step.get("description", "")
+                    next_stamp = step.get("next_stamp_index", 1)
+
+                    items_serialized = []
+                    for it in step.get("items", []):
+                        if hasattr(it, "to_dict"):
+                            items_serialized.append(it.to_dict())
+
+                    raw_px = step.get("raw_pixmap")
+                    b64_str = cls.pixmap_to_base64(raw_px) if raw_px and not raw_px.isNull() else ""
+                    canvas_size = [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [0, 0]
+
+                    companion_file = raw_img_filename if (len(storyboard_steps) == 1 and i == 0) else None
+
+                    serialized_steps.append({
+                        "step_num": step_num,
+                        "title": s_title,
+                        "description": s_desc,
+                        "canvas_size": canvas_size,
+                        "raw_image_file": companion_file,
+                        "raw_image_b64": b64_str,
+                        "next_stamp_index": int(next_stamp),
+                        "items": items_serialized,
+                    })
+
+                project_dict = {
+                    "format": "ManualCaptureStudio_MultiProject",
+                    "version": "2.0",
+                    "generator": "DragonRPA Manual Studio v1.5.0",
+                    "created_at": datetime.now().isoformat(),
+                    "active_step_idx": int(active_step_idx),
+                    "metadata": metadata or {},
+                    "total_steps": len(serialized_steps),
+                    "steps": serialized_steps
+                }
+                if len(serialized_steps) == 1:
+                    project_dict["raw_image_file"] = raw_img_filename
+                    project_dict["canvas_size"] = serialized_steps[0]["canvas_size"]
+                    project_dict["raw_image_b64"] = serialized_steps[0]["raw_image_b64"]
+                    project_dict["next_stamp_index"] = serialized_steps[0]["next_stamp_index"]
+                    project_dict["items"] = serialized_steps[0]["items"]
+
+                temp_json = project_path + ".tmp"
+                with open(temp_json, "w", encoding="utf-8") as f:
+                    json.dump(project_dict, f, indent=2, ensure_ascii=False)
+
+                if os.path.exists(project_path):
+                    os.remove(project_path)
+                os.rename(temp_json, project_path)
+                return True
+
         except Exception as e:
             print(f"[ProjectManager 저장 오류]: {e}")
             return False
 
-    @staticmethod
-    def load_project(project_path: str):
+    @classmethod
+    def load_project(cls, project_path: str):
         """
-        프로젝트 파일(.mcs.json)로부터 (raw_pixmap, items, next_stamp_index, metadata)를 복원 반환합니다.
+        .dragon 또는 .mcs.json 프로젝트를 로드하여 ProjectData(하위 호환 4-tuple 언패킹 지원)를 반환합니다.
         """
-        try:
-            if not os.path.exists(project_path):
-                return None, [], 1, {}
+        if not os.path.exists(project_path):
+            return ProjectData([], 0, {})
 
+        try:
+            # 1. .dragon (ZIP) 패키지 로드
+            if zipfile.is_zipfile(project_path):
+                with zipfile.ZipFile(project_path, "r") as zf:
+                    if "manifest.json" not in zf.namelist():
+                        return ProjectData([], 0, {})
+                    manifest_data = json.loads(zf.read("manifest.json").decode("utf-8"))
+                    active_idx = int(manifest_data.get("active_step_idx", 0))
+                    metadata = manifest_data.get("metadata", {})
+                    raw_steps = manifest_data.get("steps", [])
+
+                    storyboard_steps = []
+                    for i, sdata in enumerate(raw_steps):
+                        step_num = sdata.get("step_num", i + 1)
+                        s_title = sdata.get("title", f"Step {step_num}")
+                        s_desc = sdata.get("description", "")
+                        next_stamp = sdata.get("next_stamp_index", 1)
+
+                        raw_px = None
+                        img_rel = sdata.get("image_file")
+                        if img_rel and img_rel in zf.namelist():
+                            raw_px = cls.bytes_to_pixmap(zf.read(img_rel))
+
+                        thumb_px = None
+                        thumb_rel = sdata.get("thumb_file")
+                        if thumb_rel and thumb_rel in zf.namelist():
+                            thumb_px = cls.bytes_to_pixmap(zf.read(thumb_rel))
+                        elif raw_px:
+                            thumb_px = raw_px.copy()
+
+                        items = []
+                        for it_d in sdata.get("items", []):
+                            it_obj = item_from_dict(it_d)
+                            if it_obj:
+                                items.append(it_obj)
+
+                        storyboard_steps.append({
+                            "step_num": step_num,
+                            "title": s_title,
+                            "description": s_desc,
+                            "raw_pixmap": raw_px,
+                            "thumbnail": thumb_px,
+                            "items": items,
+                            "next_stamp_index": next_stamp
+                        })
+                    return ProjectData(storyboard_steps, active_idx, metadata)
+
+            # 2. JSON 파일 (.mcs.json) 로드
             with open(project_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            metadata = data.get("metadata", {})
+            active_idx = int(data.get("active_step_idx", 0))
             project_dir = os.path.dirname(os.path.abspath(project_path))
+
+            # A. 현대식 다중 슬라이드 포맷
+            if "steps" in data and isinstance(data["steps"], list):
+                storyboard_steps = []
+                for i, sdata in enumerate(data["steps"]):
+                    step_num = sdata.get("step_num", i + 1)
+                    s_title = sdata.get("title", f"Step {step_num}")
+                    s_desc = sdata.get("description", "")
+                    next_stamp = sdata.get("next_stamp_index", 1)
+
+                    raw_px = None
+                    raw_file = sdata.get("raw_image_file") or data.get("raw_image_file")
+                    if raw_file:
+                        rf_path = os.path.join(project_dir, raw_file)
+                        if os.path.exists(rf_path):
+                            raw_px = QPixmap(rf_path)
+                    if (raw_px is None or raw_px.isNull()) and sdata.get("raw_image_b64"):
+                        raw_px = cls.base64_to_pixmap(sdata.get("raw_image_b64", ""))
+
+                    items = []
+                    for it_d in sdata.get("items", []):
+                        it_obj = item_from_dict(it_d)
+                        if it_obj:
+                            items.append(it_obj)
+
+                    thumb_px = raw_px.copy() if raw_px else None
+
+                    storyboard_steps.append({
+                        "step_num": step_num,
+                        "title": s_title,
+                        "description": s_desc,
+                        "raw_pixmap": raw_px,
+                        "thumbnail": thumb_px,
+                        "items": items,
+                        "next_stamp_index": next_stamp
+                    })
+                return ProjectData(storyboard_steps, active_idx, metadata)
+
+            # B. 구형 단일 슬라이드 포맷 (완벽 하위 호환)
             raw_img_filename = data.get("raw_image_file", "")
+            project_dir = os.path.dirname(os.path.abspath(project_path))
             raw_img_path = os.path.join(project_dir, raw_img_filename) if raw_img_filename else ""
 
-            # 원본 이미지 복원: companion _raw.png 우선 탐색 -> 실패 시 base64 fallback
             raw_pixmap = None
             if raw_img_path and os.path.exists(raw_img_path):
                 raw_pixmap = QPixmap(raw_img_path)
             if (raw_pixmap is None or raw_pixmap.isNull()) and data.get("raw_image_b64"):
-                raw_pixmap = ProjectManager.base64_to_pixmap(data["raw_image_b64"])
+                raw_pixmap = cls.base64_to_pixmap(data["raw_image_b64"])
 
-            # 주석 객체 복원
             items = []
             for item_dict in data.get("items", []):
                 obj = item_from_dict(item_dict)
@@ -4242,11 +4468,47 @@ class ProjectManager:
                     items.append(obj)
 
             next_stamp_index = int(data.get("next_stamp_index", 1))
-            metadata = data.get("metadata", {})
-            return raw_pixmap, items, next_stamp_index, metadata
+            single_step = {
+                "step_num": 1,
+                "title": "Step 1. [단계명 입력]",
+                "description": "",
+                "raw_pixmap": raw_pixmap,
+                "thumbnail": raw_pixmap.copy() if raw_pixmap else None,
+                "items": items,
+                "next_stamp_index": next_stamp_index
+            }
+            return ProjectData([single_step], 0, metadata)
+
         except Exception as e:
             print(f"[ProjectManager 로드 오류]: {e}")
-            return None, [], 1, {}
+            return ProjectData([], 0, {})
+
+    @classmethod
+    def merge_project(cls, current_steps: list, merge_file_path: str):
+        """대상 프로젝트의 슬라이드를 현재 타임라인 뒤로 연속 순번으로 병합"""
+        proj_data = cls.load_project(merge_file_path)
+        incoming_steps = proj_data.steps if hasattr(proj_data, "steps") else []
+        if not incoming_steps:
+            return current_steps, 0
+
+        merged = [s.copy() for s in current_steps]
+        start_num = len(merged) + 1
+        added_count = 0
+        for s in incoming_steps:
+            new_s = s.copy()
+            new_s["step_num"] = start_num + added_count
+            orig_title = s.get("title", "")
+            clean_title = orig_title.split(". ", 1)[-1] if ". " in orig_title else orig_title
+            new_s["title"] = f"Step {new_s['step_num']}. {clean_title}"
+            new_s["items"] = [it.clone() for it in s.get("items", [])]
+            if s.get("raw_pixmap"):
+                new_s["raw_pixmap"] = s["raw_pixmap"].copy()
+            if s.get("thumbnail"):
+                new_s["thumbnail"] = s["thumbnail"].copy()
+            merged.append(new_s)
+            added_count += 1
+
+        return merged, added_count
 
 
 # ==============================================================================
@@ -7362,7 +7624,7 @@ class StepCardWidget(QFrame):
         if thumb_pix and not thumb_pix.isNull():
             self.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
-            self.lbl_thumb.setText("빈 슬라이드")
+            self.lbl_thumb.setText(tr("slide_empty", "빈 슬라이드"))
             self.lbl_thumb.setStyleSheet("color: #94A3B8; font-size: 10px;")
 
         vbox.addLayout(top_bar)
@@ -7696,8 +7958,13 @@ class FilmstripDockWidget(QWidget):
     def update_card_selection_states(self):
         count = len(self.steps)
         sel_count = len(self.selected_indices)
-        self.lbl_title.setText(f"🎞️ 스토리보드 타임라인 ({count}개 슬라이드, {sel_count}개 선택됨)")
-        self.btn_delete_selected.setText(f"🗑️ 선택 삭제 ({sel_count})" if sel_count > 0 else "🗑️ 선택 삭제")
+        timeline_tpl = tr("storyboard_timeline_format", "스토리보드 타임라인 ({count}개 슬라이드, {sel_count}개 선택됨)")
+        self.lbl_title.setText(timeline_tpl.format(count=count, sel_count=sel_count))
+        if sel_count > 0:
+            del_tpl = tr("btn_delete_selected_count", "선택 삭제 ({count})")
+            self.btn_delete_selected.setText(del_tpl.format(count=sel_count))
+        else:
+            self.btn_delete_selected.setText(tr("btn_delete_selected_step", "선택 삭제"))
         for i in range(self.cards_layout.count()):
             item = self.cards_layout.itemAt(i)
             if item:
@@ -8078,12 +8345,16 @@ class ManualStudioWindow(QMainWindow):
         tools_layout.addWidget(self.create_separator())
 
         # 2) [프로젝트] 그룹
+        self.btn_new_project = QPushButton(tr("btn_new_project", "새 프로젝트"), self)
+        self.btn_new_project.setToolTip(tr("tip_new_project", "모든 슬라이드를 초기화하고 새로운 매뉴얼 프로젝트를 시작합니다. (단축키: Ctrl+N)"))
+        self.btn_new_project.clicked.connect(self.action_new_project)
+
         self.btn_open_project = QPushButton(tr("btn_open_project", "불러오기"), self)
-        self.btn_open_project.setToolTip(tr("tooltip_open_project", "기존 저장된 프로젝트(.mcs.json)를 불러와 개별 객체를 재편집합니다."))
+        self.btn_open_project.setToolTip(tr("tooltip_open_project", "기존 저장된 프로젝트(.dragon, .mcs.json)를 불러와 타임라인과 개별 객체를 복원합니다. (Ctrl+O)"))
         self.btn_open_project.clicked.connect(self.action_open_project)
 
         self.btn_save_project = QPushButton(tr("btn_save_project", "프로젝트 저장"), self)
-        self.btn_save_project.setToolTip(tr("tooltip_save_project", "현재 작업 중인 개별 객체와 원본 캡처를 프로젝트(.mcs.json)로 저장합니다."))
+        self.btn_save_project.setToolTip(tr("tooltip_save_project", "현재 타임라인의 모든 슬라이드와 고해상도 이미지를 프로젝트로 저장합니다. (Ctrl+S)"))
         self.btn_save_project.clicked.connect(self.action_save_project)
 
         self.btn_autosave = QPushButton(tr("btn_autosave", "자동 저장"), self)
@@ -8091,6 +8362,10 @@ class ManualStudioWindow(QMainWindow):
         self.btn_autosave.setChecked(bool(self.config.get("auto_save_enabled", True)))
         self.btn_autosave.setToolTip("프로젝트 주기적 자동 저장 활성화/비활성화 (단축키: Alt+A)")
         self.btn_autosave.clicked.connect(self.on_autosave_toggle_clicked)
+
+        self.btn_merge_project = QPushButton(tr("btn_merge_project", "프로젝트 병합"), self)
+        self.btn_merge_project.setToolTip(tr("tip_merge_project", "다른 프로젝트(.dragon, .mcs.json)의 슬라이드들을 현재 타임라인 뒤에 추가 병합합니다."))
+        self.btn_merge_project.clicked.connect(self.action_merge_project)
 
         self.btn_open_file = QPushButton(tr("btn_open_file", "이미지 열기"), self)
         self.btn_open_file.setToolTip(tr("tooltip_open_file", "외부 이미지 파일을 불러와 캔버스에 배치합니다."))
@@ -8103,11 +8378,13 @@ class ManualStudioWindow(QMainWindow):
         proj_grid = QGridLayout()
         proj_grid.setContentsMargins(0, 0, 0, 0)
         proj_grid.setSpacing(2)
-        proj_grid.addWidget(self.btn_open_project, 0, 0)
-        proj_grid.addWidget(self.btn_save_project, 0, 1)
-        proj_grid.addWidget(self.btn_autosave, 0, 2)
-        proj_grid.addWidget(self.btn_open_file, 1, 0)
-        proj_grid.addWidget(self.btn_copy_image, 1, 1)
+        proj_grid.addWidget(self.btn_new_project, 0, 0)
+        proj_grid.addWidget(self.btn_open_project, 0, 1)
+        proj_grid.addWidget(self.btn_save_project, 0, 2)
+        proj_grid.addWidget(self.btn_autosave, 0, 3)
+        proj_grid.addWidget(self.btn_merge_project, 1, 0)
+        proj_grid.addWidget(self.btn_open_file, 1, 1)
+        proj_grid.addWidget(self.btn_copy_image, 1, 2)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_project", "프로젝트"), proj_grid, "grp_project"))
         tools_layout.addWidget(self.create_separator())
 
@@ -8303,53 +8580,6 @@ class ManualStudioWindow(QMainWindow):
         self.chk_ppt_title.setChecked(self.config.get("ppt_layout", {}).get("include_title", True))
         self.chk_ppt_title.toggled.connect(self.on_ppt_layout_changed)
 
-        self.btn_renumber_steps = QPushButton(tr("btn_renumber_steps", "순번 재정렬"), self)
-        self.btn_renumber_steps.setToolTip(tr("tooltip_renumber", "열려있는 파워포인트의 모든 슬라이드를 순서대로 확인하여 Step 번호를 1부터 자동 재정렬합니다."))
-        self.btn_renumber_steps.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; font-weight: 500;")
-        self.btn_renumber_steps.clicked.connect(self.action_renumber_powerpoint_steps)
-
-        self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"), self)
-        self.btn_send_slides.setObjectName("btn_send_slides")
-        self.btn_send_slides.setToolTip(f"{tr('tip_send_google_slides', '열려 있는 구글 슬라이드 웹 브라우저 창에 새 슬라이드를 추가하고 이미지를 자동 주입합니다.')} (F11)")
-        self.btn_send_slides.setStyleSheet("""
-            QPushButton {
-                background-color: #FEF3C7;
-                color: #92400E;
-                border: 1px solid #FCD34D;
-                font-size: 11px;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 2px 6px;
-            }
-            QPushButton:hover {
-                background-color: #FDE68A;
-                border-color: #F59E0B;
-                color: #78350F;
-            }
-        """)
-        self.btn_send_slides.clicked.connect(self.action_send_to_google_slides)
-
-        self.btn_export_hwp = QPushButton(tr("btn_export_hwp", "한글 전송"), self)
-        self.btn_export_hwp.setObjectName("btn_export_hwp")
-        self.btn_export_hwp.setToolTip(f"{tr('tip_export_hwp', '한컴 한글(HWP) 문서에 이미지와 단계 제목을 자동 삽입합니다.')} (Shift+F10 / F12)")
-        self.btn_export_hwp.setStyleSheet('''
-            QPushButton {
-                background-color: #ECFDF5;
-                color: #047857;
-                border: 1px solid #A7F3D0;
-                font-size: 11px;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 2px 6px;
-            }
-            QPushButton:hover {
-                background-color: #D1FAE5;
-                border-color: #10B981;
-                color: #065F46;
-            }
-        ''')
-        self.btn_export_hwp.clicked.connect(self.action_send_to_hwp)
-
         self.btn_toggle_window_frame = QPushButton(tr("btn_window_frame", "액자 프레임"), self)
         self.btn_toggle_window_frame.setObjectName("btn_toggle_window_frame")
         self.btn_toggle_window_frame.setCheckable(True)
@@ -8373,37 +8603,12 @@ class ManualStudioWindow(QMainWindow):
         ''')
         self.btn_toggle_window_frame.clicked.connect(self.on_toggle_window_frame)
 
-        self.btn_filmstrip_toggle = QPushButton(tr("btn_filmstrip_toggle", "스토리보드"), self)
-        self.btn_filmstrip_toggle.setObjectName("btn_filmstrip_toggle")
-        self.btn_filmstrip_toggle.setCheckable(True)
-        self.btn_filmstrip_toggle.setChecked(bool(self.config.get("filmstrip_visible", True)))
-        self.btn_filmstrip_toggle.setToolTip(tr("tip_filmstrip_toggle", "하단 다단계 스토리보드 타임라인 독을 표시하거나 숨깁니다."))
-        self.btn_filmstrip_toggle.setStyleSheet('''
-            QPushButton {
-                background-color: #F8FAFC;
-                color: #334155;
-                border: 1px solid #CBD5E1;
-                font-size: 11px;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 2px 6px;
-            }
-            QPushButton:checked {
-                background-color: #E0F2FE;
-                color: #0369A1;
-                border-color: #BAE6FD;
-            }
-        ''')
-        self.btn_filmstrip_toggle.clicked.connect(self.on_toggle_filmstrip)
-
         ppt_grid = QGridLayout()
         ppt_grid.setContentsMargins(0, 0, 0, 0)
         ppt_grid.setSpacing(2)
         ppt_grid.addWidget(self.btn_toggle_window_frame, 0, 0)
         ppt_grid.addWidget(self.btn_ppt_fit, 0, 1)
-        ppt_grid.addWidget(self.btn_filmstrip_toggle, 0, 2)
-        ppt_grid.addWidget(self.chk_ppt_title, 1, 0)
-        ppt_grid.addWidget(self.btn_renumber_steps, 1, 1, 1, 2)
+        ppt_grid.addWidget(self.chk_ppt_title, 1, 0, 1, 2)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options"))
 
         tools_layout.addStretch(1)
@@ -8775,6 +8980,28 @@ class ManualStudioWindow(QMainWindow):
         env_lay.addWidget(self.btn_settings)
         format_layout.addWidget(self.create_ribbon_group(tr("grp_settings", "환경설정"), env_lay, "grp_settings"))
 
+        # Hidden compatibility controls for removed duplicate/floating ribbon buttons
+        self.btn_renumber_steps = QPushButton(tr("btn_renumber_steps", "순번 재정렬"), self)
+        self.btn_renumber_steps.hide()
+        self.btn_renumber_steps.clicked.connect(self.action_renumber_powerpoint_steps)
+
+        self.btn_toggle_filmstrip = QPushButton(tr("btn_toggle_filmstrip", "스토리보드"), self)
+        self.btn_toggle_filmstrip.setCheckable(True)
+        self.btn_toggle_filmstrip.hide()
+        self.btn_toggle_filmstrip.clicked.connect(self.on_toggle_filmstrip)
+
+        self.btn_export = QPushButton(tr("btn_export", "슬라이드 삽입"), self)
+        self.btn_export.hide()
+        self.btn_export.clicked.connect(self.action_export_all_ppt)
+
+        self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"), self)
+        self.btn_send_slides.hide()
+        self.btn_send_slides.clicked.connect(self.action_export_all_slides)
+
+        self.btn_export_hwp = QPushButton(tr("btn_export_hwp", "한글 전송"), self)
+        self.btn_export_hwp.hide()
+        self.btn_export_hwp.clicked.connect(self.action_export_all_hwp)
+
         format_layout.addStretch(1)
 
         scroll_format = QScrollArea(self)
@@ -9102,6 +9329,23 @@ class ManualStudioWindow(QMainWindow):
 
         # 1. 파일(F) 메뉴
         self.menu_file = menubar.addMenu("파일(&F)")
+        self.act_new_proj = self.menu_file.addAction("새 프로젝트 (Ctrl+N)")
+        self.act_new_proj.setShortcut(QKeySequence("Ctrl+N"))
+        self.act_new_proj.triggered.connect(self.action_new_project)
+        self.act_open_proj = self.menu_file.addAction("프로젝트 열기... (Ctrl+O)")
+        self.act_open_proj.setShortcut(QKeySequence("Ctrl+O"))
+        self.act_open_proj.triggered.connect(self.action_open_project)
+        self.act_save_proj = self.menu_file.addAction("프로젝트 저장 (Ctrl+S)")
+        self.act_save_proj.setShortcut(QKeySequence("Ctrl+S"))
+        self.act_save_proj.triggered.connect(self.action_save_project)
+        self.act_save_as = self.menu_file.addAction("다른 이름으로 저장...")
+        self.act_save_as.triggered.connect(self.action_save_as_project)
+        self.act_merge_proj = self.menu_file.addAction("프로젝트 병합...")
+        self.act_merge_proj.triggered.connect(self.action_merge_project)
+        self.menu_file.addSeparator()
+        self.act_open_img = self.menu_file.addAction("외부 이미지 열기...")
+        self.act_open_img.triggered.connect(self.open_image_file)
+        self.menu_file.addSeparator()
         self.act_f9 = self.menu_file.addAction("고정 캡처 (F9)")
         self.act_f9.triggered.connect(self.handle_hotkey_capture)
         self.act_shift_f9 = self.menu_file.addAction("영역 지정 캡처 (Shift+F9)")
@@ -9109,16 +9353,10 @@ class ManualStudioWindow(QMainWindow):
         self.act_f8 = self.menu_file.addAction("부분 추가 캡처 (F8)")
         self.act_f8.triggered.connect(self.start_sub_capture)
         self.menu_file.addSeparator()
-        self.act_open_proj = self.menu_file.addAction("프로젝트 열기... (Ctrl+O)")
-        self.act_open_proj.triggered.connect(self.action_open_project)
-        self.act_save_proj = self.menu_file.addAction("프로젝트 저장 (Ctrl+S)")
-        self.act_save_proj.triggered.connect(self.action_save_project)
-        self.act_open_img = self.menu_file.addAction("외부 이미지 열기...")
-        self.act_open_img.triggered.connect(self.open_image_file)
-        self.menu_file.addSeparator()
-        self.act_export_ppt = self.menu_file.addAction("PPT 슬라이드 생성 (F10)")
-        self.act_export_ppt.triggered.connect(self.export_to_ppt_and_clipboard)
-        self.act_export_slides = self.menu_file.addAction(f"{tr('btn_send_google_slides', '구글 슬라이드 전송')} (F11)")
+        self.act_export_ppt = self.menu_file.addAction("PowerPoint 슬라이드 전송 (F10)")
+        self.act_export_ppt.setShortcut(QKeySequence("F10"))
+        self.act_export_ppt.triggered.connect(self.action_export_all_ppt)
+        self.act_export_slides = self.menu_file.addAction("구글 슬라이드 전송 (F11)")
         self.act_export_slides.setShortcut(QKeySequence("F11"))
         self.act_export_slides.triggered.connect(self.action_send_to_google_slides)
         self.menu_file.addSeparator()
@@ -9252,6 +9490,8 @@ class ManualStudioWindow(QMainWindow):
         self.retranslate_ribbon()
         self.retranslate_quick_strip()
         self.retranslate_status_and_title()
+        if hasattr(self, "storyboard_toggle_bar") and hasattr(self.storyboard_toggle_bar, "retranslate_ui"):
+            self.storyboard_toggle_bar.retranslate_ui()
         if hasattr(self, "filmstrip") and hasattr(self.filmstrip, "retranslate_ui"):
             self.filmstrip.retranslate_ui()
         if hasattr(self, "init_monitor_combos"):
@@ -9260,22 +9500,30 @@ class ManualStudioWindow(QMainWindow):
     def retranslate_menu_bar(self):
         if hasattr(self, "menu_file"):
             self.menu_file.setTitle(tr("menu_file", "파일(&F)"))
+        if hasattr(self, "act_new_proj"):
+            self.act_new_proj.setText(tr("btn_new_project", "새 프로젝트") + " (Ctrl+N)")
+        if hasattr(self, "act_open_proj"):
+            self.act_open_proj.setText(tr("act_open_proj", "프로젝트 열기...") + " (Ctrl+O)")
+        if hasattr(self, "act_save_proj"):
+            self.act_save_proj.setText(tr("act_save_proj", "프로젝트 저장") + " (Ctrl+S)")
+        if hasattr(self, "act_save_as"):
+            self.act_save_as.setText(tr("act_save_as_proj", "다른 이름으로 저장..."))
+        if hasattr(self, "act_merge_proj"):
+            self.act_merge_proj.setText(tr("btn_merge_project", "프로젝트 병합..."))
+        if hasattr(self, "act_open_img"):
+            self.act_open_img.setText(tr("act_open_file", "외부 이미지 열기..."))
         if hasattr(self, "act_f9"):
             self.act_f9.setText(tr("btn_fixed_capture", "고정 캡처") + " (F9)")
         if hasattr(self, "act_shift_f9"):
             self.act_shift_f9.setText(tr("btn_variable_capture", "영역 지정") + " (Shift+F9)")
         if hasattr(self, "act_f8"):
             self.act_f8.setText(tr("btn_sub_capture", "부분 캡처") + " (F8)")
-        if hasattr(self, "act_open_proj"):
-            self.act_open_proj.setText(tr("act_open_proj", "프로젝트 열기... (Ctrl+O)"))
-        if hasattr(self, "act_save_proj"):
-            self.act_save_proj.setText(tr("act_save_proj", "프로젝트 저장 (Ctrl+S)"))
-        if hasattr(self, "act_open_img"):
-            self.act_open_img.setText(tr("act_open_file", "외부 이미지 열기..."))
         if hasattr(self, "act_export_ppt"):
-            self.act_export_ppt.setText(tr("btn_export", "PPT 슬라이드 생성 (F10)"))
+            self.act_export_ppt.setText(tr("menu_export_ppt", "PowerPoint 슬라이드 전송") + " (F10)")
+        if hasattr(self, "act_export_slides"):
+            self.act_export_slides.setText(tr("btn_send_google_slides", "구글 슬라이드 전송") + " (F11)")
         if hasattr(self, "act_exit"):
-            self.act_exit.setText(tr("act_exit", "종료 (Alt+F4)"))
+            self.act_exit.setText(tr("act_exit", "종료") + " (Alt+F4)")
 
         if hasattr(self, "menu_edit"):
             self.menu_edit.setTitle(tr("menu_edit", "편집(&E)"))
@@ -9410,9 +9658,13 @@ class ManualStudioWindow(QMainWindow):
             ("btn_capture", "btn_fixed_capture", "고정 캡처", "tooltip_capture"),
             ("btn_drag_capture", "btn_variable_capture", "영역 지정", "tooltip_drag_capture"),
             ("btn_sub_capture", "btn_sub_capture", "부분 캡처", "tooltip_sub_capture"),
+            ("btn_scroll_stitch", "btn_scroll_stitch", "스크롤 스티칭", "tip_scroll_stitch"),
+            ("btn_action_record", "btn_action_record", "액션 녹화", "tip_action_record"),
+            ("btn_new_project", "btn_new_project", "새 프로젝트", "tip_new_project"),
             ("btn_open_project", "btn_open_project", "불러오기", "tooltip_open_project"),
             ("btn_save_project", "btn_save_project", "프로젝트 저장", "tooltip_save_project"),
             ("btn_autosave", "btn_autosave", "자동 저장", "tooltip_autosave"),
+            ("btn_merge_project", "btn_merge_project", "프로젝트 병합", "tip_merge_project"),
             ("btn_open_file", "btn_open_file", "이미지 열기", "tooltip_open_file"),
             ("btn_copy_image", "btn_copy_image", "결과 복사", "tooltip_copy_image"),
             ("btn_mode_select", "btn_mode_select", "선택 도구", "tooltip_select"),
@@ -9424,6 +9676,8 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_arrow", "btn_mode_arrow", "직선 화살표", "tooltip_arrow"),
             ("btn_mode_box", "btn_mode_box", "사각 강조", "tooltip_box"),
             ("btn_mode_blur", "btn_mode_blur", "모자이크", "tooltip_blur"),
+            ("btn_mode_eraser", "btn_smart_eraser", "스마트 지우개", "tip_smart_eraser"),
+            ("btn_auto_pii", "btn_auto_pii", "개인정보 마스킹", "tip_auto_pii"),
             ("btn_draft_stamp", "btn_draft_stamp", "Draft 스탬프", "tooltip_draft"),
             ("btn_mode_ocr", "btn_mode_ocr", "OCR 추출", "tooltip_ocr"),
             ("btn_mode_ocr_label", "btn_mode_ocr_label", "OCR 라벨", "tooltip_ocr_label"),
@@ -9433,12 +9687,12 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_text", "btn_mode_text", "텍스트 라벨", "tooltip_text"),
             ("btn_mode_hotkey", "btn_mode_hotkey", "단축키 배지", "tooltip_hotkey"),
             ("btn_mode_wordart", "btn_mode_wordart", "워드아트", "tooltip_wordart"),
-            ("btn_export", "btn_export", "슬라이드 삽입", "tooltip_export"),
-            ("btn_send_slides", "btn_send_google_slides", "구글 슬라이드 전송", "tip_send_google_slides"),
+            ("btn_toggle_window_frame", "btn_window_frame", "액자 프레임", "tip_window_frame"),
             ("btn_ppt_fit", "btn_ppt_fit", "배율 맞춤", "tooltip_ppt_fit"),
-            ("btn_renumber_steps", "btn_renumber_steps", "순번 재정렬", "tooltip_renumber"),
             ("btn_reset_stamp_index", "btn_reset_stamp", "1번 초기화", None),
             ("btn_settings", "btn_detail_settings", "상세 설정", None),
+            ("btn_renumber_steps", "btn_renumber_steps", "순번 재정렬", "tooltip_renumber"),
+            ("btn_toggle_filmstrip", "btn_toggle_filmstrip", "스토리보드", "tip_filmstrip_toggle"),
         ]
         for attr_name, text_key, def_text, tt_key in button_map:
             if hasattr(self, attr_name):
@@ -9735,36 +9989,138 @@ class ManualStudioWindow(QMainWindow):
                 self.on_capture_completed(pixmap)
                 self.show_toast(f"이미지 로드 완료: {os.path.basename(file_path)}")
 
+    def _sync_canvas_to_current_step(self):
+        """현재 캔버스 작업 내용을 스토리보드 활성 슬라이드에 완전 동기화"""
+        if len(self.storyboard_steps) == 0:
+            if self.canvas.pixmap is not None or len(self.canvas.items) > 0:
+                self.storyboard_steps.append({
+                    "step_num": 1,
+                    "title": "Step 1. [단계명 입력]",
+                    "description": "",
+                    "raw_pixmap": self.canvas.pixmap.copy() if self.canvas.pixmap else None,
+                    "thumbnail": self.canvas.pixmap.copy() if self.canvas.pixmap else None,
+                    "items": [it.clone() for it in self.canvas.items],
+                    "next_stamp_index": self.canvas.next_stamp_index
+                })
+                self.current_step_idx = 0
+                if hasattr(self, "filmstrip"):
+                    self.filmstrip.set_steps(self.storyboard_steps, 0)
+        elif 0 <= self.current_step_idx < len(self.storyboard_steps):
+            curr = self.storyboard_steps[self.current_step_idx]
+            if self.canvas.pixmap is not None:
+                curr["raw_pixmap"] = self.canvas.pixmap.copy()
+            curr["items"] = [it.clone() for it in self.canvas.items]
+            curr["next_stamp_index"] = self.canvas.next_stamp_index
+            comp = self.canvas.get_composed_image()
+            if comp:
+                curr["thumbnail"] = QPixmap.fromImage(comp)
+
+    def action_new_project(self):
+        """새 프로젝트 (Ctrl+N): 기존 작업 보존 확인 후 초기화"""
+        has_content = (len(self.storyboard_steps) > 1 or 
+                       (len(self.storyboard_steps) == 1 and self.storyboard_steps[0].get("raw_pixmap") is not None) or
+                       self.canvas.pixmap is not None or len(self.canvas.items) > 0)
+        if has_content:
+            res = QMessageBox.question(
+                self,
+                tr("btn_new_project", "새 프로젝트"),
+                tr("msg_new_project_confirm", "현재 작업 중인 프로젝트의 변경사항을 잃을 수 있습니다.\n새 프로젝트를 시작하시겠습니까?"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if res != QMessageBox.Yes:
+                return
+
+        self.storyboard_steps = []
+        self.current_step_idx = 0
+        self.current_project_path = None
+        self.canvas.clear_all()
+        self.canvas.pixmap = None
+        self.canvas.items.clear()
+        self.canvas.next_stamp_index = 1
+        self.canvas.history.clear()
+        self.canvas.update()
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps([], 0)
+        self.update_window_title()
+        self.show_toast(tr("status_ready", "준비 완료"))
+
     def action_open_project(self):
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "프로젝트 열기",
+            tr("btn_open_project", "프로젝트 열기"),
             "",
-            "매뉴얼 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)"
+            filter_str
         )
         if file_path and os.path.exists(file_path):
             self.load_project_file(file_path)
 
     def load_project_file(self, file_path: str):
-        raw_pixmap, items, next_stamp_index, metadata = ProjectManager.load_project(file_path)
-        if raw_pixmap is None or raw_pixmap.isNull():
-            self.show_toast(f"프로젝트 로드 실패: 원본 캡처 이미지를 찾을 수 없습니다 ({os.path.basename(file_path)})")
+        proj_data = ProjectManager.load_project(file_path)
+        steps = proj_data.steps if hasattr(proj_data, "steps") else []
+        if not steps:
+            # 하위 호환 튜플 확인
+            if isinstance(proj_data, (tuple, list)) and len(proj_data) >= 4 and proj_data[0] is not None:
+                raw_px, items, next_idx, meta = proj_data[0], proj_data[1], proj_data[2], proj_data[3]
+                steps = [{
+                    "step_num": 1,
+                    "title": "Step 1. [단계명 입력]",
+                    "description": "",
+                    "raw_pixmap": raw_px,
+                    "thumbnail": raw_px.copy() if raw_px else None,
+                    "items": items,
+                    "next_stamp_index": next_idx
+                }]
+
+        if not steps:
+            self.show_toast(f"프로젝트 로드 실패: 유효한 슬라이드 데이터를 찾을 수 없습니다 ({os.path.basename(file_path)})")
             return False
 
-        self.canvas.load_project_data(raw_pixmap, items, next_stamp_index)
+        self.storyboard_steps = steps
+        active_idx = getattr(proj_data, "active_step_idx", 0)
+        self.current_step_idx = max(0, min(active_idx, len(steps) - 1))
+
+        active_step = self.storyboard_steps[self.current_step_idx]
+        self.canvas.load_project_data(
+            active_step.get("raw_pixmap"),
+            active_step.get("items", []),
+            active_step.get("next_stamp_index", 1)
+        )
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+
         self.current_project_path = file_path
         self.last_capture_rect = None
-
         base_name = os.path.basename(file_path)
         self.update_window_title()
-        self.status_label.setText(
-            f"프로젝트 로드 완료: {base_name} (주석 {len(items)}개 복원됨) ➔ 수정 후 F10 누르면 슬라이드와 프로젝트가 갱신됩니다."
-        )
-        self.show_toast(f"프로젝트 로드 완료: {base_name} (주석 {len(items)}개)")
+        self.show_toast(f"프로젝트 로드 완료: {base_name} (슬라이드 {len(steps)}개)")
         return True
 
+    def action_merge_project(self):
+        """진행 중인 프로젝트에 타인의 프로젝트를 병합 (순서 자동 연계)"""
+        self._sync_canvas_to_current_step()
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("btn_merge_project", "프로젝트 병합"),
+            "",
+            filter_str
+        )
+        if file_path and os.path.exists(file_path):
+            merged_steps, added_count = ProjectManager.merge_project(self.storyboard_steps, file_path)
+            if added_count > 0:
+                self.storyboard_steps = merged_steps
+                if hasattr(self, "filmstrip"):
+                    self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+                msg = tr("toast_project_merged", "프로젝트 병합 완료 ({count}개 슬라이드 추가됨)").format(count=added_count)
+                self.show_toast(msg)
+            else:
+                self.show_toast("병합할 슬라이드가 없습니다.")
+
     def action_save_project(self):
-        if self.canvas.pixmap is None:
+        self._sync_canvas_to_current_step()
+        if not self.storyboard_steps and self.canvas.pixmap is None:
             self.show_toast("저장할 프로젝트 내용이 없습니다. 먼저 캡처하세요.")
             return False
 
@@ -9774,7 +10130,8 @@ class ManualStudioWindow(QMainWindow):
             return self.action_save_as_project()
 
     def action_save_as_project(self):
-        if self.canvas.pixmap is None:
+        self._sync_canvas_to_current_step()
+        if not self.storyboard_steps and self.canvas.pixmap is None:
             self.show_toast("저장할 프로젝트 내용이 없습니다. 먼저 캡처하세요.")
             return False
 
@@ -9788,36 +10145,36 @@ class ManualStudioWindow(QMainWindow):
 
         existing = [
             f for f in os.listdir(dest_folder)
-            if f.startswith("Step_") and f.endswith(".mcs.json")
+            if f.startswith("Manual_") and (f.endswith(".dragon") or f.endswith(".mcs.json"))
         ]
-        default_name = f"Step_{len(existing) + 1:03d}.mcs.json"
+        default_name = f"Manual_Project_{len(existing) + 1:03d}.dragon"
         default_path = os.path.join(dest_folder, default_name)
 
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "프로젝트 저장",
+            tr("btn_save_project", "프로젝트 저장"),
             default_path,
-            "매뉴얼 프로젝트 (*.mcs.json);;JSON 파일 (*.json);;모든 파일 (*.*)"
+            filter_str
         )
         if file_path:
             return self.save_project_to_path(file_path)
         return False
 
     def save_project_to_path(self, file_path: str):
+        self._sync_canvas_to_current_step()
         metadata = {"ppt_layout": self.config.get("ppt_layout", {})}
         ok = ProjectManager.save_project(
             file_path,
-            self.canvas.pixmap,
-            self.canvas.items,
-            self.canvas.next_stamp_index,
+            self.storyboard_steps,
+            active_step_idx=self.current_step_idx,
             metadata=metadata
         )
         if ok:
             self.current_project_path = file_path
             base_name = os.path.basename(file_path)
             self.update_window_title()
-            self.status_label.setText(f"프로젝트 저장 완료: {base_name}")
-            self.show_toast(f"프로젝트 저장 완료: {base_name}")
+            self.show_toast(f"프로젝트 저장 완료: {base_name} (슬라이드 {len(self.storyboard_steps)}개)")
             auto_p = self.get_autosave_path()
             if os.path.exists(auto_p):
                 try:
@@ -11776,12 +12133,13 @@ class ManualStudioWindow(QMainWindow):
             self.autosave_timer.stop()
 
     def get_autosave_path(self) -> str:
-        return os.path.join(get_app_dir(), ".autosave.mcs.json")
+        return os.path.join(get_app_dir(), ".autosave.dragon")
 
     def auto_save_current_work(self):
         if not self.config.get("auto_save_enabled", True):
             return
-        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+        self._sync_canvas_to_current_step()
+        if not self.storyboard_steps and (self.canvas.pixmap is None or self.canvas.pixmap.isNull()):
             return
         try:
             autosave_path = self.get_autosave_path()
@@ -11792,9 +12150,8 @@ class ManualStudioWindow(QMainWindow):
             }
             ProjectManager.save_project(
                 autosave_path,
-                self.canvas.pixmap,
-                self.canvas.items,
-                self.canvas.next_stamp_index,
+                self.storyboard_steps,
+                active_step_idx=self.current_step_idx,
                 metadata=metadata
             )
             self.status_label.setText(f"자동 저장 완료 ({datetime.now().strftime('%H:%M:%S')})")
@@ -11802,37 +12159,50 @@ class ManualStudioWindow(QMainWindow):
             print(f"[AutoSave] 자동 저장 중 오류: {e}")
 
     def check_and_prompt_recovery(self):
+        if os.environ.get("MANUAL_STUDIO_TEST_MODE") == "1" or not self.isVisible():
+            return
         autosave_path = self.get_autosave_path()
-        if not os.path.exists(autosave_path):
+        legacy_autosave = os.path.join(get_app_dir(), ".autosave.mcs.json")
+        target_path = autosave_path if os.path.exists(autosave_path) else (legacy_autosave if os.path.exists(legacy_autosave) else None)
+        if not target_path:
             return
         try:
-            raw_pixmap, items, next_stamp_index, metadata = ProjectManager.load_project(autosave_path)
-            if raw_pixmap is None or raw_pixmap.isNull():
-                if os.path.exists(autosave_path):
+            proj = ProjectManager.load_project(target_path)
+            steps = proj.steps if hasattr(proj, "steps") else []
+            if not steps:
+                if os.path.exists(target_path):
                     try:
-                        os.remove(autosave_path)
+                        os.remove(target_path)
                     except Exception:
                         pass
                 return
-            saved_time = metadata.get("saved_at", "")
-            time_msg = f" (저장 시각: {saved_time[:19]})" if saved_time else ""
+            saved_time = proj.metadata.get("saved_at", "")
+            time_msg = f" ({saved_time[:19].replace('T', ' ')})" if saved_time else ""
             res = QMessageBox.question(
                 self,
                 tr("msg_autosave_recover", "자동 저장 작업 복구"),
                 f"{tr('msg_autosave_prompt', '이전 비정상 종료 시 자동 저장된 작업이 발견되었습니다.')}{time_msg}\n\n"
-                f"{tr('msg_autosave_confirm', '해당 작업을 복구하여 계속 작업하시겠습니까?')}",
+                f"슬라이드 {len(steps)}개를 복구하여 계속 작업하시겠습니까?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.Yes
             )
             if res == QMessageBox.Yes:
-                self.canvas.load_project_data(raw_pixmap, items, next_stamp_index)
+                self.storyboard_steps = steps
+                self.current_step_idx = getattr(proj, "active_step_idx", 0)
+                active_step = self.storyboard_steps[self.current_step_idx]
+                self.canvas.load_project_data(
+                    active_step.get("raw_pixmap"),
+                    active_step.get("items", []),
+                    active_step.get("next_stamp_index", 1)
+                )
+                if hasattr(self, "filmstrip"):
+                    self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
                 self.update_window_title()
-                self.status_label.setText(f"자동 저장 복구 완료 (주석 {len(items)}개 복원됨)")
-                self.show_toast(f"자동 저장 파일이 복구되었습니다. (주석 {len(items)}개)")
+                self.show_toast(f"자동 저장 복구 완료 ({len(steps)}개 슬라이드)")
             else:
-                if os.path.exists(autosave_path):
+                if os.path.exists(target_path):
                     try:
-                        os.remove(autosave_path)
+                        os.remove(target_path)
                     except Exception:
                         pass
         except Exception as e:
@@ -12295,17 +12665,77 @@ class ManualStudioWindow(QMainWindow):
                 self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
             self.show_toast(f"Step 순서 변경: {from_idx + 1} ➔ {to_idx + 1}")
 
+    def _prepare_export_step_image(self, step: dict, target_w: int = 960, auto_resize: bool = True, enable_frame: bool = True, frame_cfg: dict = None) -> Image.Image:
+        """
+        슬라이드 데이터를 받아 주석 합성 + (옵션) 윈도우 액자 프레임 + 리사이즈를 거친 PIL Image를 생성합니다.
+        raw_pixmap이 없는 빈 슬라이드인 경우에도 16:9 규격(1920x1080)의 백색 캔버스로 Fallback 렌더링하여
+        절대 누락되거나 실패하지 않도록 무결성을 보장합니다.
+        """
+        raw_px = step.get("raw_pixmap")
+        step_num = step.get("step_num", 1)
+        s_title = step.get("title", f"Step {step_num}")
+
+        if raw_px is None or raw_px.isNull():
+            # 빈 슬라이드 Fallback: 1920x1080 백색 캔버스에 단계 타이틀 렌더링
+            raw_px = QPixmap(1920, 1080)
+            raw_px.fill(Qt.white)
+            p = QPainter(raw_px)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setPen(QPen(QColor("#E2E8F0"), 3, Qt.DashLine))
+            p.drawRect(40, 40, 1840, 1000)
+            font = QFont("Malgun Gothic", 28)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QColor("#64748B"))
+            p.drawText(QRect(60, 60, 1800, 960), Qt.AlignCenter, f"{s_title}\n\n[{tr('slide_empty', '빈 슬라이드')}]")
+            p.end()
+
+        # 주석 렌더링을 위한 합성 QImage 생성
+        temp_img = QImage(raw_px.size(), QImage.Format_ARGB32)
+        temp_img.fill(Qt.transparent)
+        painter = QPainter(temp_img)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.drawPixmap(0, 0, raw_px)
+            for item in step.get("items", []):
+                try:
+                    if isinstance(item, BlurMosaicItem):
+                        item.render_mosaic(painter, raw_px)
+                    elif isinstance(item, MagnifierZoomItem):
+                        item.render_zoom(painter, raw_px)
+                    elif isinstance(item, SpotlightMaskItem):
+                        item.render_spotlight(painter, raw_px.width(), raw_px.height())
+                    elif isinstance(item, (ImageOverlayItem, DraftStampItem)):
+                        item.render(painter, is_selected=False)
+                    else:
+                        item.render(painter)
+                except Exception as e:
+                    print(f"[Export Item Render Error]: {e}")
+            if not LicenseEngine.is_licensed():
+                self.canvas._render_watermark(painter, temp_img.width(), temp_img.height())
+        finally:
+            painter.end()
+
+        pil_img = ExportEngine.qimage_to_pil(temp_img)
+        if enable_frame:
+            f_cfg = frame_cfg or self.config.get("window_frame_style", {})
+            pil_img = ExportEngine.apply_window_frame_and_shadow(
+                pil_img,
+                include_header=f_cfg.get("include_header", True),
+                corner_radius=f_cfg.get("corner_radius", 12),
+                shadow_radius=f_cfg.get("shadow_radius", 20),
+                shadow_opacity=f_cfg.get("shadow_opacity", 0.35)
+            )
+        if auto_resize:
+            pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+        return pil_img
+
     def action_export_all_ppt(self):
+        self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
         if not target_steps:
             self.show_toast("전송할 슬라이드가 없습니다.")
             return
-
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [it.clone() for it in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
 
         target_w = self.config.get("target_width", 960)
         auto_resize = self.config.get("auto_resize", True)
@@ -12316,48 +12746,79 @@ class ManualStudioWindow(QMainWindow):
 
         sent_count = 0
         for idx, step in target_steps:
-            raw_px = step.get("raw_pixmap")
-            if raw_px is None or raw_px.isNull():
-                continue
-            step_canvas = StudioCanvasWidget(self)
-            step_canvas.pixmap = raw_px
-            step_canvas.items = step.get("items", [])
-            qimg = step_canvas.get_composed_image()
-            if qimg is None:
-                continue
+            pil_img = self._prepare_export_step_image(step, target_w=target_w, auto_resize=auto_resize, enable_frame=enable_frame, frame_cfg=frame_cfg)
 
-            pil_img = ExportEngine.qimage_to_pil(qimg)
-            if enable_frame:
-                pil_img = ExportEngine.apply_window_frame_and_shadow(
-                    pil_img,
-                    include_header=frame_cfg.get("include_header", True),
-                    corner_radius=frame_cfg.get("corner_radius", 12),
-                    shadow_radius=frame_cfg.get("shadow_radius", 20),
-                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
-                )
-            if auto_resize:
-                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
-
+            step_num = step.get("step_num", idx + 1)
+            s_title = step.get("title", f"Step {step_num}. [단계명 입력]")
             step_layout = ppt_layout.copy()
-            step_layout["title_template"] = f"Step {idx + 1}. [단계명 입력]"
+            step_layout["title_template"] = s_title
             ok = ExportEngine.send_to_powerpoint(pil_img, temp_dir, step_layout)
             if ok:
                 sent_count += 1
 
-        self.show_toast(f"선택된 슬라이드 {sent_count}개 파워포인트 전송 완료")
+        if sent_count > 0:
+            self.show_toast(f"선택된 슬라이드 {sent_count}개 파워포인트 전송 완료")
+        else:
+            self.show_toast("파워포인트 전송 실패 (PowerPoint 프로그램이 실행되어 있는지 확인하세요)")
+
+    def action_send_to_google_slides(self):
+        """현재 캔버스 이미지를 웹 브라우저 구글 슬라이드로 즉시 주입"""
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            self.show_toast("작업 중인 이미지가 없습니다.")
+            return {"success": False, "error": "EMPTY_CANVAS"}
+
+        qimg = self.canvas.get_composed_image()
+        if qimg is None:
+            return {"success": False, "error": "COMPOSED_FAIL"}
+
+        pil_img = ExportEngine.qimage_to_pil(qimg)
+        target_w = self.config.get("target_width", 960)
+        if self.config.get("auto_resize", True):
+            pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+        return_focus = self.config.get("slides_return_focus", True)
+        res = ExportEngine.send_to_google_slides(
+            pil_img,
+            return_focus_hwnd=int(self.winId()),
+            return_focus=return_focus
+        )
+        if res.get("success"):
+            self.show_toast(f"구글 슬라이드 전송 완료: {res.get('title', '')}")
+        return res
+
+    def export_to_ppt_and_clipboard(self):
+        """현재 캔버스를 클립보드 복사 및 대상 프리젠테이션(PPT/구글슬라이드)으로 전송"""
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            self.show_toast("작업 중인 이미지가 없습니다.")
+            return
+
+        qimg = self.canvas.get_composed_image()
+        if qimg is None:
+            return
+
+        pil_img = ExportEngine.qimage_to_pil(qimg)
+        target_w = self.config.get("target_width", 960)
+        if self.config.get("auto_resize", True):
+            pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
+
+        try:
+            ExportEngine.copy_to_clipboard(pil_img)
+        except Exception:
+            pass
+
+        export_target = self.config.get("export_target", "powerpoint")
+        if export_target == "google_slides":
+            return self.action_send_to_google_slides()
+        else:
+            return self.action_export_all_ppt()
 
     def action_export_all_slides(self):
         """선택된 슬라이드들을 웹 브라우저 구글 슬라이드로 일괄 새 슬라이드 생성 및 주입"""
+        self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
         if not target_steps:
             self.show_toast("전송할 슬라이드가 없습니다.")
             return
-
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [it.clone() for it in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
 
         target_w = self.config.get("target_width", 960)
         auto_resize = self.config.get("auto_resize", True)
@@ -12368,29 +12829,10 @@ class ManualStudioWindow(QMainWindow):
         sent_count = 0
         total = len(target_steps)
         for seq, (idx, step) in enumerate(target_steps, 1):
-            raw_px = step.get("raw_pixmap")
-            if raw_px is None or raw_px.isNull():
-                continue
-            step_canvas = StudioCanvasWidget(self)
-            step_canvas.pixmap = raw_px
-            step_canvas.items = step.get("items", [])
-            qimg = step_canvas.get_composed_image()
-            if qimg is None:
-                continue
+            pil_img = self._prepare_export_step_image(step, target_w=target_w, auto_resize=auto_resize, enable_frame=enable_frame, frame_cfg=frame_cfg)
 
-            pil_img = ExportEngine.qimage_to_pil(qimg)
-            if enable_frame:
-                pil_img = ExportEngine.apply_window_frame_and_shadow(
-                    pil_img,
-                    include_header=frame_cfg.get("include_header", True),
-                    corner_radius=frame_cfg.get("corner_radius", 12),
-                    shadow_radius=frame_cfg.get("shadow_radius", 20),
-                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
-                )
-            if auto_resize:
-                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
-
-            self.status_label.setText(f"구글 슬라이드 주입 중... (Step {idx + 1}, {seq}/{total})")
+            step_num = step.get("step_num", idx + 1)
+            self.status_label.setText(f"구글 슬라이드 주입 중... (Step {step_num}, {seq}/{total})")
             QApplication.processEvents()
 
             res = ExportEngine.send_to_google_slides(
@@ -12412,22 +12854,16 @@ class ManualStudioWindow(QMainWindow):
             self.show_toast(success_msg)
 
     def action_export_webbook(self):
+        self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
         if not target_steps:
             self.show_toast("내보낼 슬라이드가 없습니다.")
             return
 
-        # Snapshot current step
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [it.clone() for it in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
-
         default_name = os.path.join(os.path.expanduser("~"), "Desktop", "manual_guide.html")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "반응형 웹북 매뉴얼 저장",
+            tr("menu_export_webbook", "반응형 웹북 매뉴얼 저장"),
             default_name,
             "HTML 파일 (*.html);;모든 파일 (*.*)"
         )
@@ -12439,33 +12875,13 @@ class ManualStudioWindow(QMainWindow):
 
         steps_payload = []
         for idx, step in target_steps:
-            raw_px = step.get("raw_pixmap")
-            if raw_px is None or raw_px.isNull():
-                continue
+            pil_img = self._prepare_export_step_image(step, target_w=1280, auto_resize=True, enable_frame=enable_frame, frame_cfg=frame_cfg)
 
-            step_canvas = StudioCanvasWidget(self)
-            step_canvas.pixmap = raw_px
-            step_canvas.items = step.get("items", [])
-            qimg = step_canvas.get_composed_image()
-            if qimg is None:
-                continue
-
-            pil_img = ExportEngine.qimage_to_pil(qimg)
-            if enable_frame:
-                pil_img = ExportEngine.apply_window_frame_and_shadow(
-                    pil_img,
-                    include_header=frame_cfg.get("include_header", True),
-                    corner_radius=frame_cfg.get("corner_radius", 12),
-                    shadow_radius=frame_cfg.get("shadow_radius", 20),
-                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
-                )
-
-            # Convert to base64 data URI
             buf = io.BytesIO()
             pil_img.save(buf, format="PNG")
             b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-            step_num = idx + 1
+            step_num = step.get("step_num", idx + 1)
             s_title = step.get("title", f"Step {step_num}. 단계 가이드")
             s_desc = step.get("description", f"{step_num}번째 조작 화면입니다. 안내된 위치를 클릭하거나 항목을 입력하세요.")
 
@@ -12482,21 +12898,16 @@ class ManualStudioWindow(QMainWindow):
         self.show_toast(f"웹북 매뉴얼 저장 완료 ({len(steps_payload)}개 슬라이드)")
 
     def action_export_gif(self):
+        self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
         if not target_steps:
             self.show_toast("내보낼 슬라이드가 없습니다.")
             return
 
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [it.clone() for it in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
-
         default_name = os.path.join(os.path.expanduser("~"), "Desktop", "tutorial_short.gif")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "숏클립 튜토리얼 GIF 저장",
+            tr("menu_export_gif", "숏클립 튜토리얼 GIF 저장"),
             default_name,
             "GIF 애니메이션 (*.gif);;모든 파일 (*.*)"
         )
@@ -12508,46 +12919,18 @@ class ManualStudioWindow(QMainWindow):
 
         pil_frames = []
         for idx, step in target_steps:
-            raw_px = step.get("raw_pixmap")
-            if raw_px is None or raw_px.isNull():
-                continue
-
-            step_canvas = StudioCanvasWidget(self)
-            step_canvas.pixmap = raw_px
-            step_canvas.items = step.get("items", [])
-            qimg = step_canvas.get_composed_image()
-            if qimg is None:
-                continue
-
-            pil_img = ExportEngine.qimage_to_pil(qimg)
-            if enable_frame:
-                pil_img = ExportEngine.apply_window_frame_and_shadow(
-                    pil_img,
-                    include_header=frame_cfg.get("include_header", True),
-                    corner_radius=frame_cfg.get("corner_radius", 12),
-                    shadow_radius=frame_cfg.get("shadow_radius", 20),
-                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
-                )
+            pil_img = self._prepare_export_step_image(step, target_w=960, auto_resize=True, enable_frame=enable_frame, frame_cfg=frame_cfg)
             pil_frames.append(pil_img)
-
-        if not pil_frames:
-            self.show_toast("내보낼 유효한 슬라이드 이미지가 없습니다.")
-            return
 
         ExportEngine.export_to_animated_gif(pil_frames, file_path, interval_sec=1.5)
         self.show_toast(f"숏클립 튜토리얼 GIF 저장 완료 ({len(pil_frames)}개 슬라이드)")
 
     def action_export_all_hwp(self):
+        self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
         if not target_steps:
             self.show_toast("전송할 슬라이드가 없습니다.")
             return
-
-        if 0 <= self.current_step_idx < len(self.storyboard_steps) and self.canvas.pixmap is not None:
-            curr_step = self.storyboard_steps[self.current_step_idx]
-            curr_step["raw_pixmap"] = self.canvas.pixmap.copy()
-            curr_step["items"] = [it.clone() for it in self.canvas.items]
-            curr_step["next_stamp_index"] = self.canvas.next_stamp_index
 
         target_w = self.config.get("target_width", 960)
         auto_resize = self.config.get("auto_resize", True)
@@ -12556,34 +12939,18 @@ class ManualStudioWindow(QMainWindow):
 
         sent_count = 0
         for idx, step in target_steps:
-            raw_px = step.get("raw_pixmap")
-            if raw_px is None or raw_px.isNull():
-                continue
-            step_canvas = StudioCanvasWidget(self)
-            step_canvas.pixmap = raw_px
-            step_canvas.items = step.get("items", [])
-            qimg = step_canvas.get_composed_image()
-            if qimg is None:
-                continue
+            pil_img = self._prepare_export_step_image(step, target_w=target_w, auto_resize=auto_resize, enable_frame=enable_frame, frame_cfg=frame_cfg)
 
-            pil_img = ExportEngine.qimage_to_pil(qimg)
-            if enable_frame:
-                pil_img = ExportEngine.apply_window_frame_and_shadow(
-                    pil_img,
-                    include_header=frame_cfg.get("include_header", True),
-                    corner_radius=frame_cfg.get("corner_radius", 12),
-                    shadow_radius=frame_cfg.get("shadow_radius", 20),
-                    shadow_opacity=frame_cfg.get("shadow_opacity", 0.35)
-                )
-            if auto_resize:
-                pil_img = ExportEngine.resize_to_target_width(pil_img, target_w)
-
-            step_title = f"[매뉴얼 스튜디오] Step {idx + 1}. [단계명 입력]"
+            step_num = step.get("step_num", idx + 1)
+            step_title = step.get("title", f"[매뉴얼 스튜디오] Step {step_num}. [단계명 입력]")
             res = ExportEngine.send_to_hwp(pil_img, step_title=step_title)
             if res.get("success"):
                 sent_count += 1
 
-        self.show_toast(f"선택된 슬라이드 {sent_count}개 한컴 한글(HWP) 전송 완료")
+        if sent_count > 0:
+            self.show_toast(f"선택된 슬라이드 {sent_count}개 한컴 한글(HWP) 전송 완료")
+        else:
+            self.show_toast("한컴 한글(HWP) 전송 실패 (한컴 한글이 설치되어 있는지 확인하세요)")
 
 
 

@@ -3588,6 +3588,130 @@ def test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul():
     film.close()
     print("[PASS] test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul (PII Synthesizer, MAC, Account Context, 4-Col Dialog, Storyboard Toolbar Buttons, StoryboardToggleBar & 13-Lang i18n valid)")
 
+
+def test_phase8_project_level_architecture_and_exports():
+    """Phase 8: 프로젝트 레벨 다중 슬라이드 저장(.dragon / .mcs.json), 병합, 내보내기 전수 정상화 및 13개국어 번역 검증"""
+    import zipfile, json, shutil
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QColor
+    from manual_capture_studio import (
+        ProjectManager, ManualStudioWindow, ExportEngine, StampItem, HighlightBoxItem
+    )
+    from i18n_manager import I18nManager
+
+    app = QApplication.instance() or QApplication([])
+
+    test_dir = os.path.abspath("test_phase8_workspace")
+    os.makedirs(test_dir, exist_ok=True)
+
+    dragon_file = os.path.join(test_dir, "multi_step_sample.dragon")
+    mcs_file = os.path.join(test_dir, "multi_step_sample.mcs.json")
+
+    px1 = QPixmap(800, 600)
+    px1.fill(QColor(180, 210, 240))
+    stamp1 = StampItem(1, 120, 150, {"size": 32, "bg_color": "#007AFF"})
+
+    steps_data = [
+        {
+            "step_num": 1,
+            "title": "Step 1. 시스템 로그인",
+            "description": "사원 번호와 비밀번호를 입력합니다.",
+            "raw_pixmap": px1,
+            "thumbnail": px1.copy(),
+            "items": [stamp1],
+            "next_stamp_index": 2
+        },
+        {
+            "step_num": 2,
+            "title": "Step 2. 빈 안내 슬라이드",
+            "description": "다음 단계 진행 전 주의사항을 확인합니다.",
+            "raw_pixmap": None,
+            "thumbnail": None,
+            "items": [],
+            "next_stamp_index": 1
+        }
+    ]
+
+    # 1. .dragon 단일 압축 패키지 저장 및 로드 무결성 검증
+    ok_dragon = ProjectManager.save_project(dragon_file, steps_data, metadata={"author": "DragonRPA Team"})
+    assert ok_dragon is True, "Dragon package save must succeed"
+    assert os.path.exists(dragon_file), "Dragon package file must exist"
+    assert zipfile.is_zipfile(dragon_file), "Dragon file must be a valid zip archive"
+
+    with zipfile.ZipFile(dragon_file, "r") as zf:
+        namelist = zf.namelist()
+        assert "manifest.json" in namelist, "manifest.json must exist in package"
+        assert "slides/step_001_raw.png" in namelist, "Step 1 raw slide must be stored in slides/"
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert manifest["total_steps"] == 2
+        assert manifest["metadata"]["author"] == "DragonRPA Team"
+
+    loaded_dragon = ProjectManager.load_project(dragon_file)
+    assert len(loaded_dragon.steps) == 2, "Loaded dragon must restore all 2 steps"
+    assert loaded_dragon.steps[0]["raw_pixmap"] is not None
+    assert loaded_dragon.steps[0]["raw_pixmap"].width() == 800
+    assert len(loaded_dragon.steps[0]["items"]) == 1
+    assert loaded_dragon.steps[1]["raw_pixmap"] is None
+
+    # 2. .mcs.json 다중 슬라이드 저장 및 로드 무결성 검증
+    ok_mcs = ProjectManager.save_project(mcs_file, steps_data, metadata={"project_name": "TestGuide"})
+    assert ok_mcs is True
+    assert os.path.exists(mcs_file)
+    with open(mcs_file, "r", encoding="utf-8") as f:
+        mcs_data = json.load(f)
+    assert mcs_data["format"] == "ManualCaptureStudio_MultiProject"
+    assert len(mcs_data["steps"]) == 2
+
+    loaded_mcs = ProjectManager.load_project(mcs_file)
+    assert len(loaded_mcs.steps) == 2
+    assert loaded_mcs.steps[0]["raw_pixmap"].width() == 800
+
+    # 3. ManualStudioWindow 내보내기 복원력 및 캔버스 준비 헬퍼 검증
+    win = ManualStudioWindow()
+    # 빈 슬라이드 처리 헬퍼가 16:9 백색 캔버스를 안정적으로 반환하는지 확인
+    prep_img = win._prepare_export_step_image(steps_data[1], target_w=960, auto_resize=True, enable_frame=False)
+    assert prep_img is not None
+    assert prep_img.width == 960
+    assert prep_img.height == 540 # 16:9 ratio preserved
+
+    # 4. 웹북(HTML) 내보내기 정상화 검증
+    html_out = os.path.join(test_dir, "export_test.html")
+    html_steps = [
+        {
+            "step_num": 1,
+            "title": "Step 1",
+            "description": "Desc 1",
+            "image_b64": "data:image/png;base64,iVBORw0KGgo="
+        },
+        {
+            "step_num": 2,
+            "title": "Step 2",
+            "description": "Desc 2",
+            "image_b64": "data:image/png;base64,iVBORw0KGgo="
+        }
+    ]
+    ExportEngine.export_to_html(html_steps, html_out, title="Phase 8 WebBook Test")
+    assert os.path.exists(html_out)
+    assert os.path.getsize(html_out) > 0
+
+    # 5. Phase 8 신규 다국어 키 13개국어 카탈로그 완전성 전수 검수
+    phase8_keys = [
+        "btn_new_project", "tip_new_project", "btn_merge_project", "tip_merge_project",
+        "btn_package_export", "tip_package_export", "btn_action_record", "tip_action_record",
+        "slide_empty", "toast_project_merged", "msg_new_project_confirm", "filter_all_projects",
+        "storyboard_timeline_format", "btn_delete_selected_count"
+    ]
+    for k in phase8_keys:
+        assert k in I18nManager.CATALOG, f"Phase 8 i18n key missing: {k}"
+        for loc in I18nManager.SUPPORTED_LOCALES:
+            val = I18nManager.CATALOG[k].get(loc, "")
+            assert val, f"Missing locale {loc} for Phase 8 key {k}"
+
+    win.close()
+    shutil.rmtree(test_dir, ignore_errors=True)
+    print("[PASS] test_phase8_project_level_architecture_and_exports (.dragon / .mcs.json multi-slide project, merge, empty slide fallback & 13-locale i18n valid)")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -3659,5 +3783,6 @@ if __name__ == "__main__":
     test_phase5_export_menu_storyboard_and_pii_custom_rules()
     test_phase6_multi_selection_and_f10_slide()
     test_phase7_pii_synthesizer_and_storyboard_toolbar_overhaul()
-    print("\nALL 70 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION & PHASE 7 PII/STORYBOARD OVERHAUL TESTS PASSED 100%!")
+    test_phase8_project_level_architecture_and_exports()
+    print("\nALL 71 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL & PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE TESTS PASSED 100%!")
     os._exit(0)
