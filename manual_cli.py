@@ -23,7 +23,7 @@ from manual_capture_studio import (
     StampItem, HighlightBoxItem, ArrowItem, ElbowArrowItem, CalloutItem,
     TextLabelItem, BlurMosaicItem, HotkeyBadgeItem,
     SpotlightMaskItem, ClickRippleItem, MagnifierZoomItem,
-    ProjectManager, ExportEngine, DEFAULT_CONFIG, APP_VERSION,
+    ProjectManager, ExportEngine, MultiMonitorManager, DEFAULT_CONFIG, APP_VERSION,
     item_from_dict
 )
 from license_engine import LicenseEngine
@@ -110,11 +110,18 @@ def cli_capture(rect: str = None, monitor: int = 0, fixed: bool = False, output:
         cap_x, cap_y, cap_w, cap_h = parts
     else:
         # 모니터 전체 영역 캡처
-        geom = target_screen.geometry()
-        cap_x, cap_y, cap_w, cap_h = geom.x(), geom.y(), geom.width(), geom.height()
+        if monitor == -1:
+            v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+            cap_x, cap_y, cap_w, cap_h = v_rect.x(), v_rect.y(), v_rect.width(), v_rect.height()
+        else:
+            geom = target_screen.geometry()
+            cap_x, cap_y, cap_w, cap_h = geom.x(), geom.y(), geom.width(), geom.height()
 
-    # 스크린 캡처 실행 (QScreen.grabWindow)
-    pixmap = target_screen.grabWindow(0, cap_x, cap_y, cap_w, cap_h)
+    # 스크린 캡처 실행 (단일 모니터 또는 가상 데스크톱 전역)
+    if monitor == -1:
+        pixmap = MultiMonitorManager.grab_target_area(-1, QRect(cap_x, cap_y, cap_w, cap_h))
+    else:
+        pixmap = target_screen.grabWindow(0, cap_x, cap_y, cap_w, cap_h)
     if pixmap.isNull():
         return {"status": "error", "message": "Failed to capture screen image"}
 

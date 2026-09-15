@@ -23,6 +23,7 @@ python -m nuitka ^
   --nofollow-import-to=torch,torchvision,cv2,onnxruntime,rapidocr_onnxruntime,matplotlib,pandas,scipy ^
   --include-module=manual_cli ^
   --include-module=mcp_server ^
+  --include-module=mobile_link_server ^
   --include-data-dir="assets=assets" ^
   --include-data-dir="fonts=fonts" ^
   --include-data-files="config.json=config.json" ^
@@ -31,8 +32,8 @@ python -m nuitka ^
   --windows-icon-from-ico="assets/manual_studio.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^
-  --windows-file-version=1.8.0.0 ^
-  --windows-product-version=1.8.0.0 ^
+  --windows-file-version=1.9.0.0 ^
+  --windows-product-version=1.9.0.0 ^
   --windows-file-description="DragonRPA Manual Studio" ^
   --assume-yes-for-downloads ^
   --output-dir="C:\ManualStudioBuild" ^

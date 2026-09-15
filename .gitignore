@@ -29,3 +29,7 @@ nuitka-crash-report.xml
 license.key
 shorts_generator/temp/
 shorts_generator/output/
+android_mobile/**/build/
+android_mobile/.gradle/
+android_mobile/.kotlin/
+android_mobile/local.properties

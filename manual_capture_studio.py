@@ -27,6 +27,12 @@ import warnings
 # Qt 6 / PySide6 관련 구형 경고(DeprecationWarning) 콘솔 출력 전면 차단
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+try:
+    from mobile_link_server import MobileLinkServer, get_local_ip
+except Exception:
+    MobileLinkServer = None
+    get_local_ip = lambda: "127.0.0.1"
+
 def hide_console_window():
     """Windows 환경에서 python.exe(콘솔)로 실행되더라도 불필요한 검은 콘솔창을 즉시 숨김"""
     if sys.platform == "win32" and not os.environ.get("MANUAL_STUDIO_DEBUG"):
@@ -104,7 +110,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.8.0"
+APP_VERSION = "v1.9.0"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -879,14 +885,14 @@ class MultiMonitorManager:
     def grab_target_area(target_monitor, rel_rect):
         """선택된 모니터의 상대 좌표 영역을 고품질 캡처하여 QPixmap 반환"""
         screens = MultiMonitorManager.get_screens()
-        rx = max(0, rel_rect.x())
-        ry = max(0, rel_rect.y())
-        rw = max(10, rel_rect.width())
-        rh = max(10, rel_rect.height())
 
-        # 특정 단일 모니터 지정인 경우
-        if 0 <= target_monitor < len(screens):
+        # 특정 단일 모니터 지정인 경우 (0..N-1)
+        if target_monitor is not None and 0 <= target_monitor < len(screens):
             screen = screens[target_monitor]
+            rx = max(0, rel_rect.x())
+            ry = max(0, rel_rect.y())
+            rw = max(10, min(rel_rect.width(), screen.geometry().width() - rx))
+            rh = max(10, min(rel_rect.height(), screen.geometry().height() - ry))
             return screen.grabWindow(0, rx, ry, rw, rh)
 
         # 전체 가상 데스크톱 대상인 경우: 모든 모니터 스크린샷 결합
@@ -899,6 +905,21 @@ class MultiMonitorManager:
             s_pix = s.grabWindow(0)
             painter.drawPixmap(sg.x() - v_rect.x(), sg.y() - v_rect.y(), s_pix)
         painter.end()
+
+        # rel_rect가 가상 데스크톱 글로벌 좌표인지, v_rect 기준 상대 오프셋인지 판별
+        if v_rect.x() != 0 and (rel_rect.x() < 0 or rel_rect.x() >= v_rect.x()):
+            rx = rel_rect.x() - v_rect.x()
+        else:
+            rx = rel_rect.x()
+        if v_rect.y() != 0 and (rel_rect.y() < 0 or rel_rect.y() >= v_rect.y()):
+            ry = rel_rect.y() - v_rect.y()
+        else:
+            ry = rel_rect.y()
+
+        rx = max(0, min(rx, v_rect.width() - 10))
+        ry = max(0, min(ry, v_rect.height() - 10))
+        rw = max(10, min(rel_rect.width(), v_rect.width() - rx))
+        rh = max(10, min(rel_rect.height(), v_rect.height() - ry))
         return canvas_pix.copy(rx, ry, rw, rh)
 
 
@@ -5557,6 +5578,16 @@ class CaptureOverlayWidget(QWidget):
 
         self.setFocusPolicy(Qt.StrongFocus)
 
+    def show_overlay(self):
+        """다중 모니터 가상 데스크톱(-1) 또는 단일 모니터에 맞춰 전체화면 표출"""
+        if self.target_monitor == -1:
+            self.setGeometry(self.virtual_rect)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        else:
+            self.showFullScreen()
+
     def keyPressEvent(self, event):
         key = event.key()
         modifiers = event.modifiers()
@@ -8828,6 +8859,8 @@ class RibbonIconProvider:
         "flow_database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>',
         "flow_document": '<path d="M4 4a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 2v6h6"/><path d="M8 18c2-1 4-1 6 0s4 1 6 0"/>',
         "doc_ref": '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+        "flow_align": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/><path d="M14 17.5h7m-3.5-3.5 3.5 3.5-3.5 3.5"/>',
+        "mobile_link": '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><line x1="12" x2="12.01" y1="18" y2="18"/>',
 
         # 내보내기 및 슬라이드 관리 (Lucide: Presentation, File-Badge, Globe, Shrink, List-Ordered)
         "ppt_export": '<path d="M2 3h20"/><path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3"/><path d="m7 21 5-5 5 5"/>',
@@ -9777,6 +9810,8 @@ class ManualStudioWindow(QMainWindow):
         self.current_target_monitor = self.config.get("target_monitor", -1)
         self.storyboard_steps = []
         self.current_step_idx = 0
+        self.mobile_server = None
+        self.current_flow_direction = "TD"
 
         loc = self.config.get("locale", "auto")
         if loc == "auto":
@@ -10048,6 +10083,14 @@ class ManualStudioWindow(QMainWindow):
         self.btn_flow_db = self.btn_flow_database
         self.btn_flow_doc = self.btn_flow_document
 
+        self.btn_flow_align = QPushButton(tr("btn_flow_align", "자동정렬"), self)
+        self.btn_flow_align.setToolTip(tr("tip_flow_align", "캔버스의 플로우차트 노드들을 상하(TD) 또는 좌우(LR) 계층 순서로 깔끔하게 자동정렬합니다. (클릭 시 방향 전환)"))
+        self.btn_flow_align.clicked.connect(self.action_auto_align_flowchart)
+
+        self.btn_mobile_link = QPushButton(tr("btn_mobile_link", "모바일 연동"), self)
+        self.btn_mobile_link.setToolTip(tr("tip_mobile_link", "스마트폰/태블릿에서 손으로 그린 다이어그램을 QR 코드로 즉시 전송받습니다. (서버 무저장 P2P)"))
+        self.btn_mobile_link.clicked.connect(self.action_open_mobile_link)
+
         flow_grid = QGridLayout()
         flow_grid.setContentsMargins(0, 0, 0, 0)
         flow_grid.setSpacing(2)
@@ -10055,12 +10098,14 @@ class ManualStudioWindow(QMainWindow):
         flow_grid.addWidget(self.btn_flow_line, 0, 2)
         flow_grid.addWidget(self.btn_flow_elbow, 0, 3)
         flow_grid.addWidget(self.btn_toggle_doc_dock, 0, 4, 1, 2)
+        flow_grid.addWidget(self.btn_flow_align, 0, 6)
         flow_grid.addWidget(self.btn_flow_terminal, 1, 0)
         flow_grid.addWidget(self.btn_flow_process, 1, 1)
         flow_grid.addWidget(self.btn_flow_decision, 1, 2)
         flow_grid.addWidget(self.btn_flow_io, 1, 3)
         flow_grid.addWidget(self.btn_flow_database, 1, 4)
         flow_grid.addWidget(self.btn_flow_document, 1, 5)
+        flow_grid.addWidget(self.btn_mobile_link, 1, 6)
 
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart"))
         tools_layout.addWidget(self.create_separator())
@@ -11618,6 +11663,8 @@ class ManualStudioWindow(QMainWindow):
             ("btn_flow_io", "flow_io", "btn_flow_io", "입출력"),
             ("btn_flow_database", "flow_database", "btn_flow_database", "DB"),
             ("btn_flow_document", "flow_document", "btn_flow_document", "문서"),
+            ("btn_flow_align", "flow_align", "btn_flow_align", "자동정렬"),
+            ("btn_mobile_link", "mobile_link", "btn_mobile_link", "모바일 연동"),
             ("btn_export", "ppt_export", "btn_export", "슬라이드 삽입"),
             ("btn_export_hwp", "export_hwp", "btn_export_hwp", "한글 문서 삽입"),
             ("btn_send_slides", "slides_export", "btn_send_google_slides", "구글 슬라이드 전송"),
@@ -12945,7 +12992,7 @@ class ManualStudioWindow(QMainWindow):
             )
             self.overlay_window.sig_captured.connect(self.on_capture_completed)
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
-            self.overlay_window.showFullScreen()
+            self.overlay_window.show_overlay()
         except Exception as e:
             self._restore_window_after_capture(was_visible)
             print(f"[오버레이 실행 오류]: {e}")
@@ -12967,7 +13014,7 @@ class ManualStudioWindow(QMainWindow):
             )
             self.overlay_window.sig_captured.connect(self.on_sub_capture_completed)
             self.overlay_window.sig_cancelled.connect(self.on_capture_cancelled)
-            self.overlay_window.showFullScreen()
+            self.overlay_window.show_overlay()
         except Exception as e:
             self._restore_window_after_capture(was_visible)
             print(f"[부분 캡처 오버레이 실행 오류]: {e}")
@@ -14051,6 +14098,11 @@ class ManualStudioWindow(QMainWindow):
             self.show_toast(tr("settings_toast_saved", "설정이 저장되었습니다."))
 
     def closeEvent(self, event):
+        if hasattr(self, "mobile_server") and self.mobile_server:
+            try:
+                self.mobile_server.stop_server()
+            except Exception:
+                pass
         if hasattr(self, "hotkey_thread"):
             self.hotkey_thread.stop()
         if hasattr(self, "autosave_timer"):
@@ -14872,6 +14924,168 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.sig_content_changed.emit()
         self.show_toast(f"플로우차트 노드 {len(nodes)}개 및 연결선 {len(arrows)}개가 캔버스에 추가되었습니다.")
 
+    def action_auto_align_flowchart(self):
+        """캔버스의 플로우차트 노드 및 연결선을 상하(TD) 또는 좌우(LR) 방향으로 깔끔하게 자동정렬"""
+        nodes = [it for it in self.canvas.items if isinstance(it, FlowchartNodeItem)]
+        if not nodes:
+            self.show_toast(tr("toast_no_flow_nodes", "캔버스에 정렬할 플로우차트 노드가 없습니다."))
+            return
+
+        # 방향 전환 (TD ↔ LR 토글)
+        if not hasattr(self, "current_flow_direction"):
+            self.current_flow_direction = "TD"
+        else:
+            self.current_flow_direction = "LR" if self.current_flow_direction == "TD" else "TD"
+
+        direction = self.current_flow_direction
+        self.canvas.push_undo()
+
+        elbows = [it for it in self.canvas.items if isinstance(it, (ElbowConnectorItem, LineConnectorItem))]
+
+        # Y좌표 (또는 X좌표) 기준으로 노드 정렬
+        sorted_nodes = sorted(nodes, key=lambda n: (n.rect.top() if direction == "TD" else n.rect.left()))
+
+        canvas_w = self.canvas.pixmap.width() if self.canvas.pixmap else 1920
+        canvas_h = self.canvas.pixmap.height() if self.canvas.pixmap else 1080
+
+        node_w = int(nodes[0].rect.width())
+        node_h = int(nodes[0].rect.height())
+        num_nodes = len(nodes)
+
+        if direction == "TD":
+            # 상하 정렬
+            max_available_h = canvas_h - 120
+            y_gap = max(node_h + 30, min(140, max_available_h // max(1, num_nodes)))
+            base_x = (canvas_w - node_w) // 2
+            base_y = 60
+
+            for idx, node in enumerate(sorted_nodes):
+                cur_y = base_y + idx * y_gap
+                cur_y = min(cur_y, canvas_h - node_h - 40)
+                node.rect = QRectF(base_x, cur_y, node_w, node_h)
+        else:
+            # 좌우 정렬
+            max_available_w = canvas_w - 140
+            x_gap = max(node_w + 40, min(220, max_available_w // max(1, num_nodes)))
+            base_x = 60
+            base_y = (canvas_h - node_h) // 2
+
+            for idx, node in enumerate(sorted_nodes):
+                cur_x = base_x + idx * x_gap
+                cur_x = min(cur_x, canvas_w - node_w - 40)
+                node.rect = QRectF(cur_x, base_y, node_w, node_h)
+
+        # 연결선 동적 리라우팅
+        for el in elbows:
+            if hasattr(el, "update_position"):
+                el.update_position()
+
+        self.canvas.update()
+        self.canvas.sig_content_changed.emit()
+        dir_name = "상하 (TD)" if direction == "TD" else "좌우 (LR)"
+        self.show_toast(f"플로우차트 자동정렬 완료 (방향: {dir_name})")
+
+    def action_open_mobile_link(self):
+        """스마트폰/태블릿 P2P 연동 다이얼로그 호출"""
+        if MobileLinkServer is None:
+            self.show_toast("모바일 연동 모듈을 로드할 수 없습니다.")
+            return
+
+        if self.mobile_server is None:
+            self.mobile_server = MobileLinkServer(port=19850, parent=self)
+            self.mobile_server.sig_payload_received.connect(self.on_mobile_payload_received)
+            if not self.mobile_server.start_server():
+                self.show_toast("모바일 연동 서버 시작 실패 (포트 점유 확인)")
+                return
+
+        dlg = MobileLinkDialog(self.mobile_server, self)
+        dlg.exec()
+
+    def on_mobile_payload_received(self, payload):
+        """모바일 기기에서 전송된 플로우차트/손그림 사진을 캔버스에 즉시 반영"""
+        p_type = payload.get("type", "flowchart")
+        direction = payload.get("direction", getattr(self, "current_flow_direction", "TD"))
+
+        if p_type == "flowchart":
+            items_data = payload.get("data", {}).get("items", [])
+            if not items_data:
+                nodes_data = payload.get("data", {}).get("nodes", [])
+                if nodes_data:
+                    base_x = 100
+                    base_y = 100
+                    x_gap = 180 if direction == "LR" else 0
+                    y_gap = 100 if direction == "TD" else 0
+                    for idx, nd in enumerate(nodes_data):
+                        nx = nd.get("x", base_x + idx * x_gap)
+                        ny = nd.get("y", base_y + idx * y_gap)
+                        items_data.append({
+                            "type": "FlowchartNodeItem",
+                            "text": nd.get("text", "단계"),
+                            "x": nx,
+                            "y": ny,
+                            "w": 150,
+                            "h": 60,
+                            "shape_type": nd.get("shape", "process"),
+                            "style": {
+                                "bg_color": "#EFF6FF",
+                                "border_color": "#2563EB",
+                                "border_width": 2,
+                                "text_color": "#1E293B",
+                                "font_size": 12,
+                                "font_bold": True
+                            }
+                        })
+
+            if items_data:
+                if self.canvas.pixmap is None:
+                    self.action_new_transparent_canvas()
+
+                self.canvas.push_undo()
+                created_count = 0
+                for idata in items_data:
+                    it = item_from_dict(idata)
+                    if it:
+                        self.canvas.items.append(it)
+                        created_count += 1
+
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+                self.show_toast(f"📱 모바일 플로우차트 수신 완료 ({created_count}개 노드 추가)")
+
+        elif p_type == "image":
+            import base64
+            img_b64 = payload.get("image_base64", "")
+            if img_b64:
+                if "," in img_b64:
+                    img_b64 = img_b64.split(",", 1)[1]
+                raw_bytes = base64.b64decode(img_b64)
+                pix = QPixmap()
+                pix.loadFromData(raw_bytes)
+                if not pix.isNull():
+                    if self.canvas.pixmap is None:
+                        self.on_capture_completed(pix)
+                    else:
+                        self.canvas.add_image_overlay(pix)
+                    self.show_toast("📷 모바일 손그림 사진 수신 및 캔버스 추가 완료!")
+
+        elif p_type == "mermaid":
+            code = payload.get("mermaid_code", "")
+            if code:
+                parsed = MermaidFlowchartParser.parse(code)
+                if direction:
+                    parsed["direction"] = direction
+                nodes, arrows = MermaidLayoutEngine.build_flowchart(parsed)
+                if self.canvas.pixmap is None:
+                    self.action_new_transparent_canvas()
+                self.canvas.push_undo()
+                for n in nodes:
+                    self.canvas.items.append(n)
+                for a in arrows:
+                    self.canvas.items.append(a)
+                self.canvas.update()
+                self.canvas.sig_content_changed.emit()
+                self.show_toast(f"Mermaid 플로우차트 변환 완료 ({len(nodes)}개 노드)")
+
     def toggle_document_dock(self):
         """문서 참조 독 패널 표시/숨김 토글"""
         if hasattr(self, "doc_dock"):
@@ -15495,6 +15709,148 @@ class ReleaseNotesDialog(QDialog):
                     break
         QApplication.clipboard().setText(text)
         self.btn_copy.setText(tr("release_notes_copied", "복사 완료!"))
+
+
+# ==============================================================================
+# 7-4. 모바일 스케치/플로우차트 연동 다이얼로그 (MobileLinkDialog)
+# ==============================================================================
+class MobileLinkDialog(QDialog):
+    """모바일 기기(스마트폰/태블릿) QR 코드 페어링 및 손그림/플로우차트 실시간 P2P 수신 다이얼로그"""
+    sig_insert_to_canvas = Signal(dict)
+
+    def __init__(self, mobile_server, parent=None):
+        super().__init__(parent)
+        self.mobile_server = mobile_server
+        self.setWindowTitle(tr("dlg_mobile_link_title", "모바일 스케치/플로우차트 연동"))
+        self.resize(620, 500)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        ci_pix = get_dragon_rpa_ci_pixmap()
+        if not ci_pix.isNull():
+            self.setWindowIcon(QIcon(ci_pix))
+
+        self.received_items = []
+        self._init_ui()
+
+        if self.mobile_server:
+            self.mobile_server.sig_payload_received.connect(self._on_payload_received)
+
+    def _init_ui(self):
+        self.setStyleSheet("""
+            QDialog { background-color: #FFFFFF; }
+            QLabel { font-family: 'Segoe UI', 'Malgun Gothic'; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(22, 20, 22, 20)
+
+        # 1. 상단 상태 배너
+        info_banner = QFrame()
+        info_banner.setStyleSheet("background: #0F172A; border-radius: 8px; border: 1px solid #1E293B; padding: 10px;")
+        banner_lay = QHBoxLayout(info_banner)
+        lbl_status = QLabel("🟢 동일 Wi-Fi 로컬 연결 대기 중 (외부 서버 무저장 원칙 / 초고속 P2P)")
+        lbl_status.setStyleSheet("color: #10B981; font-weight: bold; font-size: 12.5px;")
+        banner_lay.addWidget(lbl_status)
+        layout.addWidget(info_banner)
+
+        # 2. 중앙 레이아웃: 좌측 QR + 우측 정보
+        center_lay = QHBoxLayout()
+        center_lay.setSpacing(20)
+
+        # 좌측: QR 코드 카드
+        qr_card = QFrame()
+        qr_card.setStyleSheet("background: #F8FAFC; border-radius: 8px; border: 1px solid #E2E8F0; padding: 12px;")
+        qr_card_lay = QVBoxLayout(qr_card)
+        self.lbl_qr = QLabel()
+        self.lbl_qr.setAlignment(Qt.AlignCenter)
+        if self.mobile_server:
+            qr_pix = self.mobile_server.get_qr_pixmap()
+            self.lbl_qr.setPixmap(qr_pix.scaled(210, 210, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        qr_card_lay.addWidget(self.lbl_qr)
+
+        lbl_qr_sub = QLabel(tr("lbl_scan_qr_guide", "스마트폰 카메라로 QR 코드를 스캔하세요"))
+        lbl_qr_sub.setAlignment(Qt.AlignCenter)
+        lbl_qr_sub.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 600; margin-top: 6px;")
+        qr_card_lay.addWidget(lbl_qr_sub)
+        center_lay.addWidget(qr_card)
+
+        # 우측: 연결 파라미터 및 옵션
+        right_lay = QVBoxLayout()
+        right_lay.setSpacing(12)
+
+        # 인증 PIN
+        pin_group = QGroupBox("인증 PIN 번호")
+        pin_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; color: #475569; }")
+        pin_lay = QVBoxLayout(pin_group)
+        pin_str = self.mobile_server.session_pin if self.mobile_server else "---"
+        self.lbl_pin = QLabel(pin_str)
+        self.lbl_pin.setStyleSheet("font-size: 26px; font-weight: bold; color: #2563EB; letter-spacing: 3px;")
+        self.lbl_pin.setAlignment(Qt.AlignCenter)
+        pin_lay.addWidget(self.lbl_pin)
+        right_lay.addWidget(pin_group)
+
+        # 접속 URL
+        url_str = self.mobile_server.get_connection_url() if self.mobile_server else ""
+        lbl_url_title = QLabel("접속 URL:")
+        lbl_url_title.setStyleSheet("color: #64748B; font-size: 11px; font-weight: bold;")
+        right_lay.addWidget(lbl_url_title)
+
+        url_row = QHBoxLayout()
+        self.edit_url = QLineEdit(url_str)
+        self.edit_url.setReadOnly(True)
+        self.edit_url.setStyleSheet("font-family: Consolas; font-size: 11px; padding: 4px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        btn_copy_url = QPushButton("복사")
+        btn_copy_url.setStyleSheet("padding: 4px 10px; font-size: 11px; font-weight: bold; background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px;")
+        btn_copy_url.clicked.connect(lambda: QApplication.clipboard().setText(url_str))
+        url_row.addWidget(self.edit_url)
+        url_row.addWidget(btn_copy_url)
+        right_lay.addLayout(url_row)
+
+        # 자동 배치 옵션
+        self.chk_auto_insert = QCheckBox(tr("lbl_auto_insert_canvas", "수신 즉시 캔버스에 자동 배치"))
+        self.chk_auto_insert.setChecked(True)
+        self.chk_auto_insert.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #1E293B;")
+        right_lay.addWidget(self.chk_auto_insert)
+
+        # 배치 방향 라디오
+        dir_box = QGroupBox("플로우차트 기본 배치 방향")
+        dir_box.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; color: #475569; }")
+        dir_lay = QHBoxLayout(dir_box)
+        self.radio_td = QRadioButton("상하 (TD)")
+        self.radio_lr = QRadioButton("좌우 (LR)")
+        self.radio_td.setChecked(True)
+        dir_lay.addWidget(self.radio_td)
+        dir_lay.addWidget(self.radio_lr)
+        right_lay.addWidget(dir_box)
+
+        # 수신 카운터
+        self.lbl_receive_status = QLabel("수신된 항목: 0건 대기 중")
+        self.lbl_receive_status.setStyleSheet("color: #0284C7; font-weight: bold; font-size: 12px;")
+        right_lay.addWidget(self.lbl_receive_status)
+
+        right_lay.addStretch(1)
+        center_lay.addLayout(right_lay)
+        layout.addLayout(center_lay)
+
+        # 하단 버튼
+        bot_lay = QHBoxLayout()
+        bot_lay.addStretch(1)
+        btn_close = QPushButton("닫기")
+        btn_close.setFixedWidth(90)
+        btn_close.setFixedHeight(32)
+        btn_close.setStyleSheet("background: #2563EB; color: #FFFFFF; font-weight: bold; border-radius: 4px; border: none;")
+        btn_close.clicked.connect(self.accept)
+        bot_lay.addWidget(btn_close)
+        layout.addLayout(bot_lay)
+
+    def _on_payload_received(self, payload):
+        self.received_items.append(payload)
+        count = len(self.received_items)
+        p_type = payload.get("type", "알 수 없음")
+        type_str = "플로우차트" if p_type == "flowchart" else ("손그림 사진" if p_type == "image" else p_type)
+        self.lbl_receive_status.setText(f"🎉 수신 성공: 총 {count}건 (최근: {type_str})")
+        self.lbl_receive_status.setStyleSheet("color: #059669; font-weight: bold; font-size: 12.5px;")
 
 
 # ==============================================================================

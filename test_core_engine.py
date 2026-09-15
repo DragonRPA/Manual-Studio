@@ -1544,7 +1544,7 @@ def test_version_json_schema():
         assert field in meta, f"Field '{field}' missing from version.json"
         assert meta[field] is not None and len(str(meta[field])) > 0
 
-    assert meta["version"] in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0"]
+    assert meta["version"] in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0"]
     print("[PASS] test_version_json_schema (Root version.json metadata schema and SSOT valid)")
 
 def test_patcher_script_generation():
@@ -3723,19 +3723,19 @@ def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
     from PySide6.QtCore import QEvent, Qt
 
     # 1. 버전 일관성 검증
-    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0"], f"APP_VERSION must be valid, got {APP_VERSION}"
+    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0"], f"APP_VERSION must be valid, got {APP_VERSION}"
 
     # 2. ReleaseNotesDialog 초기버전부터 현재까지 수록 검증
     dlg = ReleaseNotesDialog()
     assert len(dlg.sections) >= 30, f"ReleaseNotesDialog must contain at least 30 releases, got {len(dlg.sections)}"
     first_ver = dlg.sections[0][0]
-    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0"]), f"Latest version should be recent, got {first_ver}"
+    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0"]), f"Latest version should be recent, got {first_ver}"
 
     # 콤보박스 필터링 동작 테스트
     dlg.combo_version.setCurrentIndex(1)  # 특정 버전 선택
     assert dlg.browser.toHtml() is not None and len(dlg.browser.toHtml()) > 0
     dlg.combo_version.setCurrentIndex(0)  # 전체 버전 선택
-    assert any(v in dlg.browser.toHtml() for v in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0"])
+    assert any(v in dlg.browser.toHtml() for v in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0"])
 
     # 3. RibbonIconProvider & 리본 표시 모드 전수 검증
     win = ManualStudioWindow()
@@ -4560,6 +4560,58 @@ def test_phase15_lucide_vector_icons_and_emoji_purge():
     print("[Phase 15 Test] Phase 15 전수 검증 통과 (57종 Lucide 벡터 아이콘, 플로우차트 아이콘 탑재, OS 이모지 영구 박멸) 100% 무결점 완료!\n")
 
 
+def test_phase16_multi_monitor_virtual_desktop_capture():
+    """Phase 16: 전체 가상 화면(모든 모니터) 다중 모니터 전역 캡처 및 오버레이 무결성 검증"""
+    print("\n[Phase 16 Test] 전체 가상 화면(모든 모니터) 다중 모니터 전역 캡처 및 오버레이 검증 시작...")
+    from PySide6.QtCore import QRect
+    from manual_capture_studio import CaptureOverlayWidget, MultiMonitorManager
+    from manual_cli import cli_capture
+
+    v_rect = MultiMonitorManager.get_virtual_desktop_rect()
+    assert v_rect.width() > 0 and v_rect.height() > 0
+
+    # 1. CaptureOverlayWidget show_overlay 검증
+    overlay = CaptureOverlayWidget(target_monitor=-1)
+    overlay.show_overlay()
+    assert overlay.geometry() == v_rect, f"Overlay geometry {overlay.geometry()} != virtual rect {v_rect}"
+    assert overlay.rect().size() == v_rect.size()
+    print("  [1/4] CaptureOverlayWidget(-1).show_overlay() 전체 가상 데스크톱 전역 지오메트리 일치 검증 통과")
+
+    # 2. 다중 모니터 크로스 바운더리 캡처 및 rect 반환 검증
+    test_crop_r = QRect(0, 0, min(800, v_rect.width()), min(600, v_rect.height()))
+    overlay.selected_rect = test_crop_r
+    captured_box = []
+    overlay.sig_captured.connect(lambda p, r: captured_box.append((p, r)))
+    overlay.confirm_capture()
+    assert len(captured_box) == 1
+    p, r = captured_box[0]
+    assert p.width() == test_crop_r.width() and p.height() == test_crop_r.height()
+    print("  [2/4] 가상 데스크톱 전역 좌표 크롭 및 픽스맵 생성 검증 통과")
+
+    # 3. MultiMonitorManager.grab_target_area(-1) 검증
+    grabbed_pix = MultiMonitorManager.grab_target_area(-1, test_crop_r)
+    assert not grabbed_pix.isNull()
+    assert grabbed_pix.width() == test_crop_r.width()
+    print("  [3/4] MultiMonitorManager.grab_target_area(-1) 고품질 캡처 검증 통과")
+
+    # 4. cli_capture(monitor=-1) 헤드리스 캡처 검증
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+        tmp_file = tf.name
+    try:
+        cli_res = cli_capture(monitor=-1, output=tmp_file)
+        assert cli_res.get("status") == "ok"
+        assert cli_res.get("width") == v_rect.width()
+        assert cli_res.get("height") == v_rect.height()
+        assert os.path.exists(tmp_file) and os.path.getsize(tmp_file) > 100
+        print("  [4/4] cli_capture(monitor=-1) 전 모니터 가상 데스크톱 스크린샷 파일 저장 검증 통과")
+    finally:
+        if os.path.exists(tmp_file):
+            os.remove(tmp_file)
+
+    print("[Phase 16 Test] Phase 16 전수 검증 통과 (다중 모니터 전역 오버레이, 전역 크롭, 가상 데스크톱 캡처) 100% 무결점 완료!\n")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -4639,6 +4691,7 @@ if __name__ == "__main__":
     test_phase13_sticky_tools_f8_standalone_and_flowchart_manual_shapes()
     test_phase14_action_recorder_deprecated_and_flowchart_connectors_and_db_shape()
     test_phase15_lucide_vector_icons_and_emoji_purge()
-    print("\nALL 78 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS & PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE 78 TESTS PASSED 100%!")
+    test_phase16_multi_monitor_virtual_desktop_capture()
+    print("\nALL 79 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS, PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE & PHASE 16 MULTI-MONITOR VIRTUAL DESKTOP 79 TESTS PASSED 100%!")
     sys.stdout.flush()
     os._exit(0)
