@@ -14975,7 +14975,7 @@ class ManualStudioWindow(QMainWindow):
         self.show_toast(f"플로우차트 노드 {len(nodes)}개 및 연결선 {len(arrows)}개가 캔버스에 추가되었습니다.")
 
     def action_auto_align_flowchart(self):
-        """캔버스의 플로우차트 노드 및 연결선을 그리드 토폴로지(주 기둥 + 좌우/상하 분기 대칭) 기반으로 자동정렬"""
+        """캔버스의 플로우차트 노드 및 연결선을 화살표 위상 정렬(Topological BFS) 및 그리드 토폴로지 기반으로 자동정렬"""
         nodes = [it for it in self.canvas.items if isinstance(it, FlowchartNodeItem)]
         if not nodes:
             self.show_toast(tr("toast_no_flow_nodes", "캔버스에 정렬할 플로우차트 노드가 없습니다."))
@@ -14983,30 +14983,36 @@ class ManualStudioWindow(QMainWindow):
 
         self.canvas.push_undo()
 
-        # 1. 기존 연결선 (화살표, 직각 연결선) 추출 및 노드 마그넷 바인딩 기록
-        attached_connectors = []
+        # 1. 노드 및 연결선 마그넷 바인딩 추출 (거리 60px 이내 최단거리 탐색)
+        def find_closest_node_and_port(pt):
+            best_n, best_k, best_p, min_d = None, None, None, float('inf')
+            for n in nodes:
+                if hasattr(n, "contains") and n.contains(pt):
+                    k, p = n.get_closest_magnet_point(pt, 999.0)
+                    return n, k, p
+                k, p = n.get_closest_magnet_point(pt, 60.0)
+                if p:
+                    d = math.hypot(pt.x() - p.x(), pt.y() - p.y())
+                    if d < min_d:
+                        min_d = d
+                        best_n, best_k, best_p = n, k, p
+            return best_n, best_k, best_p
+
+        edges = []
         for it in self.canvas.items:
             if isinstance(it, (ArrowItem, ElbowArrowItem)):
-                src_node, src_port = None, None
-                dst_node, dst_port = None, None
-                for n in nodes:
-                    if src_node is None:
-                        k, p = n.get_closest_magnet_point(it.start_pos, 24.0)
-                        if p:
-                            src_node, src_port = n, k
-                    if dst_node is None:
-                        k, p = n.get_closest_magnet_point(it.end_pos, 24.0)
-                        if p:
-                            dst_node, dst_port = n, k
-                attached_connectors.append({
-                    "item": it,
-                    "src_node": src_node,
-                    "src_port": src_port,
-                    "dst_node": dst_node,
-                    "dst_port": dst_port
-                })
+                sn, sk, sp = find_closest_node_and_port(it.start_pos)
+                dn, dk, dp = find_closest_node_and_port(it.end_pos)
+                if sn and dn and sn != dn:
+                    edges.append({
+                        "item": it,
+                        "src_node": sn,
+                        "src_port": sk,
+                        "dst_node": dn,
+                        "dst_port": dk
+                    })
 
-        # 2. 방향 결정 (수직 TD ↔ 수평 LR 토글)
+        # 2. 정렬 방향 결정 (수직 TD ↔ 수평 LR 토글)
         if not hasattr(self, "current_flow_direction"):
             min_x = min(n.rect.left() for n in nodes)
             max_x = max(n.rect.right() for n in nodes)
@@ -15014,7 +15020,7 @@ class ManualStudioWindow(QMainWindow):
             max_y = max(n.rect.bottom() for n in nodes)
             span_x = max_x - min_x
             span_y = max_y - min_y
-            self.current_flow_direction = "LR" if span_x > span_y * 1.25 else "TD"
+            self.current_flow_direction = "LR" if span_x > span_y * 1.35 else "TD"
         else:
             self.current_flow_direction = "LR" if self.current_flow_direction == "TD" else "TD"
 
@@ -15026,164 +15032,159 @@ class ManualStudioWindow(QMainWindow):
         node_w = int(nodes[0].rect.width())
         node_h = int(nodes[0].rect.height())
 
-        if direction == "TD":
-            # ============================================================
-            # [세로 흐름 TD] : 열(Column) 중심 정렬 & 좌우 대칭 분기
-            # ============================================================
-            all_cx = sorted([n.rect.center().x() for n in nodes])
-            median_cx = all_cx[len(all_cx) // 2]
-            col_threshold = max(60.0, node_w * 0.55)
+        # 3. 그래프 위상 분석 (Topological Level / Layering)
+        in_degree = {n: 0 for n in nodes}
+        out_edges = {n: [] for n in nodes}
+        for e in edges:
+            in_degree[e["dst_node"]] += 1
+            out_edges[e["src_node"]].append(e)
 
-            main_nodes = []
-            left_branch_nodes = []
-            right_branch_nodes = []
+        roots = [n for n in nodes if in_degree[n] == 0]
+        if not roots:
+            roots = [min(nodes, key=lambda n: n.rect.top() if direction == "TD" else n.rect.left())]
+
+        layers = {}
+        queue = [(r, 0) for r in roots]
+        while queue:
+            curr, lvl = queue.pop(0)
+            layers[curr] = max(layers.get(curr, 0), lvl)
+            for e in out_edges[curr]:
+                nxt = e["dst_node"]
+                it = e["item"]
+                sk = e["src_port"]
+                if isinstance(it, ElbowArrowItem) and e["dst_port"] in ("left", "right") and direction == "TD":
+                    continue
+                if isinstance(it, ElbowArrowItem) and e["dst_port"] in ("top", "bottom") and direction == "LR":
+                    continue
+                if direction == "TD" and sk in ("left", "right") and abs(curr.rect.top() - nxt.rect.top()) < 100:
+                    queue.append((nxt, lvl))
+                elif direction == "LR" and sk in ("top", "bottom") and abs(curr.rect.left() - nxt.rect.left()) < 100:
+                    queue.append((nxt, lvl))
+                else:
+                    queue.append((nxt, lvl + 1))
+
+        for n in nodes:
+            if n not in layers:
+                layers[n] = (max(layers.values()) + 1) if layers else 0
+
+        by_layer = {}
+        for n, l in layers.items():
+            by_layer.setdefault(l, []).append(n)
+
+        # 4. 열(Column for TD) 또는 행(Row for LR) 할당
+        cols = {}
+        for l, n_list in by_layer.items():
+            if len(n_list) == 1:
+                cols[n_list[0]] = 0
+            else:
+                if direction == "TD":
+                    n_list_sorted = sorted(n_list, key=lambda n: n.rect.center().x())
+                else:
+                    n_list_sorted = sorted(n_list, key=lambda n: n.rect.center().y())
+                mid_idx = len(n_list_sorted) // 2
+                for i, n in enumerate(n_list_sorted):
+                    cols[n] = i - mid_idx
+
+        # 5. 좌표 배치 계산 (사용자 원래 드로잉 영역 중심 보존 및 캔버스 클램핑)
+        orig_min_x = min(n.rect.left() for n in nodes)
+        orig_max_x = max(n.rect.right() for n in nodes)
+        orig_min_y = min(n.rect.top() for n in nodes)
+        orig_max_y = max(n.rect.bottom() for n in nodes)
+        orig_cx = (orig_min_x + orig_max_x) / 2.0
+        orig_cy = (orig_min_y + orig_max_y) / 2.0
+
+        num_layers = max(layers.values()) + 1
+
+        if direction == "TD":
+            row_gap = min(130.0, max(node_h + 36.0, (canvas_h - 120.0) // max(1, num_layers)))
+            col_gap = node_w + 60.0
+            total_h = (num_layers - 1) * row_gap + node_h
+
+            start_y = max(40.0, min(canvas_h - total_h - 40.0, orig_cy - total_h / 2.0))
+            center_x = max(node_w / 2.0 + 40.0, min(canvas_w - node_w / 2.0 - 40.0, orig_cx))
 
             for n in nodes:
-                cx = n.rect.center().x()
-                if cx < median_cx - col_threshold:
-                    left_branch_nodes.append(n)
-                elif cx > median_cx + col_threshold:
-                    right_branch_nodes.append(n)
-                else:
-                    main_nodes.append(n)
-
-            if not main_nodes:
-                main_nodes = list(nodes)
-                left_branch_nodes.clear()
-                right_branch_nodes.clear()
-
-            main_nodes.sort(key=lambda n: n.rect.top())
-            num_main = len(main_nodes)
-
-            # 좌우 분기가 모두 있는 경우 캔버스 정중앙 기준, 한쪽만 있는 경우 균형 보정
-            if left_branch_nodes and right_branch_nodes:
-                center_x = canvas_w // 2
-            else:
-                center_x = max(node_w + 80, min(canvas_w - node_w - 80, int(median_cx)))
-
-            # 분기 노드의 부모 메인 노드를 이동 전 Y좌표 기준으로 먼저 매핑
-            branch_parents = {}
-            for bn in left_branch_nodes + right_branch_nodes:
-                closest_main = min(main_nodes, key=lambda m: abs(m.rect.center().y() - bn.rect.center().y()))
-                branch_parents[id(bn)] = closest_main
-
-            max_avail_h = canvas_h - 120
-            row_gap = min(120, max(node_h + 30, max_avail_h // max(1, num_main)))
-            base_y = max(40, (canvas_h - (num_main * row_gap)) // 2)
-
-            for idx, n in enumerate(main_nodes):
-                cur_y = base_y + idx * row_gap
-                cur_y = min(cur_y, canvas_h - node_h - 30)
-                n.rect = QRectF(center_x - node_w / 2.0, cur_y, node_w, node_h)
-
-            col_gap = node_w + 70  # 좌우 분기 이격 여백
-
-            for bn in left_branch_nodes:
-                closest_main = branch_parents.get(id(bn), main_nodes[0])
-                b_y = closest_main.rect.top()
-                b_x = center_x - col_gap - node_w / 2.0
-                b_x = max(20, b_x)
-                bn.rect = QRectF(b_x, b_y, node_w, node_h)
-
-            for bn in right_branch_nodes:
-                closest_main = branch_parents.get(id(bn), main_nodes[0])
-                b_y = closest_main.rect.top()
-                b_x = center_x + col_gap - node_w / 2.0
-                b_x = min(canvas_w - node_w - 20, b_x)
-                bn.rect = QRectF(b_x, b_y, node_w, node_h)
+                r = layers[n]
+                c = cols[n]
+                nx = center_x + c * col_gap - node_w / 2.0
+                ny = start_y + r * row_gap
+                n.rect = QRectF(nx, ny, node_w, node_h)
 
         else:
-            # ============================================================
-            # [가로 흐름 LR] : 행(Row) 중심 정렬 & 상하 대칭 분기 (축 피벗)
-            # ============================================================
-            all_cy = sorted([n.rect.center().y() for n in nodes])
-            median_cy = all_cy[len(all_cy) // 2]
-            row_threshold = max(40.0, node_h * 0.55)
+            col_gap = min(220.0, max(node_w + 40.0, (canvas_w - 140.0) // max(1, num_layers)))
+            row_gap = node_h + 50.0
+            total_w = (num_layers - 1) * col_gap + node_w
 
-            main_nodes = []
-            top_branch_nodes = []
-            bottom_branch_nodes = []
+            start_x = max(50.0, min(canvas_w - total_w - 50.0, orig_cx - total_w / 2.0))
+            center_y = max(node_h / 2.0 + 40.0, min(canvas_h - node_h / 2.0 - 40.0, orig_cy))
 
             for n in nodes:
-                cy = n.rect.center().y()
-                if cy < median_cy - row_threshold:
-                    top_branch_nodes.append(n)
-                elif cy > median_cy + row_threshold:
-                    bottom_branch_nodes.append(n)
+                c = layers[n]
+                r = cols[n]
+                nx = start_x + c * col_gap
+                ny = center_y + r * row_gap - node_h / 2.0
+                n.rect = QRectF(nx, ny, node_w, node_h)
+
+        # 6. 연결선(화살표 및 직각 연결선) 100% 자동 재부착 및 직하향/수평 포트 보정
+        for e in edges:
+            it = e["item"]
+            u = e["src_node"]
+            v = e["dst_node"]
+            u_m = u.get_magnet_points()
+            v_m = v.get_magnet_points()
+
+            ru, cu = layers[u], cols[u]
+            rv, cv = layers[v], cols[v]
+
+            if direction == "TD":
+                if cu == cv and ru < rv:
+                    it.start_pos = u_m["bottom"]
+                    it.end_pos = v_m["top"]
+                elif ru == rv and cu < cv:
+                    it.start_pos = u_m["right"]
+                    it.end_pos = v_m["left"]
+                elif ru == rv and cu > cv:
+                    it.start_pos = u_m["left"]
+                    it.end_pos = v_m["right"]
+                elif isinstance(it, ElbowArrowItem):
+                    if cu > cv:
+                        it.start_pos = u_m["bottom"]
+                        it.end_pos = v_m["right"]
+                        it.route_mode = "VH"
+                    else:
+                        it.start_pos = u_m["bottom"]
+                        it.end_pos = v_m["left"]
+                        it.route_mode = "VH"
                 else:
-                    main_nodes.append(n)
+                    it.start_pos = u_m.get(e["src_port"], it.start_pos)
+                    it.end_pos = v_m.get(e["dst_port"], it.end_pos)
 
-            if not main_nodes:
-                main_nodes = list(nodes)
-                top_branch_nodes.clear()
-                bottom_branch_nodes.clear()
-
-            main_nodes.sort(key=lambda n: n.rect.left())
-            num_main = len(main_nodes)
-
-            if top_branch_nodes and bottom_branch_nodes:
-                center_y = canvas_h // 2
             else:
-                center_y = max(node_h + 60, min(canvas_h - node_h - 60, int(median_cy)))
-
-            # 분기 노드의 부모 메인 노드를 이동 전 X좌표 기준으로 먼저 매핑
-            branch_parents = {}
-            for bn in top_branch_nodes + bottom_branch_nodes:
-                closest_main = min(main_nodes, key=lambda m: abs(m.rect.center().x() - bn.rect.center().x()))
-                branch_parents[id(bn)] = closest_main
-
-            max_avail_w = canvas_w - 140
-            col_gap = min(200, max(node_w + 40, max_avail_w // max(1, num_main)))
-            base_x = max(50, (canvas_w - (num_main * col_gap)) // 2)
-
-            for idx, n in enumerate(main_nodes):
-                cur_x = base_x + idx * col_gap
-                cur_x = min(cur_x, canvas_w - node_w - 30)
-                n.rect = QRectF(cur_x, center_y - node_h / 2.0, node_w, node_h)
-
-            row_gap = node_h + 60  # 상하 분기 이격 여백
-
-            for bn in top_branch_nodes:
-                closest_main = branch_parents.get(id(bn), main_nodes[0])
-                b_x = closest_main.rect.left()
-                b_y = center_y - row_gap - node_h / 2.0
-                b_y = max(20, b_y)
-                bn.rect = QRectF(b_x, b_y, node_w, node_h)
-
-            for bn in bottom_branch_nodes:
-                closest_main = branch_parents.get(id(bn), main_nodes[0])
-                b_x = closest_main.rect.left()
-                b_y = center_y + row_gap - node_h / 2.0
-                b_y = min(canvas_h - node_h - 20, b_y)
-                bn.rect = QRectF(b_x, b_y, node_w, node_h)
-
-        # 3. 연결선(화살표 및 직각 연결선) 100% 자동 재부착 및 지능형 리라우팅
-        for conn in attached_connectors:
-            it = conn["item"]
-            s_node = conn["src_node"]
-            s_port = conn["src_port"]
-            d_node = conn["dst_node"]
-            d_port = conn["dst_port"]
-
-            if s_node and s_port:
-                it.start_pos = s_node.get_magnet_points().get(s_port, it.start_pos)
-            if d_node and d_port:
-                it.end_pos = d_node.get_magnet_points().get(d_port, it.end_pos)
-
-            # 직각 연결선(Elbow)의 스마트 라우팅 자동 보정
-            if isinstance(it, ElbowArrowItem) and s_port and d_port:
-                if s_port in ("top", "bottom") and d_port in ("left", "right"):
-                    it.route_mode = "VH"
-                elif s_port in ("left", "right") and d_port in ("top", "bottom"):
-                    it.route_mode = "HV"
-                elif s_port in ("top", "bottom") and d_port in ("top", "bottom"):
-                    it.route_mode = "VHV"
-                elif s_port in ("left", "right") and d_port in ("left", "right"):
-                    it.route_mode = "HVH"
+                if ru == rv and cu < cv:
+                    it.start_pos = u_m["right"]
+                    it.end_pos = v_m["left"]
+                elif cu == cv and ru < rv:
+                    it.start_pos = u_m["bottom"]
+                    it.end_pos = v_m["top"]
+                elif cu == cv and ru > rv:
+                    it.start_pos = u_m["top"]
+                    it.end_pos = v_m["bottom"]
+                elif isinstance(it, ElbowArrowItem):
+                    if ru > rv:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["bottom"]
+                        it.route_mode = "HV"
+                    else:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["top"]
+                        it.route_mode = "HV"
+                else:
+                    it.start_pos = u_m.get(e["src_port"], it.start_pos)
+                    it.end_pos = v_m.get(e["dst_port"], it.end_pos)
 
         self.canvas.update()
         self.canvas.sig_content_changed.emit()
-        dir_name = "상하 (TD - 수직 기둥/좌우 분기)" if direction == "TD" else "좌우 (LR - 수평 기둥/상하 분기)"
+        dir_name = "상하 (TD - 수직 직렬/좌우 분기)" if direction == "TD" else "좌우 (LR - 수평 직렬/상하 분기)"
         self.show_toast(f"플로우차트 자동정렬 완료: {dir_name}")
 
     def action_open_mobile_link(self):
