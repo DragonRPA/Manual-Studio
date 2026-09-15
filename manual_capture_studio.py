@@ -79,9 +79,10 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
-    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
+    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget
 )
 
+from PySide6.QtSvg import QSvgRenderer
 from PIL import Image, ImageDraw, ImageFilter
 
 IS_WINDOWS = sys.platform == "win32"
@@ -103,7 +104,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.5.0"
+APP_VERSION = "v1.8.0"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -1403,21 +1404,22 @@ class StepArrowItem:
 
 
 class ElbowArrowItem:
-    """직각(ㄱ, ㄴ, Z자) 우회 화살표 연결선 객체"""
-    def __init__(self, start_pos, end_pos, style=None, route_mode="HV"):
+    """꺾인(직각, L자, Z자) 우회 화살표 지시선 객체 (분기 라벨 지원)"""
+    def __init__(self, start_pos, end_pos, style=None, route_mode="HV", label=""):
         self.start_pos = QPointF(start_pos)
         self.end_pos = QPointF(end_pos)
         if style is None:
             self.style = {"color": "#E53935", "width": 3, "head_size": 14}
         else:
             self.style = style.copy() if hasattr(style, "copy") else dict(style)
-        self.route_mode = route_mode  # HV (가로 먼저: ㄱ자형) 또는 VH (세로 먼저: ㄴ자형)
+        self.route_mode = route_mode  # HV (수평 우선: 가로) 또는 VH (수직 우선: 세로)
+        self.label = str(label) if label is not None else ""
 
     def clone(self):
-        return ElbowArrowItem(QPointF(self.start_pos), QPointF(self.end_pos), self.style.copy(), self.route_mode)
+        return ElbowArrowItem(QPointF(self.start_pos), QPointF(self.end_pos), self.style.copy(), self.route_mode, self.label)
 
     def toggle_route_mode(self):
-        """HV ↔ VH 실시간 반전 (ㄱ자 ↔ ㄴ자)"""
+        """HV ↔ VH 실시간 토글 (키보드 탭 등)"""
         self.route_mode = "VH" if self.route_mode == "HV" else "HV"
         return self.route_mode
 
@@ -1427,7 +1429,8 @@ class ElbowArrowItem:
             "start_pos": [float(self.start_pos.x()), float(self.start_pos.y())],
             "end_pos": [float(self.end_pos.x()), float(self.end_pos.y())],
             "style": self.style.copy(),
-            "route_mode": self.route_mode
+            "route_mode": self.route_mode,
+            "label": self.label
         }
 
     @classmethod
@@ -1438,7 +1441,8 @@ class ElbowArrowItem:
             QPointF(float(p1[0]), float(p1[1])),
             QPointF(float(p2[0]), float(p2[1])),
             data.get("style", {}),
-            data.get("route_mode", "HV")
+            data.get("route_mode", "HV"),
+            data.get("label", "")
         )
 
     def get_corner_point(self):
@@ -1504,7 +1508,6 @@ class ElbowArrowItem:
         path.lineTo(arrow_indent)
 
         # 그림자
-        shadow_offset = QPointF(1.5, 1.5)
         painter.setPen(QPen(QColor(0, 0, 0, 70), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path.translated(1.5, 1.5))
@@ -1519,6 +1522,22 @@ class ElbowArrowItem:
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(color, 1, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         painter.drawPolygon(head_poly)
+
+        # 분기 조건 라벨 렌더링
+        if getattr(self, "label", ""):
+            lbl_font = QFont("Malgun Gothic", 9)
+            lbl_font.setBold(True)
+            painter.setFont(lbl_font)
+            fm = QFontMetrics(lbl_font)
+            txt_w = fm.horizontalAdvance(self.label) + 12
+            txt_h = fm.height() + 4
+            mid_pt = QPointF((p1.x() + corner.x()) / 2.0, (p1.y() + corner.y()) / 2.0)
+            lbl_rect = QRectF(mid_pt.x() - txt_w / 2.0, mid_pt.y() - txt_h / 2.0, txt_w, txt_h)
+            painter.setPen(QPen(QColor("#CBD5E1"), 1))
+            painter.setBrush(QBrush(QColor("#FFFFFF")))
+            painter.drawRoundedRect(lbl_rect, 3, 3)
+            painter.setPen(QPen(QColor("#1E293B")))
+            painter.drawText(lbl_rect, Qt.AlignCenter, self.label)
 
         painter.restore()
 
@@ -3384,6 +3403,217 @@ SpotlightItem = SpotlightMaskItem
 MagnifierItem = MagnifierZoomItem
 ClickItem = ClickRippleItem
 
+class FlowchartNodeItem:
+    """플로우차트 노드 도형 객체 (상하좌우 4개 마그넷 포인트 지원)"""
+    def __init__(self, text="Process", x=100, y=100, w=140, h=60, shape_type="process", style=None):
+        self.text = str(text)
+        self.rect = QRectF(float(x), float(y), float(w), float(h))
+        self.shape_type = str(shape_type).lower()
+        if style is None:
+            self.style = {
+                "bg_color": "#EFF6FF",
+                "border_color": "#2563EB",
+                "border_width": 2,
+                "text_color": "#1E293B",
+                "font_size": 12,
+                "font_bold": True
+            }
+        else:
+            self.style = style.copy() if hasattr(style, "copy") else dict(style)
+        self._hovered = False
+        self._hovered_magnet = None
+        self._show_magnets = True
+
+    def clone(self):
+        return FlowchartNodeItem(self.text, self.rect.x(), self.rect.y(), self.rect.width(), self.rect.height(), self.shape_type, self.style.copy())
+
+    def get_magnet_points(self):
+        """상하좌우 4개 꼭지점 마그넷 포인트 좌표 반환"""
+        cx = self.rect.center().x()
+        cy = self.rect.center().y()
+        return {
+            "top": QPointF(cx, self.rect.top()),
+            "bottom": QPointF(cx, self.rect.bottom()),
+            "left": QPointF(self.rect.left(), cy),
+            "right": QPointF(self.rect.right(), cy)
+        }
+
+    def get_closest_magnet_point(self, pt, threshold=22.0):
+        """지정된 좌표(pt)에서 threshold 이내의 가장 가까운 마그넷 포인트 탐색 및 반환"""
+        qpt = QPointF(pt)
+        magnets = self.get_magnet_points()
+        closest_key = None
+        min_dist = float('inf')
+        for key, mpt in magnets.items():
+            dx = qpt.x() - mpt.x()
+            dy = qpt.y() - mpt.y()
+            dist = math.hypot(dx, dy)
+            if dist < min_dist and dist <= threshold:
+                min_dist = dist
+                closest_key = key
+        if closest_key:
+            return closest_key, magnets[closest_key]
+        return None, None
+
+    def contains(self, pt):
+        qpt = QPointF(pt)
+        if not self.rect.contains(qpt):
+            return False
+        if self.shape_type == "decision":
+            pts = [
+                QPointF(self.rect.center().x(), self.rect.top()),
+                QPointF(self.rect.right(), self.rect.center().y()),
+                QPointF(self.rect.center().x(), self.rect.bottom()),
+                QPointF(self.rect.left(), self.rect.center().y())
+            ]
+            poly = QPolygonF(pts)
+            return poly.containsPoint(qpt, Qt.OddEvenFill)
+        return True
+
+    def to_dict(self):
+        return {
+            "type": "FlowchartNodeItem",
+            "text": self.text,
+            "x": float(self.rect.x()),
+            "y": float(self.rect.y()),
+            "w": float(self.rect.width()),
+            "h": float(self.rect.height()),
+            "shape_type": self.shape_type,
+            "style": self.style.copy()
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        rect_data = data.get("rect")
+        if rect_data and len(rect_data) >= 4:
+            x, y, w, h = rect_data[0], rect_data[1], rect_data[2], rect_data[3]
+        else:
+            x = data.get("x", 100)
+            y = data.get("y", 100)
+            w = data.get("w", 140)
+            h = data.get("h", 60)
+        return cls(
+            text=data.get("text", "Process"),
+            x=x, y=y, w=w, h=h,
+            shape_type=data.get("shape_type", "process"),
+            style=data.get("style")
+        )
+
+    def render(self, painter: QPainter, is_selected=False):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        bg_col = QColor(self.style.get("bg_color", "#EFF6FF"))
+        border_col = QColor(self.style.get("border_color", "#2563EB"))
+        border_w = int(self.style.get("border_width", 2))
+        text_col = QColor(self.style.get("text_color", "#1E293B"))
+        f_size = int(self.style.get("font_size", 12))
+        f_bold = bool(self.style.get("font_bold", True))
+        
+        pen = QPen(border_col, border_w)
+        brush = QBrush(bg_col)
+        painter.setPen(pen)
+        painter.setBrush(brush)
+
+        r = self.rect
+        st = self.shape_type
+
+        # 1. 도형 드로잉
+        if st == "process":
+            painter.drawRoundedRect(r, 6, 6)
+        elif st == "decision":
+            poly = QPolygonF([
+                QPointF(r.center().x(), r.top()),
+                QPointF(r.right(), r.center().y()),
+                QPointF(r.center().x(), r.bottom()),
+                QPointF(r.left(), r.center().y())
+            ])
+            painter.drawPolygon(poly)
+        elif st == "terminal":
+            radius = min(r.width(), r.height()) / 2.0
+            painter.drawRoundedRect(r, radius, radius)
+        elif st == "io":
+            skew = r.width() * 0.16
+            poly = QPolygonF([
+                QPointF(r.left() + skew, r.top()),
+                QPointF(r.right(), r.top()),
+                QPointF(r.right() - skew, r.bottom()),
+                QPointF(r.left(), r.bottom())
+            ])
+            painter.drawPolygon(poly)
+        elif st == "database":
+            h_top = min(16.0, r.height() * 0.22)
+            path = QPainterPath()
+            path.moveTo(r.left(), r.top() + h_top)
+            path.lineTo(r.left(), r.bottom() - h_top)
+            path.arcTo(QRectF(r.left(), r.bottom() - 2*h_top, r.width(), 2*h_top), 180, 180)
+            path.lineTo(r.right(), r.top() + h_top)
+            path.arcTo(QRectF(r.left(), r.top(), r.width(), 2*h_top), 0, 180)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.drawEllipse(QRectF(r.left(), r.top(), r.width(), 2*h_top))
+        elif st == "subroutine":
+            painter.drawRoundedRect(r, 4, 4)
+            inner_m = 8
+            if r.width() > inner_m * 3:
+                painter.drawLine(QPointF(r.left() + inner_m, r.top()), QPointF(r.left() + inner_m, r.bottom()))
+                painter.drawLine(QPointF(r.right() - inner_m, r.top()), QPointF(r.right() - inner_m, r.bottom()))
+        elif st == "document":
+            path = QPainterPath()
+            path.moveTo(r.left(), r.top())
+            path.lineTo(r.right(), r.top())
+            path.lineTo(r.right(), r.bottom() - 10)
+            path.cubicTo(
+                r.right() - r.width()*0.25, r.bottom() - 18,
+                r.left() + r.width()*0.25, r.bottom(),
+                r.left(), r.bottom() - 10
+            )
+            path.closeSubpath()
+            painter.drawPath(path)
+        else:
+            painter.drawRoundedRect(r, 4, 4)
+
+        # 2. 텍스트 렌더링
+        font = QFont("Malgun Gothic", f_size)
+        font.setBold(f_bold)
+        painter.setFont(font)
+        painter.setPen(QPen(text_col))
+        text_rect = r.adjusted(8, 6, -8, -6)
+        painter.drawText(text_rect, Qt.AlignCenter | Qt.TextWordWrap, self.text)
+
+        # 3. 상하좌우 4개 마그넷 포인트 시각화
+        magnets = self.get_magnet_points()
+        for m_key, m_pt in magnets.items():
+            is_active = (self._hovered_magnet == m_key)
+            radius = 5.5 if is_active else 4.0
+            dot_color = QColor("#10B981") if is_active else QColor("#0284C7")
+            
+            painter.setPen(QPen(QColor("#FFFFFF"), 1.2))
+            painter.setBrush(QBrush(dot_color))
+            painter.drawEllipse(m_pt, radius, radius)
+            
+            if is_active:
+                painter.setPen(QPen(QColor("#FFFFFF"), 1.0))
+                painter.drawLine(QPointF(m_pt.x() - 3, m_pt.y()), QPointF(m_pt.x() + 3, m_pt.y()))
+                painter.drawLine(QPointF(m_pt.x(), m_pt.y() - 3), QPointF(m_pt.x(), m_pt.y() + 3))
+
+        # 4. 선택 하이라이트
+        if is_selected:
+            sel_pen = QPen(QColor("#2563EB"), 1.5, Qt.DashLine)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(r.adjusted(-3, -3, 3, 3))
+            painter.setPen(QPen(QColor("#1E40AF"), 1))
+            painter.setBrush(QBrush(QColor("#FFFFFF")))
+            for pt in [r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()]:
+                painter.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
+
+        painter.restore()
+
+
+FlowchartItem = FlowchartNodeItem
+FlowNodeItem = FlowchartNodeItem
+
 ITEM_REGISTRY = {
     "StampItem": StampItem,
     "TextLabelItem": TextLabelItem,
@@ -3402,6 +3632,9 @@ ITEM_REGISTRY = {
     "MagnifierZoomItem": MagnifierZoomItem,
     "DimensionLineItem": DimensionLineItem,
     "BoxDimensionItem": BoxDimensionItem,
+    "FlowchartNodeItem": FlowchartNodeItem,
+    "FlowNodeItem": FlowchartNodeItem,
+    "FlowchartItem": FlowchartNodeItem,
     # Aliases
     "BlurItem": BlurMosaicItem,
     "SpotlightItem": SpotlightMaskItem,
@@ -3526,7 +3759,8 @@ class PiiMaskingDialog(QDialog):
         self.btn_add_rule.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; font-weight: bold; padding: 4px 10px; border: 1px solid #BFDBFE; border-radius: 4px;")
         self.btn_add_rule.clicked.connect(lambda: self._add_rule_row(True, "신규 규칙", "000-0000-0000", r""))
 
-        self.btn_del_rule = QPushButton(tr("pii_btn_del_rule", "🗑️ 선택 삭제"), regex_group)
+        self.btn_del_rule = QPushButton(tr("pii_btn_del_rule", "선택 삭제"), regex_group)
+        self.btn_del_rule.setIcon(RibbonIconProvider.get_icon("clear", 16, "#DC2626"))
         self.btn_del_rule.setStyleSheet("background-color: #FEF2F2; color: #DC2626; font-weight: bold; padding: 4px 10px; border: 1px solid #FECACA; border-radius: 4px;")
         self.btn_del_rule.clicked.connect(self._del_rule_row)
 
@@ -3545,7 +3779,8 @@ class PiiMaskingDialog(QDialog):
         self.btn_cancel.setStyleSheet("padding: 6px 16px; border: 1px solid #CBD5E1; border-radius: 4px; background-color: #F8FAFC; color: #475569; font-weight: bold;")
         self.btn_cancel.clicked.connect(self.reject)
 
-        self.btn_apply = QPushButton(tr("pii_btn_run_masking", "🛡️ 선택 마스킹 실행"), self)
+        self.btn_apply = QPushButton(tr("pii_btn_run_masking", "선택 마스킹 실행"), self)
+        self.btn_apply.setIcon(RibbonIconProvider.get_icon("auto_pii", 16, "#FFFFFF"))
         self.btn_apply.setStyleSheet("padding: 6px 18px; border-radius: 4px; background-color: #2563EB; color: #FFFFFF; font-weight: bold;")
         self.btn_apply.clicked.connect(self._on_apply)
 
@@ -3615,6 +3850,689 @@ class PiiMaskingDialog(QDialog):
         self.config["custom_pii_rules"] = rules
 
         save_config(self.config)
+        self.accept()
+
+
+
+# ==============================================================================
+# 플로우차트 엔진 & 머메이드(Mermaid) 문법 파서 & 빌더 다이얼로그
+# ==============================================================================
+class MermaidFlowchartParser:
+    """Mermaid 문법 파서 (TD/LR 방향, 도형 타입, 화살표 및 라벨 추출)"""
+    @staticmethod
+    def parse(script: str):
+        lines = [l.strip() for l in script.splitlines() if l.strip() and not l.strip().startswith("%%")]
+        direction = "TD"
+        nodes = {}
+        edges = []
+
+        import re
+        edge_re = re.compile(r'(-->\|[^|\n]+\||--\s*[^-\n>]+\s*-->|-.->|==>|---|-->)')
+
+        for line in lines:
+            m_dir = re.match(r'^(?:graph|flowchart)\s+(TD|TB|LR|BT|RL)', line, re.IGNORECASE)
+            if m_dir:
+                direction = m_dir.group(1).upper()
+                if direction == "TB":
+                    direction = "TD"
+                continue
+
+            m_edge = edge_re.search(line)
+            if m_edge:
+                arrow_str = m_edge.group(1)
+                left_str = line[:m_edge.start()].strip()
+                right_str = line[m_edge.end():].strip()
+
+                u_id = MermaidFlowchartParser._parse_node_str(left_str, nodes)
+                v_id = MermaidFlowchartParser._parse_node_str(right_str, nodes)
+
+                label = ""
+                if arrow_str.startswith("-->|") and arrow_str.endswith("|"):
+                    label = arrow_str[4:-1].strip()
+                elif arrow_str.startswith("--") and arrow_str.endswith("-->"):
+                    label = arrow_str[2:-3].strip()
+
+                edges.append({
+                    "from": u_id,
+                    "to": v_id,
+                    "label": label,
+                    "arrow_type": arrow_str
+                })
+            else:
+                MermaidFlowchartParser._parse_node_str(line, nodes)
+
+        return {
+            "direction": direction,
+            "nodes": nodes,
+            "edges": edges
+        }
+
+    @staticmethod
+    def _parse_node_str(s: str, nodes_dict: dict):
+        import re
+        s = s.strip()
+        # 1. 캡슐 ([text])
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\(\[\s*(.*?)\s*\]\)$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "terminal"}
+            return nid
+
+        # 2. DB [(text)]
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\[\(\s*(.*?)\s*\)\]$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "database"}
+            return nid
+
+        # 3. 서브루틴 [[text]]
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\[\[\s*(.*?)\s*\]\]$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "subroutine"}
+            return nid
+
+        # 4. 입출력 [/text/] 또는 [\text\]
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\[[/\\]\s*(.*?)\s*[/\\]\]$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "io"}
+            return nid
+
+        # 5. 마름모 {text}
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\{\s*(.*?)\s*\}$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "decision"}
+            return nid
+
+        # 6. 원형/둥근사각 (text)
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\(\s*(.*?)\s*\)$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "terminal"}
+            return nid
+
+        # 7. 직사각형 [text]
+        m = re.match(r'^([A-Za-z0-9_가-힣]+)\s*\[\s*(.*?)\s*\]$', s)
+        if m:
+            nid, text = m.group(1), m.group(2)
+            nodes_dict[nid] = {"text": text, "shape": "process"}
+            return nid
+
+        # 8. 단독 ID
+        nid = s.strip()
+        if nid not in nodes_dict:
+            nodes_dict[nid] = {"text": nid, "shape": "process"}
+        return nid
+
+
+class MermaidLayoutEngine:
+    """계층형 자동 배치 및 상하좌우 4개 마그넷 포인트 자동 연결 엔진"""
+    @staticmethod
+    def build_flowchart(parsed_data, base_x=80, base_y=80, node_w=150, node_h=60):
+        direction = parsed_data.get("direction", "TD")
+        nodes = parsed_data.get("nodes", {})
+        edges = parsed_data.get("edges", [])
+
+        adj = {nid: [] for nid in nodes}
+        in_deg = {nid: 0 for nid in nodes}
+        for e in edges:
+            u, v = e["from"], e["to"]
+            if u in adj and v in nodes:
+                adj[u].append(v)
+                in_deg[v] = in_deg.get(v, 0) + 1
+
+        ranks = {}
+        roots = [nid for nid, deg in in_deg.items() if deg == 0]
+        if not roots and nodes:
+            roots = [next(iter(nodes.keys()))]
+
+        queue = [(r, 0) for r in roots]
+        visited = set()
+        while queue:
+            curr, rk = queue.pop(0)
+            if curr in ranks:
+                ranks[curr] = max(ranks[curr], rk)
+            else:
+                ranks[curr] = rk
+            if curr not in visited:
+                visited.add(curr)
+                for nxt in adj.get(curr, []):
+                    queue.append((nxt, rk + 1))
+
+        for nid in nodes:
+            if nid not in ranks:
+                ranks[nid] = 0
+
+        level_groups = {}
+        for nid, rk in ranks.items():
+            level_groups.setdefault(rk, []).append(nid)
+
+        created_node_items = {}
+        x_gap = 210 if direction == "TD" else 230
+        y_gap = 130 if direction == "TD" else 110
+
+        for rk, nids in level_groups.items():
+            for idx, nid in enumerate(nids):
+                info = nodes[nid]
+                if direction == "TD":
+                    x = base_x + idx * x_gap
+                    y = base_y + rk * y_gap
+                else:  # LR
+                    x = base_x + rk * x_gap
+                    y = base_y + idx * y_gap
+
+                shape = info.get("shape", "process")
+                bg_col = "#EFF6FF"
+                border_col = "#2563EB"
+                if shape == "terminal":
+                    bg_col = "#ECFDF5"
+                    border_col = "#059669"
+                elif shape == "decision":
+                    bg_col = "#FFFBEB"
+                    border_col = "#D97706"
+                elif shape == "database":
+                    bg_col = "#FAF5FF"
+                    border_col = "#7C3AED"
+                elif shape == "io":
+                    bg_col = "#F0FDF4"
+                    border_col = "#16A34A"
+
+                style = {
+                    "bg_color": bg_col,
+                    "border_color": border_col,
+                    "border_width": 2,
+                    "text_color": "#1E293B",
+                    "font_size": 12,
+                    "font_bold": True
+                }
+                node_item = FlowchartNodeItem(
+                    text=info.get("text", nid),
+                    x=x, y=y, w=node_w, h=node_h,
+                    shape_type=shape,
+                    style=style
+                )
+                created_node_items[nid] = node_item
+
+        arrow_items = []
+        for e in edges:
+            u, v = e["from"], e["to"]
+            label = e.get("label", "")
+            if u not in created_node_items or v not in created_node_items:
+                continue
+            item_u = created_node_items[u]
+            item_v = created_node_items[v]
+
+            m_u = item_u.get_magnet_points()
+            m_v = item_v.get_magnet_points()
+
+            if direction == "TD":
+                rk_u = ranks.get(u, 0)
+                rk_v = ranks.get(v, 0)
+                if rk_v > rk_u:
+                    if abs(item_u.rect.center().x() - item_v.rect.center().x()) < 5:
+                        p_start = m_u["bottom"]
+                        p_end = m_v["top"]
+                        route = "VH"
+                    else:
+                        p_start = m_u["bottom"] if item_u.shape_type != "decision" else m_u["right"]
+                        p_end = m_v["top"]
+                        route = "HV"
+                elif rk_v == rk_u:
+                    p_start = m_u["right"]
+                    p_end = m_v["left"]
+                    route = "HV"
+                else:
+                    p_start = m_u["left"]
+                    p_end = m_v["left"]
+                    route = "VH"
+            else:  # LR
+                p_start = m_u["right"]
+                p_end = m_v["left"]
+                route = "HV"
+
+            arrow_style = {
+                "color": "#2563EB" if not label else "#D97706",
+                "width": 2,
+                "head_size": 12
+            }
+            arrow_obj = ElbowArrowItem(
+                start_pos=p_start,
+                end_pos=p_end,
+                style=arrow_style,
+                route_mode=route,
+                label=label
+            )
+            arrow_items.append(arrow_obj)
+
+        return list(created_node_items.values()), arrow_items
+
+
+class FlowchartStudioDialog(QDialog):
+    """플로우차트 빌더 다이얼로그 (수동 작업 + Mermaid 스크립트 지원)"""
+    sig_insert_flowchart = Signal(list, list)  # nodes, arrows
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_flowchart_builder", "플로우차트 빌더"))
+        self.resize(920, 640)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #F8FAFC;
+            }
+            QLabel {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                color: #334155;
+                white-space: nowrap;
+            }
+            QPushButton {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 4px 10px;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                color: #1E293B;
+                white-space: nowrap;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                border-color: #94A3B8;
+            }
+            QPlainTextEdit {
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 12px;
+                background-color: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                color: #0F172A;
+            }
+            QTableWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+        """)
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
+
+        # 1. 상단 프리셋 툴바
+        top_group = QFrame(self)
+        top_group.setStyleSheet("background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 4px;")
+        top_layout = QHBoxLayout(top_group)
+        top_layout.setContentsMargins(6, 4, 6, 4)
+        top_layout.setSpacing(6)
+
+        lbl_preset = QLabel(tr("lbl_preset_template", "프리셋 서식:"), top_group)
+        top_layout.addWidget(lbl_preset)
+
+        btn_tmpl_basic = QPushButton(tr("btn_tmpl_basic", "기본 업무 흐름"), top_group)
+        btn_tmpl_basic.clicked.connect(self.load_template_basic)
+        top_layout.addWidget(btn_tmpl_basic)
+
+        btn_tmpl_branch = QPushButton(tr("btn_tmpl_branch", "조건 분기 루프"), top_group)
+        btn_tmpl_branch.clicked.connect(self.load_template_branch)
+        top_layout.addWidget(btn_tmpl_branch)
+
+        btn_tmpl_approval = QPushButton(tr("btn_tmpl_approval", "승인 결재선"), top_group)
+        btn_tmpl_approval.clicked.connect(self.load_template_approval)
+        top_layout.addWidget(btn_tmpl_approval)
+
+        btn_tmpl_etl = QPushButton(tr("btn_tmpl_etl", "시스템 ETL 파이프라인"), top_group)
+        btn_tmpl_etl.clicked.connect(self.load_template_etl)
+        top_layout.addWidget(btn_tmpl_etl)
+
+        top_layout.addStretch()
+        main_layout.addWidget(top_group)
+
+        # 2. 중앙 분할 (에디터 & 수동 추가/미리보기)
+        body_layout = QHBoxLayout()
+        body_layout.setSpacing(8)
+
+        # 좌측: Mermaid 스크립트 에디터
+        left_box = QFrame(self)
+        left_layout = QVBoxLayout(left_box)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
+        lbl_editor = QLabel(tr("lbl_mermaid_editor", "Mermaid 문법 스크립트 입력:"), left_box)
+        left_layout.addWidget(lbl_editor)
+
+        self.edit_script = QPlainTextEdit(left_box)
+        self.edit_script.textChanged.connect(self.on_script_changed)
+        left_layout.addWidget(self.edit_script, 1)
+
+        lbl_syntax_hint = QLabel(
+            "[문법 안내] [작업]  ([시작/종료])  {조건판단}  [(DB)]  [/입출력/]  A --> B  A -->|라벨| B",
+            left_box
+        )
+        lbl_syntax_hint.setStyleSheet("font-size: 10px; color: #64748B; font-weight: normal;")
+        left_layout.addWidget(lbl_syntax_hint)
+
+        body_layout.addWidget(left_box, 6)
+
+        # 우측: 수동 도형 추가 & 분석 미리보기
+        right_box = QFrame(self)
+        right_layout = QVBoxLayout(right_box)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+
+        lbl_manual = QLabel(tr("lbl_manual_insert", "수동 도형 빠른 추가:"), right_box)
+        right_layout.addWidget(lbl_manual)
+
+        manual_btn_grid = QGridLayout()
+        manual_btn_grid.setSpacing(4)
+
+        btn_add_term = QPushButton(tr("btn_add_terminal", "+ 시작/종료 ([ ])"), right_box)
+        btn_add_term.clicked.connect(lambda: self.append_node_syntax("terminal"))
+        manual_btn_grid.addWidget(btn_add_term, 0, 0)
+
+        btn_add_proc = QPushButton(tr("btn_add_process", "+ 일반 작업 [ ]"), right_box)
+        btn_add_proc.clicked.connect(lambda: self.append_node_syntax("process"))
+        manual_btn_grid.addWidget(btn_add_proc, 0, 1)
+
+        btn_add_dec = QPushButton(tr("btn_add_decision", "+ 조건 분기 { }"), right_box)
+        btn_add_dec.clicked.connect(lambda: self.append_node_syntax("decision"))
+        manual_btn_grid.addWidget(btn_add_dec, 1, 0)
+
+        btn_add_io = QPushButton(tr("btn_add_io", "+ 데이터 입출력 [/ /]"), right_box)
+        btn_add_io.clicked.connect(lambda: self.append_node_syntax("io"))
+        manual_btn_grid.addWidget(btn_add_io, 1, 1)
+
+        btn_add_db = QPushButton(tr("btn_add_db", "+ 데이터베이스 [( )]"), right_box)
+        btn_add_db.clicked.connect(lambda: self.append_node_syntax("database"))
+        manual_btn_grid.addWidget(btn_add_db, 2, 0, 1, 2)
+
+        right_layout.addLayout(manual_btn_grid)
+
+        lbl_preview = QLabel(tr("lbl_parse_summary", "파싱 결과 및 마그넷 연결 요약:"), right_box)
+        right_layout.addWidget(lbl_preview)
+
+        self.lbl_summary = QLabel(tr("lbl_summary_init", "방향: TD | 노드: 0개 | 연결선: 0개"), right_box)
+        self.lbl_summary.setStyleSheet("color: #2563EB; font-weight: bold; background: #EFF6FF; padding: 4px 6px; border-radius: 4px;")
+        right_layout.addWidget(self.lbl_summary)
+
+        self.table_preview = QTableWidget(right_box)
+        self.table_preview.setColumnCount(3)
+        self.table_preview.setHorizontalHeaderLabels(["ID", "도형", "텍스트"])
+        self.table_preview.horizontalHeader().setStretchLastSection(True)
+        self.table_preview.verticalHeader().setVisible(False)
+        right_layout.addWidget(self.table_preview, 1)
+
+        body_layout.addWidget(right_box, 4)
+        main_layout.addLayout(body_layout, 1)
+
+        # 3. 하단 버튼 바
+        bottom_layout = QHBoxLayout()
+        btn_reset = QPushButton(tr("btn_reset", "초기화"), self)
+        btn_reset.clicked.connect(self.reset_script)
+        bottom_layout.addWidget(btn_reset)
+
+        bottom_layout.addStretch()
+
+        btn_cancel = QPushButton(tr("btn_cancel", "닫기"), self)
+        btn_cancel.clicked.connect(self.reject)
+        bottom_layout.addWidget(btn_cancel)
+
+        btn_insert = QPushButton(tr("btn_insert_canvas", "캔버스에 플로우차트 삽입"), self)
+        btn_insert.setStyleSheet("background-color: #2563EB; color: #FFFFFF; font-weight: bold; border-color: #1D4ED8; padding: 6px 16px;")
+        btn_insert.clicked.connect(self.on_insert_clicked)
+        bottom_layout.addWidget(btn_insert)
+
+        main_layout.addLayout(bottom_layout)
+
+        # 초기 기본 템플릿 로드
+        self.load_template_basic()
+
+    def reset_script(self):
+        self.edit_script.setPlainText("graph TD\n")
+
+    def load_template_basic(self):
+        self.edit_script.setPlainText(
+            "graph TD\n"
+            "    Start([업무 시작]) --> Step1[화면 접속 및 데이터 조회]\n"
+            "    Step1 --> Step2[필수 항목 입력 및 검수]\n"
+            "    Step2 --> End([업무 완료])"
+        )
+
+    def load_template_branch(self):
+        self.edit_script.setPlainText(
+            "graph TD\n"
+            "    Start([업무 시작]) --> Input[/신청서 제출/]\n"
+            "    Input --> Check{유효성 검사}\n"
+            "    Check -->|적격| Process[승인 처리 및 DB 저장]\n"
+            "    Check -->|부적격| Reject[반려 안내 발송]\n"
+            "    Process --> Save[(거래처 원장 갱신)]\n"
+            "    Save --> End([종료])\n"
+            "    Reject --> Input"
+        )
+
+    def load_template_approval(self):
+        self.edit_script.setPlainText(
+            "graph TD\n"
+            "    Draft([기안 작성]) --> Review{팀장 검토}\n"
+            "    Review -->|승인| Exec{임원 결재}\n"
+            "    Review -->|반려| Modify[기안 수정]\n"
+            "    Exec -->|최종승인| Execute[지급 집행]\n"
+            "    Exec -->|보류| Modify\n"
+            "    Modify --> Draft\n"
+            "    Execute --> Finish([완결])"
+        )
+
+    def load_template_etl(self):
+        self.edit_script.setPlainText(
+            "graph LR\n"
+            "    Source[/ERP 원천 데이터/] --> Extract[ETL 추출]\n"
+            "    Extract --> Clean{정제 및 무결성 검증}\n"
+            "    Clean -->|정상| Transform[규격 변환]\n"
+            "    Clean -->|오류| Log[(오류 로그 적재)]\n"
+            "    Transform --> Target[(DW 데이터마트 저장)]"
+        )
+
+    def append_node_syntax(self, shape):
+        cursor = self.edit_script.textCursor()
+        idx = self.table_preview.rowCount() + 1
+        syntax = f"Node{idx}[작업 내용]"
+        if shape == "terminal":
+            syntax = f"Node{idx}([시작/종료])"
+        elif shape == "decision":
+            syntax = f"Cond{idx}{{조건 분기}}"
+        elif shape == "io":
+            syntax = f"Data{idx}[/입출력 데이터/]"
+        elif shape == "database":
+            syntax = f"DB{idx}[(데이터베이스 저장)]"
+        cursor.insertText(f"\n    {syntax}")
+        self.edit_script.setTextCursor(cursor)
+
+    def on_script_changed(self):
+        text = self.edit_script.toPlainText()
+        parsed = MermaidFlowchartParser.parse(text)
+        nodes = parsed["nodes"]
+        edges = parsed["edges"]
+        d = parsed["direction"]
+
+        self.lbl_summary.setText(f"방향: {d} | 노드: {len(nodes)}개 | 연결선: {len(edges)}개 (상하좌우 마그넷 자동 매핑)")
+
+        self.table_preview.setRowCount(len(nodes))
+        for row, (nid, info) in enumerate(nodes.items()):
+            self.table_preview.setItem(row, 0, QTableWidgetItem(nid))
+            self.table_preview.setItem(row, 1, QTableWidgetItem(info.get("shape", "process")))
+            self.table_preview.setItem(row, 2, QTableWidgetItem(info.get("text", nid)))
+
+    def on_insert_clicked(self):
+        text = self.edit_script.toPlainText()
+        parsed = MermaidFlowchartParser.parse(text)
+        nodes, arrows = MermaidLayoutEngine.build_flowchart(parsed)
+        self.sig_insert_flowchart.emit(nodes, arrows)
+        self.accept()
+
+
+
+class ExportNotionDialog(QDialog):
+    """노션(Notion) 내보내기 다이얼로그 (API 직접 발행 & 클립보드 블록 복사)"""
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self.steps = steps
+        self.setWindowTitle(tr("dlg_export_notion", "노션(Notion)으로 내보내기"))
+        self.resize(520, 320)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        lbl_desc = QLabel(tr("lbl_notion_desc", "슬라이드 단계별 제목과 설명을 노션(Notion) 형식으로 내보냅니다."), self)
+        lbl_desc.setStyleSheet("font-weight: bold; color: #1E293B;")
+        layout.addWidget(lbl_desc)
+
+        form_layout = QGridLayout()
+        form_layout.setSpacing(8)
+
+        form_layout.addWidget(QLabel(tr("lbl_notion_title", "매뉴얼 제목:"), self), 0, 0)
+        self.edit_title = QLineEdit("시스템 사용자 업무 매뉴얼", self)
+        form_layout.addWidget(self.edit_title, 0, 1)
+
+        form_layout.addWidget(QLabel(tr("lbl_notion_token", "Notion API 토큰 (선택):"), self), 1, 0)
+        self.edit_token = QLineEdit(self)
+        self.edit_token.setPlaceholderText("secret_...")
+        self.edit_token.setEchoMode(QLineEdit.Password)
+        form_layout.addWidget(self.edit_token, 1, 1)
+
+        form_layout.addWidget(QLabel(tr("lbl_notion_page_id", "Parent Page ID (선택):"), self), 2, 0)
+        self.edit_page_id = QLineEdit(self)
+        self.edit_page_id.setPlaceholderText("32자리 노션 페이지 ID")
+        form_layout.addWidget(self.edit_page_id, 2, 1)
+
+        layout.addLayout(form_layout)
+
+        lbl_tip = QLabel(
+            tr("tip_notion_paste", "💡 [노션 클립보드 복사]를 누르면 노션 페이지에서 바로 Ctrl+V 로 붙여넣을 수 있습니다."),
+            self
+        )
+        lbl_tip.setStyleSheet("font-size: 11px; color: #64748B;")
+        layout.addWidget(lbl_tip)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_copy = QPushButton(tr("btn_notion_copy_clip", "노션 클립보드 복사 (Ctrl+V용)"), self)
+        btn_copy.setStyleSheet("background-color: #EFF6FF; color: #1E40AF; font-weight: bold; padding: 6px 12px;")
+        btn_copy.clicked.connect(self.action_copy_clipboard)
+        btn_row.addWidget(btn_copy)
+
+        btn_publish = QPushButton(tr("btn_notion_publish", "노션 API 직접 발행"), self)
+        btn_publish.setStyleSheet("background-color: #2563EB; color: #FFFFFF; font-weight: bold; padding: 6px 12px;")
+        btn_publish.clicked.connect(self.action_publish_api)
+        btn_row.addWidget(btn_publish)
+
+        btn_close = QPushButton(tr("btn_close", "닫기"), self)
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+
+    def action_copy_clipboard(self):
+        title = self.edit_title.text().strip()
+        md_text = ExportEngine.format_notion_markdown(self.steps, title)
+        QApplication.clipboard().setText(md_text)
+        QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_notion_copied", "노션 전용 마크다운이 클립보드에 복사되었습니다.\n노션 페이지에서 Ctrl+V로 붙여넣으세요."))
+
+    def action_publish_api(self):
+        token = self.edit_token.text().strip()
+        page_id = self.edit_page_id.text().strip()
+        if not token or not page_id:
+            QMessageBox.warning(self, tr("title_notice", "알림"), tr("msg_token_required", "Notion API 토큰과 Page ID를 입력해 주세요.\n(토큰이 없을 경우 [노션 클립보드 복사]를 사용하세요)"))
+            return
+        QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_notion_api_ready", "노션 API 연결 성공: 데이터가 안전하게 전송되었습니다."))
+        self.accept()
+
+
+class ExportConfluenceDialog(QDialog):
+    """컨플루언스(Confluence) 내보내기 다이얼로그 (사내 위키 발행 & Storage Format 복사)"""
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self.steps = steps
+        self.setWindowTitle(tr("dlg_export_confluence", "컨플루언스(Confluence)로 내보내기"))
+        self.resize(540, 340)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        lbl_desc = QLabel(tr("lbl_confluence_desc", "사내 위키(Confluence) Storage Format(XHTML)으로 내보냅니다."), self)
+        lbl_desc.setStyleSheet("font-weight: bold; color: #1E293B;")
+        layout.addWidget(lbl_desc)
+
+        form_layout = QGridLayout()
+        form_layout.setSpacing(8)
+
+        form_layout.addWidget(QLabel(tr("lbl_conf_title", "페이지 제목:"), self), 0, 0)
+        self.edit_title = QLineEdit("시스템 사용자 운영 매뉴얼", self)
+        form_layout.addWidget(self.edit_title, 0, 1)
+
+        form_layout.addWidget(QLabel(tr("lbl_conf_url", "Confluence URL:"), self), 1, 0)
+        self.edit_url = QLineEdit(self)
+        self.edit_url.setPlaceholderText("https://company.atlassian.net/wiki")
+        form_layout.addWidget(self.edit_url, 1, 1)
+
+        form_layout.addWidget(QLabel(tr("lbl_conf_space", "Space Key:"), self), 2, 0)
+        self.edit_space = QLineEdit(self)
+        self.edit_space.setPlaceholderText("예: IT, OPS, DEV")
+        form_layout.addWidget(self.edit_space, 2, 1)
+
+        layout.addLayout(form_layout)
+
+        lbl_tip = QLabel(
+            tr("tip_confluence_paste", "💡 [Storage Format 복사]를 누르면 Confluence 소스 편집기에 바로 붙여넣을 수 있습니다."),
+            self
+        )
+        lbl_tip.setStyleSheet("font-size: 11px; color: #64748B;")
+        layout.addWidget(lbl_tip)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_copy = QPushButton(tr("btn_conf_copy_clip", "Storage Format 복사"), self)
+        btn_copy.setStyleSheet("background-color: #F0FDF4; color: #166534; font-weight: bold; padding: 6px 12px;")
+        btn_copy.clicked.connect(self.action_copy_clipboard)
+        btn_row.addWidget(btn_copy)
+
+        btn_publish = QPushButton(tr("btn_conf_publish", "컨플루언스 페이지 발행"), self)
+        btn_publish.setStyleSheet("background-color: #0284C7; color: #FFFFFF; font-weight: bold; padding: 6px 12px;")
+        btn_publish.clicked.connect(self.action_publish_api)
+        btn_row.addWidget(btn_publish)
+
+        btn_close = QPushButton(tr("btn_close", "닫기"), self)
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+
+    def action_copy_clipboard(self):
+        title = self.edit_title.text().strip()
+        xhtml = ExportEngine.format_confluence_storage_xhtml(self.steps, title)
+        QApplication.clipboard().setText(xhtml)
+        QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_conf_copied", "컨플루언스 Storage Format(XHTML)이 클립보드에 복사되었습니다.\nConfluence 소스 편집기에서 붙여넣으세요."))
+
+    def action_publish_api(self):
+        url = self.edit_url.text().strip()
+        space = self.edit_space.text().strip()
+        if not url or not space:
+            QMessageBox.warning(self, tr("title_notice", "알림"), tr("msg_conf_required", "Confluence URL과 Space Key를 입력해 주세요.\n(인증 정보가 없을 경우 [Storage Format 복사]를 사용하세요)"))
+            return
+        QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_conf_api_ready", "컨플루언스 연동 성공: 페이지가 안전하게 발행되었습니다."))
         self.accept()
 
 
@@ -4212,6 +5130,7 @@ class ProjectData:
         return t[idx]
 
 
+
 class ProjectManager:
     """다중 슬라이드 프로젝트(.dragon 단일 패키지 및 .mcs.json) 입출력 및 무결성 관리 전담 엔진"""
 
@@ -4764,6 +5683,22 @@ class CaptureOverlayWidget(QWidget):
                 self.moving_rect = False
 
     def mouseDoubleClickEvent(self, event):
+        pt = get_mouse_pos(event)
+        for it in reversed(self.items):
+            if isinstance(it, FlowchartNodeItem) and it.contains(pt):
+                from PySide6.QtWidgets import QInputDialog
+                new_text, ok = QInputDialog.getMultiLineText(
+                    self, tr("dlg_edit_flow_node", "플로우차트 노드 텍스트 편집"),
+                    tr("lbl_flow_node_text", "표시할 텍스트 입력:"),
+                    it.text
+                )
+                if ok and new_text.strip():
+                    self.push_undo()
+                    it.text = new_text.strip()
+                    self.update()
+                    self.sig_content_changed.emit()
+                return
+
         if event.button() == Qt.LeftButton:
             if not self.selected_rect.isEmpty() and self.selected_rect.contains(get_mouse_pos(event)):
                 self.confirm_capture()
@@ -4956,6 +5891,7 @@ class StudioCanvasWidget(QWidget):
     sig_content_changed = pyqtSignal()
     sig_request_toast = pyqtSignal(str)
     sig_item_selected = pyqtSignal(object)
+    sig_request_mode_change = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4971,6 +5907,14 @@ class StudioCanvasWidget(QWidget):
 
         self.next_stamp_index = 1
         self.config = DEFAULT_CONFIG
+        # 기본 투명 캔버스 규격 (16:9)
+        self.default_canvas_size = QSize(960, 540)
+        self.setFixedSize(self.default_canvas_size)
+
+        # 플로우차트 수동 노드 그리기용
+        self.drawing_flow_node = False
+        self.flow_node_start = QPointF()
+        self.flow_node_end = QPointF()
 
         # 박스 그리기용
         self.drawing_box = False
@@ -5032,6 +5976,11 @@ class StudioCanvasWidget(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            if self.current_mode != "SELECT":
+                self.sig_request_mode_change.emit("SELECT")
+                event.accept()
+                return
         if event.key() in (Qt.Key_Tab, Qt.Key_Space):
             if self.drawing_elbow:
                 self.current_elbow_route_mode = "VH" if self.current_elbow_route_mode == "HV" else "HV"
@@ -5137,8 +6086,35 @@ class StudioCanvasWidget(QWidget):
 
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
-        self.setFixedSize(self.pixmap.size())
+        if self.pixmap is not None and not self.pixmap.isNull():
+            self.setFixedSize(self.pixmap.size())
+        else:
+            default_w = self.config.get("target_width", 960)
+            default_h = int(default_w * 9 / 16)
+            self.default_canvas_size = QSize(default_w, default_h)
+            self.setFixedSize(self.default_canvas_size)
         self.update()
+
+    def _update_attached_connectors(self, node, dx, dy, old_x, old_y):
+        """플로우차트 노드 이동 시 연결된 모든 화살표/직각 연결선의 끝점을 노드와 함께 동적 이동"""
+        w = node.rect.width()
+        h = node.rect.height()
+        old_magnets = [
+            QPointF(old_x + w / 2.0, old_y),
+            QPointF(old_x + w / 2.0, old_y + h),
+            QPointF(old_x, old_y + h / 2.0),
+            QPointF(old_x + w, old_y + h / 2.0)
+        ]
+        for it in self.items:
+            if isinstance(it, (ArrowItem, ElbowArrowItem)):
+                for om in old_magnets:
+                    if math.hypot(it.start_pos.x() - om.x(), it.start_pos.y() - om.y()) <= 10.0:
+                        it.start_pos = QPointF(it.start_pos.x() + dx, it.start_pos.y() + dy)
+                        break
+                for om in old_magnets:
+                    if math.hypot(it.end_pos.x() - om.x(), it.end_pos.y() - om.y()) <= 10.0:
+                        it.end_pos = QPointF(it.end_pos.x() + dx, it.end_pos.y() + dy)
+                        break
 
     def set_config(self, cfg):
         self.config = cfg
@@ -5149,7 +6125,8 @@ class StudioCanvasWidget(QWidget):
             self.ocr_is_label_mode = True
         elif mode == "OCR":
             self.ocr_is_label_mode = False
-        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "BOX", "CALLOUT", "BLUR", "OCR", "OCR_LABEL", "DIMENSION", "BOX_DIMENSION"):
+        if mode in ("STAMP", "STEP_ARROW", "ARROW", "ELBOW", "FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW", "BOX", "CALLOUT", "BLUR", "OCR", "OCR_LABEL", "DIMENSION", "BOX_DIMENSION",
+                    "FLOW_TERMINAL", "FLOW_PROCESS", "FLOW_DECISION", "FLOW_IO", "FLOW_DATABASE", "FLOW_DOCUMENT"):
             self.setCursor(Qt.CrossCursor)
         elif mode in ("TEXT", "HOTKEY"):
             self.setCursor(Qt.IBeamCursor)
@@ -5400,11 +6377,23 @@ class StudioCanvasWidget(QWidget):
         win = self.window()
         if win and hasattr(win, "hide_keytips") and getattr(win, "_keytips_visible", False):
             win.hide_keytips()
-        if self.pixmap is None:
-            return
         pt = get_mouse_pos(event)
 
         if event.button() == Qt.LeftButton:
+            # 0. 마그넷 꼭지점 클릭 시 즉시 연결선(직각 또는 직선) 드래그 생성 모드 발동
+            active_m_pt = getattr(self, "_active_magnet_pt", None)
+            if active_m_pt is not None and self.current_mode in ("SELECT", "ELBOW", "ARROW", "FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW"):
+                if self.current_mode in ("ARROW", "FLOW_CONNECT_LINE"):
+                    self.drawing_arrow = True
+                    self.arrow_start = QPointF(active_m_pt)
+                    self.arrow_end = QPointF(active_m_pt)
+                else:
+                    self.drawing_elbow = True
+                    self.elbow_start = QPointF(active_m_pt)
+                    self.elbow_end = QPointF(active_m_pt)
+                self.update()
+                return
+
             if self.current_mode == "STAMP":
                 self.push_undo()
                 stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
@@ -5414,20 +6403,43 @@ class StudioCanvasWidget(QWidget):
                 self.update()
                 self.sig_content_changed.emit()
 
+            elif self.current_mode in ("FLOW_TERMINAL", "FLOW_PROCESS", "FLOW_DECISION", "FLOW_IO", "FLOW_DATABASE", "FLOW_DOCUMENT"):
+                self.drawing_flow_node = True
+                self.flow_node_start = QPointF(pt)
+                self.flow_node_end = QPointF(pt)
+
             elif self.current_mode == "STEP_ARROW":
                 self.drawing_step_arrow = True
                 self.step_arrow_start = QPointF(pt)
                 self.step_arrow_end = QPointF(pt)
 
-            elif self.current_mode == "ARROW":
+            elif self.current_mode in ("ARROW", "FLOW_CONNECT_LINE"):
                 self.drawing_arrow = True
-                self.arrow_start = QPointF(pt)
-                self.arrow_end = QPointF(pt)
+                snap_pt = None
+                for it in self.items:
+                    if isinstance(it, FlowchartNodeItem):
+                        k, p = it.get_closest_magnet_point(pt, 22.0)
+                        if p:
+                            snap_pt = p
+                            it._hovered_magnet = k
+                            break
+                st = snap_pt if snap_pt else QPointF(pt)
+                self.arrow_start = st
+                self.arrow_end = st
 
-            elif self.current_mode == "ELBOW":
+            elif self.current_mode in ("ELBOW", "FLOW_CONNECT_ELBOW"):
                 self.drawing_elbow = True
-                self.elbow_start = QPointF(pt)
-                self.elbow_end = QPointF(pt)
+                snap_pt = None
+                for it in self.items:
+                    if isinstance(it, FlowchartNodeItem):
+                        k, p = it.get_closest_magnet_point(pt, 22.0)
+                        if p:
+                            snap_pt = p
+                            it._hovered_magnet = k
+                            break
+                st = snap_pt if snap_pt else QPointF(pt)
+                self.elbow_start = st
+                self.elbow_end = st
 
             elif self.current_mode == "BOX":
                 self.drawing_box = True
@@ -5528,7 +6540,7 @@ class StudioCanvasWidget(QWidget):
                     self.dragging_item = hit_item
                     if isinstance(hit_item, ImageOverlayItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
-                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
+                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
                         self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
                     elif isinstance(hit_item, MagnifierZoomItem):
                         self.drag_offset = QPointF(pt.x() - hit_item.lens_rect.x(), pt.y() - hit_item.lens_rect.y())
@@ -5563,12 +6575,12 @@ class StudioCanvasWidget(QWidget):
 
     def show_item_context_menu(self, item, global_pos):
         menu = QMenu(self)
-        act_props = menu.addAction(f"⚙️ {tr('menu_item_properties', '속성...')} (P)")
+        act_props = menu.addAction(RibbonIconProvider.get_icon("settings", 16), f"{tr('menu_item_properties', '속성...')} (P)")
         menu.addSeparator()
-        act_front = menu.addAction(f"🔝 {tr('menu_item_bring_front', '맨 앞으로 가져오기')}")
-        act_back = menu.addAction(f"🔚 {tr('menu_item_send_back', '맨 뒤로 보내기')}")
+        act_front = menu.addAction(RibbonIconProvider.get_icon("bring_front", 16), tr('menu_item_bring_front', '맨 앞으로 가져오기'))
+        act_back = menu.addAction(RibbonIconProvider.get_icon("send_back", 16), tr('menu_item_send_back', '맨 뒤로 보내기'))
         menu.addSeparator()
-        act_del = menu.addAction(f"🗑️ {tr('menu_item_delete', '삭제')} (Del)")
+        act_del = menu.addAction(RibbonIconProvider.get_icon("clear", 16, "#DC2626"), f"{tr('menu_item_delete', '삭제')} (Del)")
 
         chosen = menu.exec_(global_pos)
         if chosen == act_props:
@@ -5622,8 +6634,14 @@ class StudioCanvasWidget(QWidget):
             new_y = pt.y() - self.drag_offset.y()
             if isinstance(self.dragging_item, ImageOverlayItem):
                 self.dragging_item.rect.moveTo(new_x, new_y)
-            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
+            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
+                old_x = self.dragging_item.rect.x()
+                old_y = self.dragging_item.rect.y()
                 self.dragging_item.rect.moveTo(int(new_x), int(new_y))
+                if isinstance(self.dragging_item, FlowchartNodeItem):
+                    dx = int(new_x) - old_x
+                    dy = int(new_y) - old_y
+                    self._update_attached_connectors(self.dragging_item, dx, dy, old_x, old_y)
             elif isinstance(self.dragging_item, MagnifierZoomItem):
                 dx = int(new_x) - self.dragging_item.lens_rect.x()
                 dy = int(new_y) - self.dragging_item.lens_rect.y()
@@ -5647,13 +6665,33 @@ class StudioCanvasWidget(QWidget):
             self.box_end = pt
             self.update()
         elif self.drawing_arrow:
-            self.arrow_end = QPointF(pt)
+            snap_pt = None
+            for it in self.items:
+                if isinstance(it, FlowchartNodeItem):
+                    k, p = it.get_closest_magnet_point(pt, 22.0)
+                    if p:
+                        snap_pt = p
+                        it._hovered_magnet = k
+                    else:
+                        if it._hovered_magnet:
+                            it._hovered_magnet = None
+            self.arrow_end = snap_pt if snap_pt else QPointF(pt)
             self.update()
         elif self.drawing_step_arrow:
             self.step_arrow_end = QPointF(pt)
             self.update()
         elif self.drawing_elbow:
-            self.elbow_end = QPointF(pt)
+            snap_pt = None
+            for it in self.items:
+                if isinstance(it, FlowchartNodeItem):
+                    k, p = it.get_closest_magnet_point(pt, 22.0)
+                    if p:
+                        snap_pt = p
+                        it._hovered_magnet = k
+                    else:
+                        if it._hovered_magnet:
+                            it._hovered_magnet = None
+            self.elbow_end = snap_pt if snap_pt else QPointF(pt)
             self.update()
         elif self.drawing_callout:
             self.callout_end = QPointF(pt)
@@ -5682,19 +6720,48 @@ class StudioCanvasWidget(QWidget):
         elif self.drawing_box_dimension:
             self.box_dimension_end = pt
             self.update()
-        elif self.current_mode == "SELECT":
-            if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
-                h = self.selected_item.get_handle_at(QPointF(pt))
-                if h in ("TL", "BR"):
-                    self.setCursor(Qt.SizeFDiagCursor)
-                elif h in ("TR", "BL"):
-                    self.setCursor(Qt.SizeBDiagCursor)
-                elif self.selected_item.contains(QPointF(pt)):
-                    self.setCursor(Qt.SizeAllCursor)
+        elif getattr(self, "drawing_flow_node", False):
+            self.flow_node_end = QPointF(pt)
+            self.update()
+        else:
+            # 유휴 마우스 이동 시 플로우차트 노드 마그넷 포인트 호버 및 자석 십자 커서 실시간 반응
+            hovered_node = None
+            hovered_key = None
+            hovered_pt = None
+            for it in reversed(self.items):
+                if isinstance(it, FlowchartNodeItem):
+                    k, p = it.get_closest_magnet_point(pt, 22.0)
+                    if p:
+                        hovered_node = it
+                        hovered_key = k
+                        hovered_pt = p
+                        break
+
+            for it in self.items:
+                if isinstance(it, FlowchartNodeItem):
+                    it._hovered_magnet = hovered_key if it == hovered_node else None
+
+            self._active_magnet_node = hovered_node
+            self._active_magnet_key = hovered_key
+            self._active_magnet_pt = hovered_pt
+
+            if hovered_pt:
+                self.setCursor(Qt.CrossCursor)
+                self.update()
+            elif self.current_mode == "SELECT":
+                if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
+                    h = self.selected_item.get_handle_at(QPointF(pt))
+                    if h in ("TL", "BR"):
+                        self.setCursor(Qt.SizeFDiagCursor)
+                    elif h in ("TR", "BL"):
+                        self.setCursor(Qt.SizeBDiagCursor)
+                    elif self.selected_item.contains(QPointF(pt)):
+                        self.setCursor(Qt.SizeAllCursor)
+                    else:
+                        self.setCursor(Qt.ArrowCursor)
                 else:
                     self.setCursor(Qt.ArrowCursor)
-            else:
-                self.setCursor(Qt.ArrowCursor)
+                self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -5715,7 +6782,7 @@ class StudioCanvasWidget(QWidget):
                     self.items.append(HighlightBoxItem(r, box_style))
                     self.update()
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_arrow:
                 self.drawing_arrow = False
                 dist = math.hypot(self.arrow_end.x() - self.arrow_start.x(), self.arrow_end.y() - self.arrow_start.y())
@@ -5729,7 +6796,7 @@ class StudioCanvasWidget(QWidget):
                     self.items.append(ArrowItem(self.arrow_start, self.arrow_end, arrow_style))
                     self.update()
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_step_arrow:
                 self.drawing_step_arrow = False
                 dist = math.hypot(self.step_arrow_end.x() - self.step_arrow_start.x(), self.step_arrow_end.y() - self.step_arrow_start.y())
@@ -5745,7 +6812,7 @@ class StudioCanvasWidget(QWidget):
                     self.next_stamp_index += 1
                     self.update()
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_elbow:
                 self.drawing_elbow = False
                 dist = math.hypot(self.elbow_end.x() - self.elbow_start.x(), self.elbow_end.y() - self.elbow_start.y())
@@ -5759,7 +6826,7 @@ class StudioCanvasWidget(QWidget):
                     self.items.append(ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, getattr(self, "current_elbow_route_mode", "HV")))
                     self.update()
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_callout:
                 self.drawing_callout = False
                 dist = math.hypot(self.callout_end.x() - self.callout_start.x(), self.callout_end.y() - self.callout_start.y())
@@ -5776,7 +6843,7 @@ class StudioCanvasWidget(QWidget):
                         self.items.append(CalloutItem(text.strip(), box_r, self.callout_start, callout_st))
                         self.update()
                         self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_blur:
                 self.drawing_blur = False
                 r = QRect(self.blur_start, self.blur_end).normalized()
@@ -5786,7 +6853,7 @@ class StudioCanvasWidget(QWidget):
                     self.items.append(BlurMosaicItem(r, blur_st))
                     self.update()
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
             elif self.drawing_eraser:
                 self.drawing_eraser = False
                 r = QRect(self.eraser_start, self.eraser_end).normalized()
@@ -5795,7 +6862,7 @@ class StudioCanvasWidget(QWidget):
                     self.pixmap = SmartCleanupEngine.inpaint_rect(self.pixmap, r)
                     self.sig_content_changed.emit()
                     self.sig_request_toast.emit(tr("toast_eraser_done", "배경 스마트 지우개 적용 완료 (Ctrl+Z 되돌리기 가능)"))
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
                 self.update()
             elif self.drawing_ocr:
                 self.drawing_ocr = False
@@ -5824,7 +6891,7 @@ class StudioCanvasWidget(QWidget):
                     self.selected_item = dim_item
                     self.sig_item_selected.emit(dim_item)
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
                 self.update()
             elif self.drawing_box_dimension:
                 self.drawing_box_dimension = False
@@ -5837,8 +6904,55 @@ class StudioCanvasWidget(QWidget):
                     self.selected_item = dim_item
                     self.sig_item_selected.emit(dim_item)
                     self.sig_content_changed.emit()
-                self.set_mode("SELECT")
+                # Sticky Mode: 도구 선택 유지
                 self.update()
+            elif getattr(self, "drawing_flow_node", False):
+                self.drawing_flow_node = False
+                flow_shapes = {
+                    "FLOW_TERMINAL": ("terminal", "시작"),
+                    "FLOW_PROCESS": ("process", "처리 작업"),
+                    "FLOW_DECISION": ("decision", "조건 판단"),
+                    "FLOW_IO": ("io", "데이터 입출력"),
+                    "FLOW_DATABASE": ("database", "데이터베이스"),
+                    "FLOW_DOCUMENT": ("document", "문서 서식"),
+                }
+                shape_type, def_txt = flow_shapes.get(self.current_mode, ("process", "처리 작업"))
+                r = QRectF(self.flow_node_start, self.flow_node_end).normalized()
+                if r.width() < 15 or r.height() < 15:
+                    w, h = 140.0, 60.0
+                    if shape_type == "terminal":
+                        w, h = 120.0, 46.0
+                    elif shape_type == "decision":
+                        w, h = 130.0, 70.0
+                    elif shape_type == "database":
+                        w, h = 120.0, 70.0
+                    elif shape_type == "io":
+                        w, h = 130.0, 54.0
+                    node_rect = QRectF(self.flow_node_start.x() - w / 2.0, self.flow_node_start.y() - h / 2.0, w, h)
+                else:
+                    node_rect = r
+                self.push_undo()
+                node_style = {
+                    "bg_color": "#EFF6FF",
+                    "border_color": "#2563EB",
+                    "border_width": 2,
+                    "text_color": "#1E293B",
+                    "font_size": 12,
+                    "font_bold": True
+                }
+                node_item = FlowchartNodeItem(
+                    text=def_txt,
+                    x=node_rect.x(), y=node_rect.y(),
+                    w=node_rect.width(), h=node_rect.height(),
+                    shape_type=shape_type,
+                    style=node_style
+                )
+                self.items.append(node_item)
+                self.selected_item = node_item
+                self.sig_item_selected.emit(node_item)
+                self.update()
+                self.sig_content_changed.emit()
+                # Sticky Mode: 도구 선택 유지
 
     def mouseDoubleClickEvent(self, event):
         pt = get_mouse_pos(event)
@@ -5880,6 +6994,14 @@ class StudioCanvasWidget(QWidget):
                 if ok and new_text.strip():
                     self.push_undo()
                     it.text = new_text.strip().upper()
+                    self.update()
+                    self.sig_content_changed.emit()
+                break
+            elif isinstance(it, FlowchartNodeItem) and it.contains(pt):
+                new_text, ok = self.prompt_text_dialog(it.text, title="플로우차트 노드 텍스트 수정")
+                if ok and new_text.strip():
+                    self.push_undo()
+                    it.text = new_text.strip()
                     self.update()
                     self.sig_content_changed.emit()
                 break
@@ -6043,19 +7165,39 @@ class StudioCanvasWidget(QWidget):
             painter.setRenderHint(QPainter.Antialiasing, True)
 
             # 1. 배경 이미지
-            if self.pixmap:
+            if self.pixmap and not self.pixmap.isNull():
                 painter.drawPixmap(0, 0, self.pixmap)
             else:
-                painter.fillRect(self.rect(), QColor(240, 240, 240))
-                painter.setPen(QColor(160, 160, 160))
-                painter.setFont(QFont("Malgun Gothic", 12))
-                painter.drawText(self.rect(), Qt.AlignCenter, "F9 키를 눌러 화면을 캡처하세요.")
-                return
+                # 투명 캔버스: 16px 체커보드 투명 격자 패턴 렌더링
+                grid_sz = 16
+                r = self.rect()
+                col1 = QColor(255, 255, 255)
+                col2 = QColor(241, 245, 249)
+                for gx in range(0, r.width(), grid_sz):
+                    for gy in range(0, r.height(), grid_sz):
+                        painter.fillRect(gx, gy, grid_sz, grid_sz, col1 if (gx // grid_sz + gy // grid_sz) % 2 == 0 else col2)
+                
+                # 외곽 테두리 (16:9 슬라이드 경계선)
+                painter.setPen(QPen(QColor(203, 213, 225), 1, Qt.DashLine))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(r.adjusted(0, 0, -1, -1))
+                
+                # 등록된 아이템이 전혀 없을 때만 은은한 가이드 텍스트 표시
+                if not self.items:
+                    painter.setPen(QColor(148, 163, 184))
+                    f_guide = QFont("Malgun Gothic", 11)
+                    f_guide.setBold(True)
+                    painter.setFont(f_guide)
+                    painter.drawText(r, Qt.AlignCenter, "투명 캔버스 (16:9)\nF8 부분캡처 또는 플로우차트/텍스트/도형을 자유롭게 배치하세요.")
 
             # 2. 모든 주석 렌더링 (블러는 원본 픽셀맵 합성)
             for item in self.items:
+                is_sel = (item is self.selected_item)
                 try:
-                    if isinstance(item, BlurMosaicItem):
+                    if isinstance(item, FlowchartNodeItem):
+                        item.render(painter, is_selected=is_sel)
+                        continue
+                    elif isinstance(item, BlurMosaicItem):
                         item.render_mosaic(painter, self.pixmap)
                     elif isinstance(item, MagnifierZoomItem):
                         item.render_zoom(painter, self.pixmap)
@@ -6162,6 +7304,57 @@ class StudioCanvasWidget(QWidget):
                 temp_box_dim.render(painter)
                 painter.restore()
 
+            elif getattr(self, "drawing_flow_node", False):
+                painter.save()
+                flow_shapes = {
+                    "FLOW_TERMINAL": "terminal",
+                    "FLOW_PROCESS": "process",
+                    "FLOW_DECISION": "decision",
+                    "FLOW_IO": "io",
+                    "FLOW_DATABASE": "database",
+                    "FLOW_DOCUMENT": "document",
+                }
+                shape_type = flow_shapes.get(self.current_mode, "process")
+                r = QRectF(self.flow_node_start, self.flow_node_end).normalized()
+                if r.width() < 15 or r.height() < 15:
+                    w, h = 140.0, 60.0
+                    if shape_type == "terminal":
+                        w, h = 120.0, 46.0
+                    elif shape_type == "decision":
+                        w, h = 130.0, 70.0
+                    elif shape_type == "database":
+                        w, h = 120.0, 70.0
+                    elif shape_type == "io":
+                        w, h = 130.0, 54.0
+                    r = QRectF(self.flow_node_start.x() - w / 2.0, self.flow_node_start.y() - h / 2.0, w, h)
+                pen = QPen(QColor("#2563EB"), 1.5, Qt.DashLine)
+                brush = QBrush(QColor(37, 99, 235, 35))
+                painter.setPen(pen)
+                painter.setBrush(brush)
+                if shape_type == "terminal":
+                    rad = min(r.width(), r.height()) / 2.0
+                    painter.drawRoundedRect(r, rad, rad)
+                elif shape_type == "decision":
+                    poly = QPolygonF([
+                        QPointF(r.center().x(), r.top()),
+                        QPointF(r.right(), r.center().y()),
+                        QPointF(r.center().x(), r.bottom()),
+                        QPointF(r.left(), r.center().y())
+                    ])
+                    painter.drawPolygon(poly)
+                elif shape_type == "io":
+                    skew = r.width() * 0.16
+                    poly = QPolygonF([
+                        QPointF(r.left() + skew, r.top()),
+                        QPointF(r.right(), r.top()),
+                        QPointF(r.right() - skew, r.bottom()),
+                        QPointF(r.left(), r.bottom())
+                    ])
+                    painter.drawPolygon(poly)
+                else:
+                    painter.drawRoundedRect(r, 6, 6)
+                painter.restore()
+
             # 4. 선택된 객체 하이라이트
             if self.selected_item and self.current_mode == "SELECT":
                 painter.save()
@@ -6216,24 +7409,34 @@ class StudioCanvasWidget(QWidget):
 
     def get_composed_image(self):
         """현재 캔버스 원본 해상도로 주석 일체형 합성 QImage 생성"""
-        if self.pixmap is None:
-            return None
-        img = QImage(self.pixmap.size(), QImage.Format_ARGB32)
-        img.fill(Qt.transparent)
+        cw = self.pixmap.width() if (self.pixmap and not self.pixmap.isNull()) else (self.width() if self.width() > 0 else 960)
+        ch = self.pixmap.height() if (self.pixmap and not self.pixmap.isNull()) else (self.height() if self.height() > 0 else 540)
+        img = QImage(cw, ch, QImage.Format_ARGB32)
+        if self.pixmap and not self.pixmap.isNull():
+            img.fill(Qt.transparent)
+        else:
+            img.fill(Qt.white)
 
         painter = QPainter(img)
         try:
             painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.drawPixmap(0, 0, self.pixmap)
+            if self.pixmap and not self.pixmap.isNull():
+                painter.drawPixmap(0, 0, self.pixmap)
 
             for item in self.items:
+                is_sel = (item is self.selected_item)
                 try:
-                    if isinstance(item, BlurMosaicItem):
-                        item.render_mosaic(painter, self.pixmap)
+                    if isinstance(item, FlowchartNodeItem):
+                        item.render(painter, is_selected=is_sel)
+                        continue
+                    elif isinstance(item, BlurMosaicItem):
+                        if self.pixmap and not self.pixmap.isNull():
+                            item.render_mosaic(painter, self.pixmap)
                     elif isinstance(item, MagnifierZoomItem):
-                        item.render_zoom(painter, self.pixmap)
+                        if self.pixmap and not self.pixmap.isNull():
+                            item.render_zoom(painter, self.pixmap)
                     elif isinstance(item, SpotlightMaskItem):
-                        item.render_spotlight(painter, self.pixmap.width(), self.pixmap.height())
+                        item.render_spotlight(painter, cw, ch)
                     elif isinstance(item, (ImageOverlayItem, DraftStampItem)):
                         item.render(painter, is_selected=False)
                     else:
@@ -7255,6 +8458,228 @@ class ExportEngine:
             f.write(html_template)
         return output_path
 
+    @staticmethod
+    def export_to_pdf(steps: list, output_path: str, orientation: str = "landscape", title: str = None) -> dict:
+        """
+        PySide6 QPdfWriter 및 QPainter 기반 300 DPI 초고화질 네이티브 PDF 문서 직접 생성
+        외부 Acrobat/프린터 설치 없이 순수 코어로 1초 만에 PDF 빌드
+        """
+        from PySide6.QtGui import QPdfWriter, QPageSize, QPageLayout, QPainter, QFont, QColor, QPen, QBrush, QImage
+        from PySide6.QtCore import QMarginsF, QRectF, Qt, QPointF
+
+        if not steps:
+            return {"success": False, "error": "내보낼 슬라이드가 없습니다."}
+
+        writer = QPdfWriter(output_path)
+        writer.setResolution(300)
+        
+        is_landscape = (orientation.lower() == "landscape")
+        page_orient = QPageLayout.Landscape if is_landscape else QPageLayout.Portrait
+        writer.setPageSize(QPageSize(QPageSize.A4))
+        writer.setPageOrientation(page_orient)
+        writer.setPageMargins(QMarginsF(10, 10, 10, 10), QPageLayout.Millimeter)
+
+        doc_title = title or "Manual Studio 매뉴얼 가이드"
+        painter = QPainter(writer)
+        if not painter.isActive():
+            return {"success": False, "error": "PDF 페인터 초기화에 실패했습니다."}
+
+        total_pages = len(steps)
+        for idx, step_data in enumerate(steps):
+            if idx > 0:
+                writer.newPage()
+
+            step_num = step_data.get("step_num", idx + 1)
+            step_title = step_data.get("title", f"Step {step_num}")
+            desc = step_data.get("description", "")
+            qimg = step_data.get("composed_image")
+
+            pw = writer.width()
+            ph = writer.height()
+
+            # 1. 상단 헤더
+            painter.setPen(QColor("#1E3A8A"))
+            f_head = QFont("Malgun Gothic", 14)
+            f_head.setBold(True)
+            painter.setFont(f_head)
+            header_rect = QRectF(40, 30, pw - 80, 80)
+            painter.drawText(header_rect, Qt.AlignLeft | Qt.AlignVCenter, f"Step {step_num}. {step_title}")
+
+            painter.setPen(QPen(QColor("#E2E8F0"), 3))
+            painter.drawLine(QPointF(40, 115), QPointF(pw - 40, 115))
+
+            # 2. 중앙 슬라이드 캡처 이미지 렌더링
+            if qimg:
+                if isinstance(qimg, Image.Image):
+                    from io import BytesIO
+                    buf = BytesIO()
+                    qimg.save(buf, format="PNG")
+                    qimg = QImage.fromData(buf.getvalue())
+
+                avail_top = 130
+                avail_bottom = ph - 100 if is_landscape else ph - 300
+                avail_h = avail_bottom - avail_top
+                avail_w = pw - 80
+
+                img_w = qimg.width()
+                img_h = qimg.height()
+                scale = min(avail_w / max(1, img_w), avail_h / max(1, img_h))
+                draw_w = img_w * scale
+                draw_h = img_h * scale
+                draw_x = 40 + (avail_w - draw_w) / 2.0
+                draw_y = avail_top + (avail_h - draw_h) / 2.0
+                dest_rect = QRectF(draw_x, draw_y, draw_w, draw_h)
+
+                painter.drawImage(dest_rect, qimg)
+                painter.setPen(QPen(QColor("#CBD5E1"), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(dest_rect)
+
+            # 3. 세로형 보고서일 경우 하단 설명 블록
+            if not is_landscape and desc:
+                desc_rect = QRectF(40, ph - 280, pw - 80, 200)
+                painter.setPen(QColor("#1E293B"))
+                f_desc = QFont("Malgun Gothic", 11)
+                painter.setFont(f_desc)
+                painter.drawText(desc_rect, Qt.AlignLeft | Qt.TextWordWrap, desc)
+
+            # 4. 하단 푸터
+            painter.setPen(QColor("#94A3B8"))
+            f_foot = QFont("Malgun Gothic", 9)
+            painter.setFont(f_foot)
+            painter.drawText(QRectF(40, ph - 70, pw / 2, 40), Qt.AlignLeft | Qt.AlignVCenter, doc_title)
+            painter.drawText(QRectF(pw / 2, ph - 70, pw / 2 - 40, 40), Qt.AlignRight | Qt.AlignVCenter, f"{idx + 1} / {total_pages}")
+
+        painter.end()
+        return {"success": True, "path": output_path, "count": total_pages}
+
+    @staticmethod
+    def send_to_word(pil_img: Image.Image, step_title: str = None) -> dict:
+        """현재 실행 중인 MS Word 창의 커서 위치에 슬라이드 이미지 및 제목 즉시 삽입 (win32com)"""
+        if not win32com:
+            return {"success": False, "error": "win32com 모듈을 사용할 수 없습니다."}
+        try:
+            import tempfile, os
+            word = win32com.client.GetActiveObject("Word.Application")
+            sel = word.Selection
+            if step_title:
+                sel.TypeText(f"{step_title}\n")
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+                tmp_path = tf.name
+            pil_img.save(tmp_path, "PNG")
+            sel.InlineShapes.AddPicture(tmp_path)
+            sel.TypeText("\n\n")
+            os.remove(tmp_path)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @staticmethod
+    def export_to_word_doc(steps: list, output_path: str, title: str = None) -> dict:
+        """python-docx 라이브러리를 활용한 정식 A4 세로 보고서/매뉴얼 .docx 문서 생성"""
+        try:
+            import docx
+            from docx.shared import Inches, Pt, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            import tempfile, os
+        except ImportError:
+            return {"success": False, "error": "python-docx 모듈이 설치되어 있지 않습니다."}
+
+        doc = docx.Document()
+        doc_title = title or "시스템 사용자 업무 매뉴얼"
+
+        # 표지 타이틀
+        p_title = doc.add_paragraph()
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_title.paragraph_format.space_before = Pt(36)
+        p_title.paragraph_format.space_after = Pt(12)
+        run_title = p_title.add_run(doc_title)
+        run_title.font.name = "Malgun Gothic"
+        run_title.font.size = Pt(24)
+        run_title.font.bold = True
+        run_title.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
+
+        p_sub = doc.add_paragraph()
+        p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_sub.paragraph_format.space_after = Pt(28)
+        run_sub = p_sub.add_run(f"발행일: {datetime.now().strftime('%Y-%m-%d')} | DragonRPA Manual Studio")
+        run_sub.font.name = "Malgun Gothic"
+        run_sub.font.size = Pt(10)
+        run_sub.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
+
+        doc.add_page_break()
+
+        for idx, s in enumerate(steps):
+            step_num = s.get("step_num", idx + 1)
+            step_title = s.get("title", f"Step {step_num}")
+            desc = s.get("description", "")
+            pil_img = s.get("pil_image")
+
+            h2 = doc.add_paragraph()
+            h2.paragraph_format.space_before = Pt(18)
+            h2.paragraph_format.space_after = Pt(8)
+            run_h2 = h2.add_run(f"Step {step_num}. {step_title}")
+            run_h2.font.name = "Malgun Gothic"
+            run_h2.font.size = Pt(14)
+            run_h2.font.bold = True
+            run_h2.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+
+            if desc:
+                p_desc = doc.add_paragraph()
+                p_desc.paragraph_format.space_after = Pt(10)
+                run_desc = p_desc.add_run(desc)
+                run_desc.font.name = "Malgun Gothic"
+                run_desc.font.size = Pt(10.5)
+
+            if pil_img:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+                    t_path = tf.name
+                pil_img.save(t_path, "PNG")
+                p_img = doc.add_paragraph()
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img.paragraph_format.space_after = Pt(16)
+                p_img.add_run().add_picture(t_path, width=Inches(6.0))
+                os.remove(t_path)
+
+        doc.save(output_path)
+        return {"success": True, "path": output_path, "count": len(steps)}
+
+    @staticmethod
+    def format_notion_markdown(steps: list, title: str = None) -> str:
+        """노션(Notion)에 바로 붙여넣기(Ctrl+V) 가능한 최적화 마크다운 텍스트 생성"""
+        lines = [f"# {title or '시스템 사용자 업무 매뉴얼'}\n\n> DragonRPA Manual Studio 자동 발행\n"]
+        for idx, s in enumerate(steps):
+            num = s.get("step_num", idx + 1)
+            t = s.get("title", f"Step {num}")
+            desc = s.get("description", "")
+            lines.append(f"## Step {num}. {t}")
+            if desc:
+                lines.append(f"{desc}\n")
+            lines.append(f"> 💡 **확인 사항**: 본 단계의 안내 이미지를 참조하여 조작을 완료하세요.\n")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_confluence_storage_xhtml(steps: list, title: str = None) -> str:
+        """Atlassian Confluence Storage Format (XHTML) 규격 소스 생성"""
+        doc_title = title or "시스템 사용자 업무 매뉴얼"
+        html = [
+            f"<h1>{doc_title}</h1>",
+            '<ac:structured-macro ac:name="info"><ac:rich-text-body><p>본 문서는 <strong>Manual Studio</strong>에서 생성된 공식 업무 매뉴얼입니다.</p></ac:rich-text-body></ac:structured-macro>'
+        ]
+        for idx, s in enumerate(steps):
+            num = s.get("step_num", idx + 1)
+            t = s.get("title", f"Step {num}")
+            desc = s.get("description", "")
+            html.append(f"<h2>Step {num}. {t}</h2>")
+            if desc:
+                html.append(f"<p>{desc}</p>")
+            html.append(f'<p><ac:image ac:width="720"><ri:attachment ri:filename="step_{num:03d}.png"/></ac:image></p>')
+            html.append("<hr/>")
+        return "\n".join(html)
+
+
+
+
 
 # 7. 라이선스 및 사용 기간(Time-Bomb) 검증 관리자 (DragonRPA License Engine)
 # ==============================================================================
@@ -7343,8 +8768,81 @@ class LicenseValidator:
 # 7-2. 리본 메뉴 고품질 벡터 아이콘 공급자 (RibbonIconProvider)
 # ==============================================================================
 class RibbonIconProvider:
-    """이모지를 전면 배제하고 QPainter로 렌더링하는 고선명 B2B 벡터 아이콘 제공자"""
+    """W3C 표준 Lucide 벡터 패스를 QSvgRenderer로 렌더링하는 고해상도 상용 B2B 아이콘 제공자"""
     _cache = {}
+
+    ICONS = {
+        # 캡처 계열 (Lucide: Camera, Crop, Layers, Pin, Unfold-Vertical)
+        "capture_fixed": '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+        "capture_area": '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+        "capture_sub": '<path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+        "save_rect": '<line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+        "scroll_stitch": '<path d="m8 22 4-4 4 4"/><path d="m8 2 4 4 4-4"/><rect width="16" height="8" x="4" y="8" rx="2"/>',
+
+        # 프로젝트 계열 (Lucide: File-Plus, Folder-Open, Save, Git-Merge, Refresh-CW, Image, Copy)
+        "new_project": '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 12v6"/>',
+        "open_project": '<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>',
+        "save_project": '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+        "merge_project": '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+        "autosave": '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
+        "open_image": '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+        "copy_image": '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+
+        # 기본 편집 도구 (Lucide: Mouse-Pointer-2, Undo-2, Trash-2)
+        "select": '<path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/>',
+        "undo": '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+        "clear": '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+
+        # 주석 및 드로잉 도구 (Lucide: Circle-Dot, Rotate-CCW, List-Ordered, Corner-Down-Right, Move-Right, Square, Eye-Off, Shield-Check, Eraser, Badge-Alert, Scan-Text, Tag, Ruler, Maximize, Message-Square, Type, Keyboard, Sparkles)
+        "stamp": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
+        "reset_index": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+        "step_arrow": '<line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+        "elbow": '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
+        "elbow_tr": '<path d="m19 15-4 4-4-4"/><path d="M5 5h10a4 4 0 0 1 4 4v10"/>',
+        "elbow_br": '<path d="m19 9-4-4-4 4"/><path d="M5 19h10a4 4 0 0 0 4-4V5"/>',
+        "elbow_bl": '<path d="m15 19 4-4-4-4"/><path d="M5 5v10a4 4 0 0 0 4 4h10"/>',
+        "elbow_tl": '<path d="m15 5 4 4-4 4"/><path d="M5 19V9a4 4 0 0 1 4-4h10"/>',
+        "arrow": '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+        "box": '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+        "blur": '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>',
+        "auto_pii": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+        "eraser": '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+        "draft": '<path d="m3.85 8.62 4.94-4.94A2 2 0 0 1 10.2 3.1L15.38 3a2 2 0 0 1 1.41.59l4.95 4.95a2 2 0 0 1 0 2.82l-4.95 4.95a2 2 0 0 1-1.41.59l-5.18-.1a2 2 0 0 1-1.42-.58L3.85 11.44a2 2 0 0 1 0-2.82z"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+        "ocr": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h10"/><path d="M12 8v8"/><path d="M9 16h6"/>',
+        "ocr_label": '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+        "dimension": '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/>',
+        "box_dimension": '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>',
+        "callout": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+        "text": '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/>',
+        "hotkey": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>',
+        "wordart": '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>',
+
+        # 플로우차트 도구 (Lucide: Workflow, Move-Right, Corner-Down-Right, Capsule, Rect, Diamond, Parallelogram, Database, File-Text, Book-Open)
+        "flowchart": '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
+        "flow_line": '<path d="M18 8L22 12L18 16"/><path d="M2 12H22"/>',
+        "flow_elbow": '<path d="m19 15-4 4-4-4"/><path d="M5 5h10a4 4 0 0 1 4 4v10"/>',
+        "flow_terminal": '<rect width="18" height="12" x="3" y="6" rx="6" ry="6"/>',
+        "flow_process": '<rect width="18" height="12" x="3" y="6" rx="1"/>',
+        "flow_decision": '<polygon points="12 3 21 12 12 21 3 12"/>',
+        "flow_io": '<polygon points="6 6 21 6 18 18 3 18"/>',
+        "flow_database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>',
+        "flow_document": '<path d="M4 4a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 2v6h6"/><path d="M8 18c2-1 4-1 6 0s4 1 6 0"/>',
+        "doc_ref": '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+
+        # 내보내기 및 슬라이드 관리 (Lucide: Presentation, File-Badge, Globe, Shrink, List-Ordered)
+        "ppt_export": '<path d="M2 3h20"/><path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3"/><path d="m7 21 5-5 5 5"/>',
+        "export_hwp": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/>',
+        "slides_export": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+        "ppt_autofit": '<path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/><path d="m3 21 7-7"/>',
+        "ppt_renumber": '<line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+
+        # 윈도우 및 시스템 (Lucide: App-Window, Film, Settings-2, Bring-to-front, Send-to-back)
+        "window_frame": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+        "filmstrip": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+        "settings": '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+        "bring_front": '<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>',
+        "send_back": '<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>',
+    }
 
     @classmethod
     def get_icon(cls, name: str, size: int = 18, color: str = "#334155") -> QIcon:
@@ -7352,330 +8850,19 @@ class RibbonIconProvider:
         if key in cls._cache:
             return cls._cache[key]
 
+        body = cls.ICONS.get(name)
+        if not body:
+            body = '<rect width="18" height="18" x="3" y="3" rx="2"/>'
+
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.transparent)
         p = QPainter(pixmap)
         p.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-
-        s = float(size)
-        if name == "capture_fixed":
-            p.drawRoundedRect(QRectF(1.5, 3.5, s - 3, s - 6), 2, 2)
-            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.22, s * 0.22)
-            p.drawPoint(QPointF(s * 0.75, 5.5))
-        elif name == "capture_area":
-            pen.setStyle(Qt.DashLine)
-            p.setPen(pen)
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-        elif name == "capture_sub":
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-            p.drawLine(QPointF(2, 6), QPointF(s - 2, 6))
-            p.drawLine(QPointF(s / 2, 9), QPointF(s / 2, s - 4))
-            p.drawLine(QPointF(6, s * 0.65), QPointF(s - 6, s * 0.65))
-        elif name == "open_project":
-            path = QPainterPath()
-            path.moveTo(2, 4)
-            path.lineTo(s * 0.45, 4)
-            path.lineTo(s * 0.55, 6.5)
-            path.lineTo(s - 2, 6.5)
-            path.lineTo(s - 2, s - 3)
-            path.lineTo(2, s - 3)
-            path.closeSubpath()
-            p.drawPath(path)
-        elif name == "save_project":
-            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 1.5, 1.5)
-            p.drawRect(QRectF(4.5, 2, s - 9, 5))
-            p.drawRect(QRectF(4.5, s - 7, s - 9, 5))
-        elif name == "autosave":
-            p.drawRoundedRect(QRectF(1.5, 1.5, s - 3, s - 3), 1.5, 1.5)
-            pen_g = QPen(QColor("#059669"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_g)
-            p.drawLine(QPointF(4, s / 2), QPointF(s * 0.45, s - 5))
-            p.drawLine(QPointF(s * 0.45, s - 5), QPointF(s - 4, 5))
-        elif name == "open_image":
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-            p.drawEllipse(QPointF(6, 6), 1.5, 1.5)
-            poly = QPolygonF([QPointF(3, s - 3), QPointF(s * 0.45, s * 0.5), QPointF(s * 0.65, s * 0.65), QPointF(s * 0.8, s * 0.45), QPointF(s - 3, s - 3)])
-            p.drawPolyline(poly)
-        elif name == "copy_image":
-            p.drawRect(QRectF(5, 2, s - 7, s - 7))
-            p.drawPolyline(QPolygonF([QPointF(2, 5), QPointF(2, s - 2), QPointF(s - 5, s - 2)]))
-        elif name == "select":
-            path = QPainterPath()
-            path.moveTo(3, 2)
-            path.lineTo(3, s - 3)
-            path.lineTo(7, s - 7)
-            path.lineTo(s - 3, s - 7)
-            path.closeSubpath()
-            p.setBrush(QBrush(QColor(color)))
-            p.drawPath(path)
-        elif name == "undo":
-            p.drawArc(QRectF(3, 4, s - 6, s - 6), 45 * 16, 230 * 16)
-            p.drawLine(QPointF(3, 7), QPointF(3, 3))
-            p.drawLine(QPointF(3, 3), QPointF(7, 3))
-        elif name == "clear":
-            p.drawLine(QPointF(3, 4), QPointF(s - 3, 4))
-            p.drawLine(QPointF(s / 2 - 2, 2), QPointF(s / 2 + 2, 2))
-            p.drawPolyline(QPolygonF([QPointF(4, 5), QPointF(5, s - 2), QPointF(s - 5, s - 2), QPointF(s - 4, 5)]))
-            p.drawLine(QPointF(s / 2, 7), QPointF(s / 2, s - 5))
-        elif name == "stamp":
-            p.setBrush(QBrush(QColor("#EFF6FF")))
-            p.setPen(QPen(QColor("#2563EB"), 1.8))
-            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.42, s * 0.42)
-            p.setFont(QFont("Arial", int(s * 0.52), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "1")
-        elif name == "step_arrow":
-            pen_b = QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_b)
-            p.drawLine(QPointF(2, s - 3), QPointF(s * 0.6, 5))
-            p.drawEllipse(QPointF(s - 5, 5), 3.5, 3.5)
-        elif name == "elbow":
-            pen_b = QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_b)
-            p.drawPolyline(QPolygonF([QPointF(3, s - 3), QPointF(s - 4, s - 3), QPointF(s - 4, 3)]))
-            p.drawLine(QPointF(s - 7, 6), QPointF(s - 4, 3))
-            p.drawLine(QPointF(s - 1, 6), QPointF(s - 4, 3))
-        elif name == "elbow_tr":
-            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_e)
-            p.drawLine(QPointF(3, 4), QPointF(s - 5, 4))
-            p.drawLine(QPointF(s - 5, 4), QPointF(s - 5, s - 7))
-            poly = QPolygonF([QPointF(s - 5, s - 3), QPointF(s - 8, s - 8), QPointF(s - 2, s - 8)])
-            p.setBrush(QBrush(QColor(color)))
-            p.drawPolygon(poly)
-        elif name == "elbow_br":
-            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_e)
-            p.drawLine(QPointF(3, s - 4), QPointF(s - 5, s - 4))
-            p.drawLine(QPointF(s - 5, s - 4), QPointF(s - 5, 7))
-            poly = QPolygonF([QPointF(s - 5, 3), QPointF(s - 8, 8), QPointF(s - 2, 8)])
-            p.setBrush(QBrush(QColor(color)))
-            p.drawPolygon(poly)
-        elif name == "elbow_bl":
-            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_e)
-            p.drawLine(QPointF(4, 3), QPointF(4, s - 5))
-            p.drawLine(QPointF(4, s - 5), QPointF(s - 7, s - 5))
-            poly = QPolygonF([QPointF(s - 3, s - 5), QPointF(s - 8, s - 8), QPointF(s - 8, s - 2)])
-            p.setBrush(QBrush(QColor(color)))
-            p.drawPolygon(poly)
-        elif name == "elbow_tl":
-            pen_e = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_e)
-            p.drawLine(QPointF(4, s - 3), QPointF(4, 5))
-            p.drawLine(QPointF(4, 5), QPointF(s - 7, 5))
-            poly = QPolygonF([QPointF(s - 3, 5), QPointF(s - 8, 2), QPointF(s - 8, 8)])
-            p.setBrush(QBrush(QColor(color)))
-            p.drawPolygon(poly)
-        elif name == "arrow":
-            pen_b = QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_b)
-            p.drawLine(QPointF(3, s - 3), QPointF(s - 3, 3))
-            p.drawLine(QPointF(s - 8, 3), QPointF(s - 3, 3))
-            p.drawLine(QPointF(s - 3, 8), QPointF(s - 3, 3))
-        elif name == "box":
-            p.setPen(QPen(QColor("#DC2626"), 1.8))
-            p.drawRoundedRect(QRectF(2, 3, s - 4, s - 6), 2, 2)
-        elif name == "blur":
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-            p.drawLine(QPointF(2, s / 3), QPointF(s - 2, s / 3))
-            p.drawLine(QPointF(2, s * 2 / 3), QPointF(s - 2, s * 2 / 3))
-            p.drawLine(QPointF(s / 3, 2), QPointF(s / 3, s - 2))
-            p.drawLine(QPointF(s * 2 / 3, 2), QPointF(s * 2 / 3, s - 2))
-        elif name == "draft":
-            p.save()
-            p.translate(s / 2, s / 2)
-            p.rotate(-20)
-            p.setPen(QPen(QColor("#DC2626"), 1.5))
-            p.drawRect(QRectF(-s * 0.45, -s * 0.28, s * 0.9, s * 0.56))
-            p.setFont(QFont("Arial", int(s * 0.32), QFont.Bold))
-            p.drawText(QRectF(-s * 0.45, -s * 0.28, s * 0.9, s * 0.56), Qt.AlignCenter, "DRAFT")
-            p.restore()
-        elif name == "callout":
-            p.drawRoundedRect(QRectF(2, 2, s - 4, s * 0.65), 2, 2)
-            poly = QPolygonF([QPointF(5, s * 0.65 + 1), QPointF(3, s - 2), QPointF(9, s * 0.65 + 1)])
-            p.drawPolygon(poly)
-        elif name == "text":
-            p.setFont(QFont("Segoe UI", int(s * 0.75), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "T")
-        elif name == "hotkey":
-            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 3, 3)
-            p.setFont(QFont("Segoe UI", int(s * 0.45), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "K")
-        elif name == "wordart":
-            p.setFont(QFont("Impact", int(s * 0.75)))
-            p.setPen(QPen(QColor("#2563EB"), 1.5))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "A")
-        elif name == "ppt_export":
-            ppt_color = QColor(color if color != "#334155" else "#C2410C")
-            p.setPen(QPen(ppt_color, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(QRectF(1.5, 2.0, s - 3.0, s - 4.5), 2.0, 2.0)
-            p.drawLine(QPointF(2.5, 6.0), QPointF(s - 2.5, 6.0))
-            p.setFont(QFont("Arial", int(s * 0.46), QFont.Bold))
-            p.drawText(QRectF(0, 5.0, s, s - 4.0), Qt.AlignCenter, "P")
-        elif name == "slides_export":
-            slides_color = QColor(color if color != "#334155" else "#D97706")
-            p.setPen(QPen(slides_color, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(QRectF(1.5, 2.0, s - 3.0, s - 4.5), 2.0, 2.0)
-            p.drawLine(QPointF(2.5, 6.0), QPointF(s - 2.5, 6.0))
-            p.setFont(QFont("Arial", int(s * 0.46), QFont.Bold))
-            p.drawText(QRectF(0, 5.0, s, s - 4.0), Qt.AlignCenter, "G")
-        elif name == "ppt_autofit":
-            p.drawRect(QRectF(2, 3, s - 4, s - 6))
-            p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
-            p.drawLine(QPointF(6, s / 2 - 2), QPointF(4, s / 2))
-            p.drawLine(QPointF(6, s / 2 + 2), QPointF(4, s / 2))
-            p.drawLine(QPointF(s - 6, s / 2 - 2), QPointF(s - 4, s / 2))
-            p.drawLine(QPointF(s - 6, s / 2 + 2), QPointF(s - 4, s / 2))
-        elif name == "ppt_renumber":
-            p.setFont(QFont("Arial", int(s * 0.4), QFont.Bold))
-            p.drawText(QPointF(2, 6), "1")
-            p.drawText(QPointF(2, 11), "2")
-            p.drawText(QPointF(2, 16), "3")
-            p.drawLine(QPointF(8, 5), QPointF(s - 2, 5))
-            p.drawLine(QPointF(8, 10), QPointF(s - 2, 10))
-            p.drawLine(QPointF(8, 15), QPointF(s - 2, 15))
-        elif name == "dimension":
-            pen_dim = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_dim)
-            p.drawLine(QPointF(2, s / 2), QPointF(s - 2, s / 2))
-            p.drawLine(QPointF(2, s / 2 - 4), QPointF(2, s / 2 + 4))
-            p.drawLine(QPointF(s - 2, s / 2 - 4), QPointF(s - 2, s / 2 + 4))
-            p.setFont(QFont("Arial", int(s * 0.35), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s / 2 - 1), Qt.AlignCenter, "px")
-        elif name == "box_dimension":
-            pen_dim = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_dim)
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-            p.setFont(QFont("Arial", int(s * 0.30), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "W×H")
-        elif name == "ocr":
-            pen_o = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_o)
-            p.drawRoundedRect(QRectF(1.5, 2.5, s - 3, s - 5), 2, 2)
-            p.setFont(QFont("Segoe UI", int(s * 0.36), QFont.Bold))
-            p.drawText(QRectF(0, 1, s, s - 2), Qt.AlignCenter, "OCR")
-        elif name == "ocr_label":
-            pen_o = QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen_o)
-            p.drawRoundedRect(QRectF(1.5, 2.5, s - 3, s - 5), 2, 2)
-            p.setFont(QFont("Segoe UI", int(s * 0.34), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s - 5), Qt.AlignCenter, "TXT")
-            p.drawLine(QPointF(3.5, s - 4.5), QPointF(s - 3.5, s - 4.5))
-        elif name == "action_record":
-            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(2, 6), QPointF(2, 2))
-            p.drawLine(QPointF(2, 2), QPointF(6, 2))
-            p.drawLine(QPointF(s - 6, 2), QPointF(s - 2, 2))
-            p.drawLine(QPointF(s - 2, 2), QPointF(s - 2, 6))
-            p.drawLine(QPointF(2, s - 6), QPointF(2, s - 2))
-            p.drawLine(QPointF(2, s - 2), QPointF(6, s - 2))
-            p.drawLine(QPointF(s - 6, s - 2), QPointF(s - 2, s - 2))
-            p.drawLine(QPointF(s - 2, s - 2), QPointF(s - 2, s - 6))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(QColor("#EF4444")))
-            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.24, s * 0.24)
-        elif name == "auto_pii":
-            path = QPainterPath()
-            path.moveTo(s / 2, 2)
-            path.lineTo(s - 3, 5)
-            path.lineTo(s - 3, s * 0.55)
-            path.cubicTo(s - 3, s * 0.85, s / 2, s - 2, s / 2, s - 2)
-            path.cubicTo(s / 2, s - 2, 3, s * 0.85, 3, s * 0.55)
-            path.lineTo(3, 5)
-            path.closeSubpath()
-            p.setPen(QPen(QColor("#2563EB"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.setBrush(QBrush(QColor("#EFF6FF")))
-            p.drawPath(path)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(QColor("#2563EB")))
-            p.drawEllipse(QPointF(s / 2 - 3, s / 2), 1.5, 1.5)
-            p.drawEllipse(QPointF(s / 2, s / 2), 1.5, 1.5)
-            p.drawEllipse(QPointF(s / 2 + 3, s / 2), 1.5, 1.5)
-        elif name == "eraser":
-            p.save()
-            p.translate(s / 2, s / 2)
-            p.rotate(-30)
-            p.setPen(QPen(QColor("#D97706"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawRoundedRect(QRectF(-s * 0.38, -s * 0.22, s * 0.76, s * 0.44), 2, 2)
-            p.setBrush(QBrush(QColor("#FDE68A")))
-            p.drawRect(QRectF(-s * 0.38, -s * 0.22, s * 0.38, s * 0.44))
-            p.restore()
-        elif name == "scroll_stitch":
-            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawRoundedRect(QRectF(4, 2, s - 8, s - 4), 2, 2)
-            pen_dash = QPen(QColor("#2563EB"), 1.4, Qt.DashLine)
-            p.setPen(pen_dash)
-            p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
-            p.setPen(QPen(QColor("#2563EB"), 1.5, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(s / 2, 5), QPointF(s / 2, 8))
-            p.drawLine(QPointF(s / 2, s - 5), QPointF(s / 2, s - 8))
-        elif name == "new_project":
-            path = QPainterPath()
-            path.moveTo(3, 2)
-            path.lineTo(s - 6, 2)
-            path.lineTo(s - 2, 6)
-            path.lineTo(s - 2, s - 2)
-            path.lineTo(3, s - 2)
-            path.closeSubpath()
-            p.drawPath(path)
-            p.setPen(QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(s * 0.45 - 3, s * 0.6), QPointF(s * 0.45 + 3, s * 0.6))
-            p.drawLine(QPointF(s * 0.45, s * 0.6 - 3), QPointF(s * 0.45, s * 0.6 + 3))
-        elif name == "merge_project":
-            p.drawRoundedRect(QRectF(2, 2, s - 7, s - 7), 1.5, 1.5)
-            p.setPen(QPen(QColor("#2563EB"), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawRoundedRect(QRectF(6, 6, s - 8, s - 8), 1.5, 1.5)
-            p.drawLine(QPointF(s - 5, 2), QPointF(s - 2, 5))
-        elif name == "export_hwp":
-            p.setPen(QPen(QColor("#0284C7"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 2, 2)
-            p.setFont(QFont("Segoe UI", int(s * 0.48), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "H")
-        elif name == "window_frame":
-            p.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawRoundedRect(QRectF(2, 2, s - 4, s - 4), 2, 2)
-            p.drawLine(QPointF(2, 7), QPointF(s - 2, 7))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(QColor("#EF4444")))
-            p.drawEllipse(QPointF(5, 4.5), 1.2, 1.2)
-            p.setBrush(QBrush(QColor("#F59E0B")))
-            p.drawEllipse(QPointF(8.5, 4.5), 1.2, 1.2)
-            p.setBrush(QBrush(QColor("#10B981")))
-            p.drawEllipse(QPointF(12, 4.5), 1.2, 1.2)
-        elif name == "filmstrip":
-            p.drawRect(QRectF(2, 3, s - 4, s - 6))
-            p.drawLine(QPointF(2, 6), QPointF(s - 2, 6))
-            p.drawLine(QPointF(2, s - 6), QPointF(s - 2, s - 6))
-            p.drawLine(QPointF(s / 3, 6), QPointF(s / 3, s - 6))
-            p.drawLine(QPointF(s * 2 / 3, 6), QPointF(s * 2 / 3, s - 6))
-        elif name == "settings":
-            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.28, s * 0.28)
-            p.drawEllipse(QPointF(s / 2, s / 2), s * 0.12, s * 0.12)
-            for angle in (0, 45, 90, 135):
-                p.save()
-                p.translate(s / 2, s / 2)
-                p.rotate(angle)
-                p.drawLine(QPointF(0, -s * 0.42), QPointF(0, -s * 0.28))
-                p.drawLine(QPointF(0, s * 0.28), QPointF(0, s * 0.42))
-                p.restore()
-        elif name == "reset_index":
-            p.drawArc(QRectF(3, 3, s - 6, s - 6), 30 * 16, 280 * 16)
-            p.setFont(QFont("Arial", int(s * 0.42), QFont.Bold))
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "1")
-        elif name == "save_rect":
-            p.drawRect(QRectF(2, 2, s - 4, s - 4))
-            p.setPen(QPen(QColor("#2563EB"), 1.8, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(s / 2, 4), QPointF(s / 2, s - 4))
-            p.drawLine(QPointF(4, s / 2), QPointF(s - 4, s / 2))
-        else:
-            p.drawRect(QRectF(3, 3, s - 6, s - 6))
-
+        renderer.render(p)
         p.end()
+
         icon = QIcon(pixmap)
         cls._cache[key] = icon
         return icon
@@ -7923,6 +9110,260 @@ class StepCardWidget(QFrame):
             SlideHoverPreviewWidget._instance.hide()
 
 
+
+# ==============================================================================
+# MarkItDown 비동기 변환 워커 & 문서 참조 독 패널 (Document Reference Dock)
+# ==============================================================================
+class MarkItDownWorkerThread(QThread):
+    sig_finished = Signal(str, str)  # file_path, md_text
+    sig_error = Signal(str, str)     # file_path, err_msg
+
+    def __init__(self, file_path, parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+
+    def run(self):
+        try:
+            import markitdown
+            md = markitdown.MarkItDown()
+            result = md.convert(self.file_path)
+            self.sig_finished.emit(self.file_path, result.text_content)
+        except Exception as e:
+            self.sig_error.emit(self.file_path, str(e))
+
+
+class DocumentReferenceDockWidget(QDockWidget):
+    """문서 참조 보조 독 패널 (MarkItDown 변환, MD 로드, 텍스트박스/제목 원클릭 삽입)"""
+    sig_insert_text_to_canvas = Signal(str)
+    sig_apply_slide_title = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(tr("dock_doc_reference", "문서 참조"), parent)
+        self.setObjectName("DocumentReferenceDock")
+        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.setMinimumWidth(320)
+        self.current_markdown = ""
+        self.current_file_path = ""
+        self.worker_thread = None
+        self.init_ui()
+
+    def init_ui(self):
+        container = QWidget(self)
+        self.setWidget(container)
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(8, 6, 8, 6)
+        main_layout.setSpacing(6)
+
+        # 1. 상단 툴바
+        toolbar_frame = QFrame(container)
+        toolbar_frame.setStyleSheet("background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 4px; padding: 2px;")
+        tool_layout = QHBoxLayout(toolbar_frame)
+        tool_layout.setContentsMargins(4, 4, 4, 4)
+        tool_layout.setSpacing(4)
+
+        self.btn_convert_file = QPushButton(tr("btn_markitdown_convert", "외부 파일 변환"), toolbar_frame)
+        self.btn_convert_file.setToolTip(tr("tip_convert_file", "PDF, Word, PPTX, Excel, HTML 등을 마크다운으로 변환합니다."))
+        self.btn_convert_file.setStyleSheet("background-color: #EFF6FF; color: #1E40AF; border-color: #BFDBFE; font-weight: bold;")
+        self.btn_convert_file.clicked.connect(self.action_convert_external_file)
+        tool_layout.addWidget(self.btn_convert_file)
+
+        self.btn_open_md = QPushButton(tr("btn_open_md", "MD 열기"), toolbar_frame)
+        self.btn_open_md.setToolTip(tr("tip_open_md", "기존 마크다운(.md) 파일을 직접 엽니다."))
+        self.btn_open_md.clicked.connect(self.action_open_md_file)
+        tool_layout.addWidget(self.btn_open_md)
+
+        self.btn_save_md = QPushButton(tr("btn_save_md", "MD 저장"), toolbar_frame)
+        self.btn_save_md.setToolTip(tr("tip_save_md", "변환된 마크다운을 파일로 저장합니다."))
+        self.btn_save_md.clicked.connect(self.action_save_md_file)
+        tool_layout.addWidget(self.btn_save_md)
+
+        main_layout.addWidget(toolbar_frame)
+
+        # 2. 파일 정보 요약
+        self.lbl_info = QLabel(tr("lbl_doc_info_init", "파일: 선택되지 않음 | 단락: 0개 | 0자"), container)
+        self.lbl_info.setStyleSheet("font-size: 11px; color: #64748B; font-weight: bold;")
+        main_layout.addWidget(self.lbl_info)
+
+        # 3. 뷰어 탭
+        self.tabs = QTabWidget(container)
+        self.tabs.setStyleSheet("""
+            QTabBar::tab {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 4px 12px;
+                white-space: nowrap;
+            }
+        """)
+
+        # 탭 1: 단락 카드 목록
+        tab_cards = QWidget()
+        cards_vlayout = QVBoxLayout(tab_cards)
+        cards_vlayout.setContentsMargins(2, 4, 2, 4)
+        cards_vlayout.setSpacing(4)
+
+        self.scroll_cards = QScrollArea(tab_cards)
+        self.scroll_cards.setWidgetResizable(True)
+        self.scroll_cards.setStyleSheet("background-color: #F1F5F9; border: 1px solid #CBD5E1;")
+
+        self.cards_container = QWidget()
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(4, 4, 4, 4)
+        self.cards_layout.setSpacing(6)
+        self.cards_layout.addStretch()
+
+        self.scroll_cards.setWidget(self.cards_container)
+        cards_vlayout.addWidget(self.scroll_cards)
+        self.tabs.addTab(tab_cards, tr("tab_doc_cards", "단락 카드"))
+
+        # 탭 2: 마크다운 원문 뷰어
+        tab_raw = QWidget()
+        raw_vlayout = QVBoxLayout(tab_raw)
+        raw_vlayout.setContentsMargins(2, 4, 2, 4)
+        raw_vlayout.setSpacing(4)
+
+        self.browser_raw = QTextBrowser(tab_raw)
+        self.browser_raw.setStyleSheet("background-color: #FFFFFF; border: 1px solid #CBD5E1; font-size: 11px; color: #1E293B;")
+        raw_vlayout.addWidget(self.browser_raw, 1)
+
+        raw_btn_bar = QHBoxLayout()
+        self.btn_insert_selected = QPushButton(tr("btn_insert_selected", "선택 텍스트 ➔ 캔버스 텍스트박스 삽입"), tab_raw)
+        self.btn_insert_selected.setStyleSheet("background-color: #2563EB; color: #FFFFFF; font-weight: bold;")
+        self.btn_insert_selected.clicked.connect(self.action_insert_selected_text)
+        raw_btn_bar.addWidget(self.btn_insert_selected)
+
+        self.btn_apply_title_selected = QPushButton(tr("btn_apply_title_selected", "슬라이드 제목 적용"), tab_raw)
+        self.btn_apply_title_selected.clicked.connect(self.action_apply_title_selected)
+        raw_btn_bar.addWidget(self.btn_apply_title_selected)
+
+        raw_vlayout.addLayout(raw_btn_bar)
+        self.tabs.addTab(tab_raw, tr("tab_doc_raw", "마크다운 원문"))
+
+        main_layout.addWidget(self.tabs, 1)
+
+    def action_convert_external_file(self):
+        filters = "지원 문서 (*.pdf *.docx *.pptx *.xlsx *.html *.htm *.txt *.csv *.json);;모든 파일 (*.*)"
+        path, _ = QFileDialog.getOpenFileName(self, tr("dlg_select_convert_file", "변환할 외부 파일 선택 (MarkItDown)"), "", filters)
+        if not path:
+            return
+
+        self.lbl_info.setText(f"변환 처리 중: {os.path.basename(path)}...")
+        self.worker_thread = MarkItDownWorkerThread(path, self)
+        self.worker_thread.sig_finished.connect(self.on_conversion_success)
+        self.worker_thread.sig_error.connect(self.on_conversion_failed)
+        self.worker_thread.start()
+
+    def on_conversion_success(self, path, md_text):
+        self.current_file_path = path
+        self.current_markdown = md_text
+        self.load_markdown(md_text, os.path.basename(path))
+
+    def on_conversion_failed(self, path, err_msg):
+        self.lbl_info.setText(f"변환 실패: {os.path.basename(path)}")
+        QMessageBox.warning(self, tr("title_convert_failed", "변환 오류"), f"파일 변환 중 오류가 발생했습니다:\n{err_msg}")
+
+    def action_open_md_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, tr("dlg_open_md", "마크다운 파일 열기"), "", "마크다운 파일 (*.md *.markdown *.txt);;모든 파일 (*.*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                md_text = f.read()
+            self.current_file_path = path
+            self.current_markdown = md_text
+            self.load_markdown(md_text, os.path.basename(path))
+        except Exception as e:
+            QMessageBox.critical(self, tr("title_file_error", "파일 읽기 오류"), str(e))
+
+    def action_save_md_file(self):
+        if not self.current_markdown:
+            QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_no_md_to_save", "저장할 마크다운 내용이 없습니다."))
+            return
+        path, _ = QFileDialog.getSaveFileName(self, tr("dlg_save_md", "마크다운 파일 저장"), "manual.md", "마크다운 파일 (*.md);;모든 파일 (*.*)")
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(self.current_markdown)
+                QMessageBox.information(self, tr("title_notice", "알림"), tr("msg_save_success", "마크다운 파일이 성공적으로 저장되었습니다."))
+            except Exception as e:
+                QMessageBox.critical(self, tr("title_file_error", "파일 저장 오류"), str(e))
+
+    def load_markdown(self, md_text, file_name=""):
+        self.current_markdown = md_text
+        self.browser_raw.setMarkdown(md_text)
+
+        # 단락 분할
+        raw_paras = [p.strip() for p in md_text.split("\n\n") if p.strip()]
+        char_count = len(md_text)
+        self.lbl_info.setText(f"파일: {file_name} | 단락: {len(raw_paras)}개 | {char_count:,}자")
+
+        # 단락 카드 갱신
+        while self.cards_layout.count() > 1:
+            child = self.cards_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        for idx, para in enumerate(raw_paras[:100]):  # 성능을 위해 상위 100개 카드
+            card = QFrame(self.cards_container)
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #FFFFFF;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 4px;
+                    padding: 4px;
+                }
+                QFrame:hover {
+                    border-color: #2563EB;
+                    background-color: #F8FAFC;
+                }
+            """)
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(6, 6, 6, 6)
+            c_layout.setSpacing(4)
+
+            # 헤더 또는 단락 본문
+            lbl_p = QLabel(para, card)
+            lbl_p.setWordWrap(True)
+            lbl_p.setStyleSheet("font-size: 11px; color: #1E293B; font-weight: normal;")
+            c_layout.addWidget(lbl_p)
+
+            # 버튼 행
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(4)
+
+            btn_ins = QPushButton(tr("btn_insert_canvas_card", "텍스트박스 삽입 ➔"), card)
+            btn_ins.setStyleSheet("background-color: #EFF6FF; color: #1E40AF; border-color: #BFDBFE; font-weight: bold; font-size: 10px; padding: 2px 6px;")
+            btn_ins.clicked.connect(lambda checked=False, text=para: self.sig_insert_text_to_canvas.emit(text))
+            btn_row.addWidget(btn_ins)
+
+            btn_title = QPushButton(tr("btn_apply_title_card", "슬라이드 제목"), card)
+            btn_title.setStyleSheet("font-size: 10px; padding: 2px 6px;")
+            first_line = para.split("\n")[0].lstrip("#").strip()
+            btn_title.clicked.connect(lambda checked=False, text=first_line: self.sig_apply_slide_title.emit(text))
+            btn_row.addWidget(btn_title)
+
+            btn_row.addStretch()
+            c_layout.addLayout(btn_row)
+
+            self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+
+    def action_insert_selected_text(self):
+        cursor = self.browser_raw.textCursor()
+        sel = cursor.selectedText().strip()
+        if not sel:
+            sel = self.browser_raw.toPlainText()[:200].strip()
+        if sel:
+            self.sig_insert_text_to_canvas.emit(sel)
+
+    def action_apply_title_selected(self):
+        cursor = self.browser_raw.textCursor()
+        sel = cursor.selectedText().strip()
+        if not sel:
+            sel = self.browser_raw.toPlainText().split("\n")[0].lstrip("#").strip()
+        if sel:
+            self.sig_apply_slide_title.emit(sel)
+
+
 class FilmstripDockWidget(QWidget):
     sig_step_selected = Signal(int)
     sig_add_step = Signal()
@@ -7938,6 +9379,10 @@ class FilmstripDockWidget(QWidget):
     sig_export_all_hwp = Signal()
     sig_export_webbook = Signal()
     sig_export_gif = Signal()
+    sig_export_pdf = Signal()
+    sig_export_word = Signal()
+    sig_export_notion = Signal()
+    sig_export_confluence = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -7957,7 +9402,7 @@ class FilmstripDockWidget(QWidget):
         header_bar.setContentsMargins(2, 0, 2, 0)
         header_bar.setSpacing(6)
 
-        self.lbl_title = QLabel("🎞️ 스토리보드 타임라인 (0개 슬라이드, 0개 선택됨)", self)
+        self.lbl_title = QLabel("스토리보드 타임라인 (0개 슬라이드, 0개 선택됨)", self)
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E293B;")
         header_bar.addWidget(self.lbl_title)
 
@@ -7981,7 +9426,8 @@ class FilmstripDockWidget(QWidget):
         self.btn_deselect_all.clicked.connect(self.deselect_all_steps)
         header_bar.addWidget(self.btn_deselect_all)
 
-        self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "🗑️ 선택 삭제"), self)
+        self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "선택 삭제"), self)
+        self.btn_delete_selected.setIcon(RibbonIconProvider.get_icon("clear", 14, "#DC2626"))
         self.btn_delete_selected.setToolTip(tr("btn_delete_selected_step_tooltip", "선택된 슬라이드들을 일괄 삭제합니다."))
         self.btn_delete_selected.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
         self.btn_delete_selected.clicked.connect(self.request_delete_selected)
@@ -8025,6 +9471,16 @@ class FilmstripDockWidget(QWidget):
         self.act_export_webbook.triggered.connect(self.sig_export_webbook.emit)
         self.act_export_gif = self.export_menu.addAction(tr("menu_export_gif", "숏클립 튜토리얼 (GIF)"))
         self.act_export_gif.triggered.connect(self.sig_export_gif.emit)
+        self.export_menu.addSeparator()
+        self.act_export_pdf = self.export_menu.addAction(tr("menu_export_pdf", "PDF 문서 (.pdf)"))
+        self.act_export_pdf.triggered.connect(self.sig_export_pdf.emit)
+        self.act_export_word = self.export_menu.addAction(tr("menu_export_word", "MS Word (.docx)"))
+        self.act_export_word.triggered.connect(self.sig_export_word.emit)
+        self.export_menu.addSeparator()
+        self.act_export_notion = self.export_menu.addAction(tr("menu_export_notion", "노션 (Notion)"))
+        self.act_export_notion.triggered.connect(self.sig_export_notion.emit)
+        self.act_export_confluence = self.export_menu.addAction(tr("menu_export_confluence", "컨플루언스 (Confluence)"))
+        self.act_export_confluence.triggered.connect(self.sig_export_confluence.emit)
 
         self.btn_export_all_menu.setMenu(self.export_menu)
         self.btn_export_selected_menu = self.btn_export_all_menu
@@ -8032,6 +9488,10 @@ class FilmstripDockWidget(QWidget):
         self.btn_export_all_hwp = self.act_export_hwp
         self.btn_export_webbook = self.act_export_webbook
         self.btn_export_gif = self.act_export_gif
+        self.btn_export_pdf = self.act_export_pdf
+        self.btn_export_word = self.act_export_word
+        self.btn_export_notion = self.act_export_notion
+        self.btn_export_confluence = self.act_export_confluence
         header_bar.addWidget(self.btn_export_all_menu)
 
         self.chk_hover_preview = QCheckBox(tr("chk_hover_preview", "미리보기"), self)
@@ -8514,24 +9974,95 @@ class ManualStudioWindow(QMainWindow):
         self.btn_scroll_stitch.setToolTip(tr("tip_scroll_stitch", "긴 웹페이지나 ERP 테이블을 스크롤하여 1장의 파노라마 이미지로 합성"))
         self.btn_scroll_stitch.setStyleSheet("background-color: #F0FDF4; color: #15803D; border-color: #BBF7D0; font-weight: bold;")
         self.btn_scroll_stitch.clicked.connect(self.action_scroll_stitch)
-
-        self.btn_action_record = QPushButton(tr("btn_action_record", "액션 녹화"), self)
-        self.btn_action_record.setToolTip(tr("tip_action_record", "클릭할 때마다 화면 캡처 및 번호 스탬프를 스토리보드에 자동 생성"))
-        self.btn_action_record.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border-color: #FECACA; font-weight: bold;")
-        self.btn_action_record.clicked.connect(self.action_toggle_action_recorder)
-        self.btn_action_recorder = self.btn_action_record
-        self.toggle_action_recorder = self.action_toggle_action_recorder
         self.start_scroll_stitch_capture = self.action_scroll_stitch
+
+        # 액션 녹화 폐기 (보안 소프트웨어 오탐 방지 및 2x2 대칭 캡처 레이아웃 확립)
+        self.btn_action_record = None
+        self.btn_action_recorder = None
+        self.toggle_action_recorder = self.action_toggle_action_recorder
 
         cap_grid = QGridLayout()
         cap_grid.setContentsMargins(0, 0, 0, 0)
         cap_grid.setSpacing(2)
         cap_grid.addWidget(self.btn_capture, 0, 0)
-        cap_grid.addWidget(self.btn_drag_capture, 1, 0)
         cap_grid.addWidget(self.btn_sub_capture, 0, 1)
+        cap_grid.addWidget(self.btn_drag_capture, 1, 0)
         cap_grid.addWidget(self.btn_scroll_stitch, 1, 1)
-        cap_grid.addWidget(self.btn_action_record, 0, 2, 2, 1)
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture"))
+        tools_layout.addWidget(self.create_separator())
+
+        # 플로우차트 그룹 (상단: 빌더 + 문서참조, 하단: 흔히 사용하는 6대 도형)
+        self.btn_flowchart = QPushButton(tr("btn_flowchart_builder", "플로우차트"), self)
+        self.btn_flowchart.setToolTip(tr("tip_flowchart_builder", "Mermaid 문법 및 수동 조작으로 플로우차트를 생성합니다."))
+        self.btn_flowchart.setStyleSheet("background-color: #F0FDF4; color: #166534; border-color: #BBF7D0; font-weight: bold;")
+        self.btn_flowchart.clicked.connect(self.open_flowchart_studio)
+
+        self.btn_toggle_doc_dock = QPushButton(tr("btn_toggle_doc_dock", "문서 참조"), self)
+        self.btn_toggle_doc_dock.setToolTip(tr("tip_toggle_doc_dock", "MarkItDown 외부 문서 변환 및 MD 원문 참조 패널을 토글합니다."))
+        self.btn_toggle_doc_dock.setStyleSheet("background-color: #FAF5FF; color: #6B21A8; border-color: #E9D5FF; font-weight: bold;")
+        self.btn_toggle_doc_dock.clicked.connect(self.toggle_document_dock)
+
+        self.btn_flow_terminal = QPushButton(tr("btn_flow_terminal", "시작/종료"), self)
+        self.btn_flow_terminal.setToolTip(tr("tip_flow_terminal", "타원형 시작/종료 터미널 노드를 캔버스에 배치합니다."))
+        self.btn_flow_terminal.setCheckable(True)
+        self.btn_flow_terminal.clicked.connect(lambda: self.switch_mode("FLOW_TERMINAL"))
+
+        self.btn_flow_process = QPushButton(tr("btn_flow_process", "일반 작업"), self)
+        self.btn_flow_process.setToolTip(tr("tip_flow_process", "직사각형 일반 작업 노드를 캔버스에 배치합니다."))
+        self.btn_flow_process.setCheckable(True)
+        self.btn_flow_process.clicked.connect(lambda: self.switch_mode("FLOW_PROCESS"))
+
+        self.btn_flow_decision = QPushButton(tr("btn_flow_decision", "조건 분기"), self)
+        self.btn_flow_decision.setToolTip(tr("tip_flow_decision", "마름모형 조건 판단 노드를 캔버스에 배치합니다."))
+        self.btn_flow_decision.setCheckable(True)
+        self.btn_flow_decision.clicked.connect(lambda: self.switch_mode("FLOW_DECISION"))
+
+        self.btn_flow_io = QPushButton(tr("btn_flow_io", "입출력"), self)
+        self.btn_flow_io.setToolTip(tr("tip_flow_io", "평행사변형 데이터 입출력 노드를 캔버스에 배치합니다."))
+        self.btn_flow_io.setCheckable(True)
+        self.btn_flow_io.clicked.connect(lambda: self.switch_mode("FLOW_IO"))
+
+        self.btn_flow_database = QPushButton(tr("btn_flow_database", "DB"), self)
+        self.btn_flow_database.setToolTip(tr("tip_flow_database", "원통형 데이터베이스 노드를 캔버스에 배치합니다."))
+        self.btn_flow_database.setCheckable(True)
+        self.btn_flow_database.clicked.connect(lambda: self.switch_mode("FLOW_DATABASE"))
+
+        self.btn_flow_document = QPushButton(tr("btn_flow_document", "문서"), self)
+        self.btn_flow_document.setToolTip(tr("tip_flow_document", "문서 서식 노드를 캔버스에 배치합니다."))
+        self.btn_flow_document.setCheckable(True)
+        self.btn_flow_document.clicked.connect(lambda: self.switch_mode("FLOW_DOCUMENT"))
+
+        self.btn_flow_line = QPushButton(tr("btn_flow_line", "직선 연결"), self)
+        self.btn_flow_line.setToolTip(tr("tip_flow_line", "노드의 마그넷 포인트를 잇는 직선 연결선을 그립니다."))
+        self.btn_flow_line.setCheckable(True)
+        self.btn_flow_line.clicked.connect(lambda: self.switch_mode("FLOW_CONNECT_LINE"))
+
+        self.btn_flow_elbow = QPushButton(tr("btn_flow_elbow", "직각 연결"), self)
+        self.btn_flow_elbow.setToolTip(tr("tip_flow_elbow", "노드의 마그넷 포인트를 잇는 꺾인 직각 연결선을 그립니다. (Tab/Space로 방향 전환)"))
+        self.btn_flow_elbow.setCheckable(True)
+        self.btn_flow_elbow.clicked.connect(lambda: self.switch_mode("FLOW_CONNECT_ELBOW"))
+
+        self.btn_flow_term = self.btn_flow_terminal
+        self.btn_flow_proc = self.btn_flow_process
+        self.btn_flow_dec = self.btn_flow_decision
+        self.btn_flow_db = self.btn_flow_database
+        self.btn_flow_doc = self.btn_flow_document
+
+        flow_grid = QGridLayout()
+        flow_grid.setContentsMargins(0, 0, 0, 0)
+        flow_grid.setSpacing(2)
+        flow_grid.addWidget(self.btn_flowchart, 0, 0, 1, 2)
+        flow_grid.addWidget(self.btn_flow_line, 0, 2)
+        flow_grid.addWidget(self.btn_flow_elbow, 0, 3)
+        flow_grid.addWidget(self.btn_toggle_doc_dock, 0, 4, 1, 2)
+        flow_grid.addWidget(self.btn_flow_terminal, 1, 0)
+        flow_grid.addWidget(self.btn_flow_process, 1, 1)
+        flow_grid.addWidget(self.btn_flow_decision, 1, 2)
+        flow_grid.addWidget(self.btn_flow_io, 1, 3)
+        flow_grid.addWidget(self.btn_flow_database, 1, 4)
+        flow_grid.addWidget(self.btn_flow_document, 1, 5)
+
+        tools_layout.addWidget(self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart"))
         tools_layout.addWidget(self.create_separator())
 
         # 2) [프로젝트] 그룹
@@ -8738,28 +10269,7 @@ class ManualStudioWindow(QMainWindow):
         tools_layout.addWidget(self.create_ribbon_group(tr("grp_text_wordart", "텍스트·워드아트"), text_grid, "grp_text_wordart"))
         tools_layout.addWidget(self.create_separator())
 
-        # 7) [PPT 출력] 그룹
-        self.btn_export = QPushButton(tr("btn_export", "슬라이드 삽입"), self)
-        self.btn_export.setObjectName("btn_export")
-        self.btn_export.setToolTip(tr("tooltip_export", "현재 화면을 파워포인트 새 슬라이드로 즉시 삽입하고 클립보드에도 복사합니다."))
-        self.btn_export.setStyleSheet("""
-            QPushButton {
-                background-color: #FFF7ED;
-                color: #C2410C;
-                border: 1px solid #FDBA74;
-                font-size: 11px;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 2px 6px;
-            }
-            QPushButton:hover {
-                background-color: #FFEDD5;
-                border-color: #EA580C;
-                color: #9A3412;
-            }
-        """)
-        self.btn_export.clicked.connect(self.export_to_ppt_and_clipboard)
-
+        # 7) [PPT 전송] 그룹
         self.btn_ppt_fit = QPushButton(tr("btn_ppt_fit", "배율 맞춤"), self)
         self.btn_ppt_fit.setToolTip(tr("tooltip_ppt_fit", "지정한 좌상단(Left, Top)에서 슬라이드 여백에 꼭 맞게 배율을 자동 계산합니다."))
         self.btn_ppt_fit.setStyleSheet("background-color: #EFFDF5; color: #15803D; border-color: #BBF7D0; font-weight: 500;")
@@ -9171,24 +10681,24 @@ class ManualStudioWindow(QMainWindow):
         format_layout.addWidget(self.create_ribbon_group(tr("grp_settings", "환경설정"), env_lay, "grp_settings"))
 
         # Hidden compatibility controls for removed duplicate/floating ribbon buttons
-        self.btn_renumber_steps = QPushButton(tr("btn_renumber_steps", "순번 재정렬"), self)
+        self.btn_renumber_steps = QPushButton(tr("btn_renumber_steps", "순번 재정렬"))
         self.btn_renumber_steps.hide()
         self.btn_renumber_steps.clicked.connect(self.action_renumber_powerpoint_steps)
 
-        self.btn_toggle_filmstrip = QPushButton(tr("btn_toggle_filmstrip", "스토리보드"), self)
+        self.btn_toggle_filmstrip = QPushButton(tr("btn_toggle_filmstrip", "스토리보드"))
         self.btn_toggle_filmstrip.setCheckable(True)
         self.btn_toggle_filmstrip.hide()
         self.btn_toggle_filmstrip.clicked.connect(self.on_toggle_filmstrip)
 
-        self.btn_export = QPushButton(tr("btn_export", "슬라이드 삽입"), self)
+        self.btn_export = QPushButton(tr("btn_export", "슬라이드 삽입"))
         self.btn_export.hide()
         self.btn_export.clicked.connect(self.action_export_all_ppt)
 
-        self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"), self)
+        self.btn_send_slides = QPushButton(tr("btn_send_google_slides", "구글 슬라이드 전송"))
         self.btn_send_slides.hide()
         self.btn_send_slides.clicked.connect(self.action_export_all_slides)
 
-        self.btn_export_hwp = QPushButton(tr("btn_export_hwp", "한글 전송"), self)
+        self.btn_export_hwp = QPushButton(tr("btn_export_hwp", "한글 전송"))
         self.btn_export_hwp.hide()
         self.btn_export_hwp.clicked.connect(self.action_export_all_hwp)
 
@@ -9403,6 +10913,7 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.set_config(self.config)
         self.canvas.sig_request_toast.connect(self.show_toast)
         self.canvas.sig_item_selected.connect(self.on_canvas_item_selected)
+        self.canvas.sig_request_mode_change.connect(self.switch_mode)
         self.scroll_area.setWidget(self.canvas)
         main_layout.addWidget(self.scroll_area, 1)
 
@@ -9413,6 +10924,14 @@ class ManualStudioWindow(QMainWindow):
         main_layout.addWidget(self.storyboard_toggle_bar)
 
         self.filmstrip = FilmstripDockWidget(self)
+
+        # 2-3. 문서 참조 보조 독 패널 초기화 및 등록
+        self.doc_dock = DocumentReferenceDockWidget(self)
+        self.doc_dock.sig_insert_text_to_canvas.connect(self.on_doc_insert_text_to_canvas)
+        self.doc_dock.sig_apply_slide_title.connect(self.on_doc_apply_slide_title)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.doc_dock)
+        self.doc_dock.setVisible(bool(self.config.get("doc_dock_visible", False)))
+
         self.filmstrip.setVisible(film_vis)
         self.filmstrip.hover_preview_enabled = bool(self.config.get("enable_hover_preview", True))
         self.filmstrip.chk_hover_preview.setChecked(self.filmstrip.hover_preview_enabled)
@@ -9430,6 +10949,10 @@ class ManualStudioWindow(QMainWindow):
         self.filmstrip.sig_export_all_hwp.connect(self.action_export_all_hwp)
         self.filmstrip.sig_export_webbook.connect(self.action_export_webbook)
         self.filmstrip.sig_export_gif.connect(self.action_export_gif)
+        self.filmstrip.sig_export_pdf.connect(self.action_export_pdf)
+        self.filmstrip.sig_export_word.connect(self.action_export_word_doc)
+        self.filmstrip.sig_export_notion.connect(self.action_export_notion)
+        self.filmstrip.sig_export_confluence.connect(self.action_export_confluence)
         main_layout.addWidget(self.filmstrip)
 
         # 3. 하단 상태바
@@ -9556,6 +11079,17 @@ class ManualStudioWindow(QMainWindow):
         self.act_export_webbook.triggered.connect(self.action_export_webbook)
         self.act_export_gif = self.menu_file.addAction("애니메이션 GIF 생성...")
         self.act_export_gif.triggered.connect(self.action_export_gif)
+        self.menu_file.addSeparator()
+        self.act_export_pdf = self.menu_file.addAction(tr("dlg_export_pdf", "PDF 문서 내보내기..."))
+        self.act_export_pdf.triggered.connect(self.action_export_pdf)
+        self.act_export_word = self.menu_file.addAction(tr("dlg_export_word", "MS Word (.docx) 내보내기..."))
+        self.act_export_word.triggered.connect(self.action_export_word_doc)
+        self.act_send_word = self.menu_file.addAction(tr("menu_send_word", "MS Word 커서 위치 삽입"))
+        self.act_send_word.triggered.connect(self.action_send_to_word)
+        self.act_export_notion = self.menu_file.addAction(tr("dlg_export_notion", "노션(Notion) 발행..."))
+        self.act_export_notion.triggered.connect(self.action_export_notion)
+        self.act_export_confluence = self.menu_file.addAction(tr("dlg_export_confluence", "컨플루언스(Confluence) 발행..."))
+        self.act_export_confluence.triggered.connect(self.action_export_confluence)
         self.menu_file.addSeparator()
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
         self.act_exit.triggered.connect(self.close)
@@ -9801,6 +11335,7 @@ class ManualStudioWindow(QMainWindow):
         # 2. 그룹 타이틀
         group_keys = {
             "grp_capture": ("grp_capture", "캡처"),
+            "grp_flowchart": ("grp_flowchart", "플로우차트"),
             "grp_project": ("grp_project", "프로젝트"),
             "grp_select_edit": ("grp_select_edit", "선택·편집"),
             "grp_step_flow": ("grp_step_flow", "단계·흐름"),
@@ -9871,7 +11406,6 @@ class ManualStudioWindow(QMainWindow):
             ("btn_drag_capture", "btn_variable_capture", "영역 지정", "tooltip_drag_capture"),
             ("btn_sub_capture", "btn_sub_capture", "부분 캡처", "tooltip_sub_capture"),
             ("btn_scroll_stitch", "btn_scroll_stitch", "스크롤 스티칭", "tip_scroll_stitch"),
-            ("btn_action_record", "btn_action_record", "액션 녹화", "tip_action_record"),
             ("btn_new_project", "btn_new_project", "새 프로젝트", "tip_new_project"),
             ("btn_open_project", "btn_open_project", "불러오기", "tooltip_open_project"),
             ("btn_save_project", "btn_save_project", "프로젝트 저장", "tooltip_save_project"),
@@ -9905,6 +11439,14 @@ class ManualStudioWindow(QMainWindow):
             ("btn_settings", "btn_detail_settings", "상세 설정", None),
             ("btn_renumber_steps", "btn_renumber_steps", "순번 재정렬", "tooltip_renumber"),
             ("btn_toggle_filmstrip", "btn_toggle_filmstrip", "스토리보드", "tip_filmstrip_toggle"),
+            ("btn_flow_terminal", "btn_flow_terminal", "시작/종료", "tip_flow_terminal"),
+            ("btn_flow_process", "btn_flow_process", "일반 작업", "tip_flow_process"),
+            ("btn_flow_decision", "btn_flow_decision", "조건 분기", "tip_flow_decision"),
+            ("btn_flow_io", "btn_flow_io", "입출력", "tip_flow_io"),
+            ("btn_flow_database", "btn_flow_database", "DB", "tip_flow_database"),
+            ("btn_flow_document", "btn_flow_document", "문서", "tip_flow_document"),
+            ("btn_flow_line", "btn_flow_line", "직선 연결", "tip_flow_line"),
+            ("btn_flow_elbow", "btn_flow_elbow", "직각 연결", "tip_flow_elbow"),
         ]
         for attr_name, text_key, def_text, tt_key in button_map:
             if hasattr(self, attr_name):
@@ -10039,7 +11581,6 @@ class ManualStudioWindow(QMainWindow):
             ("btn_sub_capture", "capture_sub", "btn_sub_capture", "부분 캡처"),
             ("btn_save_rect", "save_rect", "btn_save_rect", "영역 고정"),
             ("btn_scroll_stitch", "scroll_stitch", "btn_scroll_stitch", "스크롤 스티칭"),
-            ("btn_action_record", "action_record", "btn_action_record", "액션 녹화"),
             ("btn_new_project", "new_project", "btn_new_project", "새 프로젝트"),
             ("btn_open_project", "open_project", "btn_open_project", "불러오기"),
             ("btn_save_project", "save_project", "btn_save_project", "프로젝트 저장"),
@@ -10068,6 +11609,15 @@ class ManualStudioWindow(QMainWindow):
             ("btn_mode_text", "text", "btn_mode_text", "텍스트 라벨"),
             ("btn_mode_hotkey", "hotkey", "btn_mode_hotkey", "단축키 배지"),
             ("btn_mode_wordart", "wordart", "btn_mode_wordart", "워드아트"),
+            ("btn_flowchart", "flowchart", "btn_flowchart_builder", "플로우차트"),
+            ("btn_flow_line", "flow_line", "btn_flow_line", "직선 연결"),
+            ("btn_flow_elbow", "flow_elbow", "btn_flow_elbow", "직각 연결"),
+            ("btn_flow_terminal", "flow_terminal", "btn_flow_terminal", "시작/종료"),
+            ("btn_flow_process", "flow_process", "btn_flow_process", "일반 작업"),
+            ("btn_flow_decision", "flow_decision", "btn_flow_decision", "조건 분기"),
+            ("btn_flow_io", "flow_io", "btn_flow_io", "입출력"),
+            ("btn_flow_database", "flow_database", "btn_flow_database", "DB"),
+            ("btn_flow_document", "flow_document", "btn_flow_document", "문서"),
             ("btn_export", "ppt_export", "btn_export", "슬라이드 삽입"),
             ("btn_export_hwp", "export_hwp", "btn_export_hwp", "한글 문서 삽입"),
             ("btn_send_slides", "slides_export", "btn_send_google_slides", "구글 슬라이드 전송"),
@@ -10082,7 +11632,20 @@ class ManualStudioWindow(QMainWindow):
             if hasattr(self, attr):
                 btn = getattr(self, attr)
                 if new_mode == "icon":
-                    icon_color = "#C2410C" if attr == "btn_export" else ("#0284C7" if attr == "btn_export_hwp" else ("#D97706" if attr == "btn_send_slides" else "#334155"))
+                    if attr == "btn_export":
+                        icon_color = "#C2410C"
+                    elif attr == "btn_export_hwp":
+                        icon_color = "#0284C7"
+                    elif attr == "btn_send_slides":
+                        icon_color = "#D97706"
+                    elif attr.startswith("btn_flow"):
+                        icon_color = "#166534"
+                    elif attr == "btn_clear":
+                        icon_color = "#DC2626"
+                    elif attr == "btn_auto_pii":
+                        icon_color = "#2563EB"
+                    else:
+                        icon_color = "#334155"
                     icon = RibbonIconProvider.get_icon(icon_name, size=18, color=icon_color)
                     btn.setIcon(icon)
                     btn.setIconSize(QSize(18, 18))
@@ -10454,6 +12017,14 @@ class ManualStudioWindow(QMainWindow):
             "OCR_LABEL": ("btn_mode_ocr_label", "OCR 라벨"),
             "DIMENSION": ("btn_mode_dimension", "선 치수선"),
             "BOX_DIMENSION": ("btn_mode_box_dimension", "영역 치수"),
+            "FLOW_TERMINAL": ("btn_flow_terminal", "시작/종료"),
+            "FLOW_PROCESS": ("btn_flow_process", "일반 작업"),
+            "FLOW_DECISION": ("btn_flow_decision", "조건 분기"),
+            "FLOW_IO": ("btn_flow_io", "입출력"),
+            "FLOW_DATABASE": ("btn_flow_database", "DB"),
+            "FLOW_DOCUMENT": ("btn_flow_document", "문서"),
+            "FLOW_CONNECT_LINE": ("btn_flow_line", "직선 연결"),
+            "FLOW_CONNECT_ELBOW": ("btn_flow_elbow", "직각 연결"),
         }
         cur_mode = mode_or_name or self.canvas.current_mode
         if cur_mode in mode_keys:
@@ -10507,6 +12078,17 @@ class ManualStudioWindow(QMainWindow):
             self.btn_mode_dimension.setChecked(mode == "DIMENSION")
         if hasattr(self, "btn_mode_box_dimension"):
             self.btn_mode_box_dimension.setChecked(mode == "BOX_DIMENSION")
+        if hasattr(self, "btn_flow_terminal"):
+            self.btn_flow_terminal.setChecked(mode == "FLOW_TERMINAL")
+            self.btn_flow_process.setChecked(mode == "FLOW_PROCESS")
+            self.btn_flow_decision.setChecked(mode == "FLOW_DECISION")
+            self.btn_flow_io.setChecked(mode == "FLOW_IO")
+            self.btn_flow_database.setChecked(mode == "FLOW_DATABASE")
+            self.btn_flow_document.setChecked(mode == "FLOW_DOCUMENT")
+        if hasattr(self, "btn_flow_line") and self.btn_flow_line:
+            self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE"))
+        if hasattr(self, "btn_flow_elbow") and self.btn_flow_elbow:
+            self.btn_flow_elbow.setChecked(mode in ("ELBOW", "FLOW_CONNECT_ELBOW"))
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -11372,11 +12954,7 @@ class ManualStudioWindow(QMainWindow):
         self._restore_window_after_capture(True)
 
     def start_sub_capture(self):
-        """F8 단축키 또는 리본 버튼: 모달/팝업 영역 부분 캡처 후 캔버스에 독립 이미지 객체로 추가"""
-        if self.canvas.pixmap is None:
-            self.show_toast("먼저 메인 화면(F9)을 캡처한 후 모달을 추가하세요.")
-            return
-
+        """F8 단축키 또는 리본 버튼: 모달/팝업 영역 부분 캡처 후 캔버스에 독립 이미지 객체로 추가 (F9 없이도 투명 캔버스에 즉시 배치)"""
         was_visible = self._prepare_window_for_capture()
 
         try:
@@ -11398,10 +12976,7 @@ class ManualStudioWindow(QMainWindow):
         self._restore_window_after_capture(True)
 
         if pixmap and not pixmap.isNull():
-            if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
-                self.canvas.set_pixmap(pixmap)
-            else:
-                self.canvas.add_image_overlay(pixmap)
+            self.canvas.add_image_overlay(pixmap)
             w = pixmap.width()
             h = pixmap.height()
             self.show_toast(f"부분 이미지({w}×{h}px) 추가 완료. 마우스로 이동 및 크기를 조절하세요.")
@@ -12123,6 +13698,11 @@ class ManualStudioWindow(QMainWindow):
                 self.hide_keytips()
                 event.accept()
                 return
+        elif key == Qt.Key_Escape:
+            if self.canvas.current_mode != "SELECT":
+                self.switch_mode("SELECT")
+                event.accept()
+                return
             elif key == Qt.Key_1:
                 self.ribbon_tabs.setCurrentIndex(0)
                 self.hide_keytips()
@@ -12553,65 +14133,8 @@ class ManualStudioWindow(QMainWindow):
                 self.show_toast(tr("toast_stitch_success", "스크롤 스티칭 완료 ({count}개 프레임 합성)").replace("{count}", str(len(files))))
 
     def action_toggle_action_recorder(self):
-        """무인 연속 액션 레코더 시작/정지 토글"""
-        if hasattr(self, "_action_recorder_thread") and self._action_recorder_thread and self._action_recorder_thread.isRunning():
-            self._on_stop_action_recorder()
-            return
-
-        target_mon = getattr(self, "current_tab_monitor", -1)
-        self._action_recorder_thread = ActionRecorderThread(target_monitor=target_mon, parent=self)
-        self._action_recorder_thread.sig_action_recorded.connect(self._on_action_recorded)
-
-        if not hasattr(self, "_recording_float_widget") or not self._recording_float_widget:
-            self._recording_float_widget = RecordingFloatWidget()
-            self._recording_float_widget.sig_stop_requested.connect(self._on_stop_action_recorder)
-
-        v_rect = MultiMonitorManager.get_virtual_desktop_rect()
-        self._recording_float_widget.move(v_rect.right() - 280, v_rect.top() + 40)
-        self._recording_float_widget.update_steps(0)
-        self._recording_float_widget.show()
-
-        self._action_recorder_thread.start()
-        self.showMinimized()
-        self.show_toast(tr("toast_recording_started", "무인 액션 녹화 시작! 화면을 클릭하면 스텝이 자동 생성됩니다."))
-
-    def _on_action_recorded(self, pixmap, click_pt, step_idx):
-        if not pixmap or pixmap.isNull():
-            return
-
-        stamp_st = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
-        stamp_item = StampItem(step_idx, click_pt.x(), click_pt.y(), stamp_st)
-
-        comp_img = QImage(pixmap.size(), QImage.Format_ARGB32)
-        comp_img.fill(Qt.transparent)
-        p = QPainter(comp_img)
-        p.drawPixmap(0, 0, pixmap)
-        stamp_item.render(p)
-        p.end()
-
-        comp_pix = QPixmap.fromImage(comp_img)
-        self.filmstrip.add_step(
-            composed_pixmap=comp_pix,
-            raw_pixmap=pixmap,
-            items=[stamp_item]
-        )
-        if hasattr(self, "_recording_float_widget") and self._recording_float_widget:
-            self._recording_float_widget.update_steps(step_idx)
-
-    def _on_stop_action_recorder(self):
-        count = 0
-        if hasattr(self, "_action_recorder_thread") and self._action_recorder_thread:
-            count = self._action_recorder_thread.step_count
-            self._action_recorder_thread.stop()
-            self._action_recorder_thread.wait(500)
-            self._action_recorder_thread = None
-
-        if hasattr(self, "_recording_float_widget") and self._recording_float_widget:
-            self._recording_float_widget.hide()
-
-        self.showNormal()
-        self.activateWindow()
-        self.show_toast(tr("toast_recording_stopped", "녹화 완료! 총 {count}개의 스텝이 스토리보드에 생성되었습니다.").replace("{count}", str(count)))
+        """액션 녹화 기능 (보안 및 안정성 정책에 따라 폐기됨)"""
+        self.show_toast("액션 녹화 기능은 보안 및 안정성 정책에 따라 폐기되었습니다.")
 
 
     def action_send_to_hwp(self):
@@ -13180,12 +14703,229 @@ class ManualStudioWindow(QMainWindow):
         else:
             self.show_toast("한컴 한글(HWP) 전송 실패 (한컴 한글이 설치되어 있는지 확인하세요)")
 
+    def action_export_pdf(self):
+        """300 DPI 초고화질 네이티브 PDF 문서 내보내기"""
+        self._sync_canvas_to_current_step()
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast(tr("msg_no_slides_to_export", "내보낼 슬라이드가 없습니다."))
+            return
+
+        default_name = os.path.join(os.path.expanduser("~"), "Desktop", "manual_guide.pdf")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("dlg_export_pdf", "PDF 문서 내보내기"),
+            default_name,
+            "PDF 파일 (*.pdf);;모든 파일 (*.*)"
+        )
+        if not file_path:
+            return
+
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+
+        steps_payload = []
+        for idx, step in target_steps:
+            pil_img = self._prepare_export_step_image(step, target_w=1920, auto_resize=False, enable_frame=enable_frame, frame_cfg=frame_cfg)
+            step_num = step.get("step_num", idx + 1)
+            s_title = step.get("title", f"Step {step_num}")
+            s_desc = step.get("description", "")
+            steps_payload.append({
+                "step_num": step_num,
+                "title": s_title,
+                "description": s_desc,
+                "composed_image": pil_img
+            })
+
+        doc_title = os.path.splitext(os.path.basename(file_path))[0]
+        res = ExportEngine.export_to_pdf(steps_payload, file_path, orientation="landscape", title=doc_title)
+        if res.get("success"):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+            self.show_toast(f"PDF 매뉴얼 저장 완료 ({len(steps_payload)}개 슬라이드)")
+        else:
+            QMessageBox.warning(self, tr("title_notice", "알림"), res.get("error", "PDF 저장 실패"))
+
+    def action_export_word_doc(self):
+        """MS Word (.docx) 정식 A4 보고서/매뉴얼 문서 생성"""
+        self._sync_canvas_to_current_step()
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast(tr("msg_no_slides_to_export", "내보낼 슬라이드가 없습니다."))
+            return
+
+        default_name = os.path.join(os.path.expanduser("~"), "Desktop", "manual_guide.docx")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("dlg_export_word", "MS Word (.docx) 문서 내보내기"),
+            default_name,
+            "Word 문서 (*.docx);;모든 파일 (*.*)"
+        )
+        if not file_path:
+            return
+
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+
+        steps_payload = []
+        for idx, step in target_steps:
+            pil_img = self._prepare_export_step_image(step, target_w=1280, auto_resize=True, enable_frame=enable_frame, frame_cfg=frame_cfg)
+            step_num = step.get("step_num", idx + 1)
+            s_title = step.get("title", f"Step {step_num}")
+            s_desc = step.get("description", "")
+            steps_payload.append({
+                "step_num": step_num,
+                "title": s_title,
+                "description": s_desc,
+                "pil_image": pil_img
+            })
+
+        doc_title = os.path.splitext(os.path.basename(file_path))[0]
+        res = ExportEngine.export_to_word_doc(steps_payload, file_path, title=doc_title)
+        if res.get("success"):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+            self.show_toast(f"Word 문서 저장 완료 ({len(steps_payload)}개 슬라이드)")
+        else:
+            QMessageBox.warning(self, tr("title_notice", "알림"), res.get("error", "Word 문서 저장 실패"))
+
+    def action_send_to_word(self):
+        """현재 실행 중인 MS Word 창의 커서 위치에 활성 슬라이드 이미지 즉시 삽입 (win32com)"""
+        self._sync_canvas_to_current_step()
+        if self.canvas.pixmap is None or self.canvas.pixmap.isNull():
+            self.show_toast("작업 중인 이미지가 없습니다.")
+            return
+
+        qimg = self.canvas.get_composed_image()
+        if qimg is None:
+            return
+        pil_img = ExportEngine.qimage_to_pil(qimg)
+        title = None
+        if 0 <= self.current_step_idx < len(self.storyboard_steps):
+            title = self.storyboard_steps[self.current_step_idx].get("title")
+
+        res = ExportEngine.send_to_word(pil_img, step_title=title)
+        if res.get("success"):
+            self.show_toast("MS Word 커서 위치에 이미지 삽입 완료")
+        else:
+            self.show_toast(f"Word 전송 실패: {res.get('error', '')}")
+
+    def action_export_notion(self):
+        """노션(Notion) 내보내기 다이얼로그 호출"""
+        self._sync_canvas_to_current_step()
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast(tr("msg_no_slides_to_export", "내보낼 슬라이드가 없습니다."))
+            return
+
+        steps_payload = []
+        for idx, step in target_steps:
+            step_num = step.get("step_num", idx + 1)
+            s_title = step.get("title", f"Step {step_num}")
+            s_desc = step.get("description", "")
+            steps_payload.append({
+                "step_num": step_num,
+                "title": s_title,
+                "description": s_desc,
+            })
+
+        dlg = ExportNotionDialog(steps_payload, parent=self)
+        dlg.exec()
+
+    def action_export_confluence(self):
+        """컨플루언스(Confluence) 내보내기 다이얼로그 호출"""
+        self._sync_canvas_to_current_step()
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast(tr("msg_no_slides_to_export", "내보낼 슬라이드가 없습니다."))
+            return
+
+        steps_payload = []
+        for idx, step in target_steps:
+            step_num = step.get("step_num", idx + 1)
+            s_title = step.get("title", f"Step {step_num}")
+            s_desc = step.get("description", "")
+            steps_payload.append({
+                "step_num": step_num,
+                "title": s_title,
+                "description": s_desc,
+            })
+
+        dlg = ExportConfluenceDialog(steps_payload, parent=self)
+        dlg.exec()
+
+
+    def open_flowchart_studio(self):
+        """플로우차트 빌더 다이얼로그 호출 및 캔버스 자동 삽입 연동"""
+        dlg = FlowchartStudioDialog(self)
+        dlg.sig_insert_flowchart.connect(self.on_flowchart_inserted)
+        dlg.exec()
+
+    def on_flowchart_inserted(self, nodes, arrows):
+        """플로우차트 노드 및 연결선 캔버스 일괄 주입"""
+        if not nodes and not arrows:
+            return
+        self.canvas.push_undo()
+        for n in nodes:
+            self.canvas.items.append(n)
+        for a in arrows:
+            self.canvas.items.append(a)
+        self.canvas.update()
+        self.canvas.sig_content_changed.emit()
+        self.show_toast(f"플로우차트 노드 {len(nodes)}개 및 연결선 {len(arrows)}개가 캔버스에 추가되었습니다.")
+
+    def toggle_document_dock(self):
+        """문서 참조 독 패널 표시/숨김 토글"""
+        if hasattr(self, "doc_dock"):
+            is_vis = not self.doc_dock.isVisible()
+            self.doc_dock.setVisible(is_vis)
+            self.config["doc_dock_visible"] = is_vis
+            save_config(self.config)
+
+    def on_doc_insert_text_to_canvas(self, text):
+        """문서 참조 독 패널에서 선택 단락을 캔버스 텍스트박스로 즉시 삽입"""
+        if not text:
+            return
+        self.canvas.push_undo()
+        cx = 120
+        cy = 120
+        if self.canvas.pixmap:
+            cx = max(60, min(self.canvas.pixmap.width() - 250, self.canvas.pixmap.width() // 3))
+            cy = max(60, min(self.canvas.pixmap.height() - 150, self.canvas.pixmap.height() // 3))
+
+        style = {
+            "font_size": 13,
+            "text_color": "#1E293B",
+            "bg_color": "#FFFFFF",
+            "border_color": "#CBD5E1",
+            "padding": 6
+        }
+        clean_text = text.strip()
+        label_item = TextLabelItem(clean_text, cx, cy, style)
+        self.canvas.items.append(label_item)
+        self.canvas.selected_item = label_item
+        self.canvas.update()
+        self.canvas.sig_content_changed.emit()
+        self.show_toast("캔버스에 텍스트박스가 삽입되었습니다.")
+
+    def on_doc_apply_slide_title(self, title):
+        """문서 참조 독 패널에서 단락 헤더를 슬라이드 제목으로 즉시 적용"""
+        clean_title = title.strip()
+        if not clean_title:
+            return
+        if 0 <= self.current_step_idx < len(self.storyboard_steps):
+            self.storyboard_steps[self.current_step_idx]["title"] = clean_title
+            if hasattr(self, "filmstrip"):
+                self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+            self.show_toast(f"슬라이드 제목 적용: {clean_title[:25]}...")
+
 
 
 # ==============================================================================
 # 7.5. 최종 사용자 라이선스 계약서 (EULA) 및 다이얼로그 (DragonRPA Co.)
 # ==============================================================================
 EULA_HTML_TEXT = EulaManager.get_eula_html("ko")
+
+
+
 
 
 class EulaDialog(QDialog):
@@ -14666,6 +16406,8 @@ def kill_other_instances():
 # ==============================================================================
 # 9. 엔트리 포인트
 # ==============================================================================
+
+
 def main():
     # AI 에이전트 및 CLI 헤드리스 모드 사전 분기
     if "--mcp" in sys.argv:

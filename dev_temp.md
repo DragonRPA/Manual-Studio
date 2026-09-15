@@ -1,5 +1,36 @@
 # Development Temporary Task Log (dev_temp.md)
 
+## [2026-09-15 16:15] 매뉴얼 스튜디오 Phase 15 구현: 글로벌 B2B 상용 표준 Lucide 벡터 아이콘 시스템(QSvgRenderer) 전면 교체, 잔여 OS 이모지 전면 박멸, Nuitka C-컴파일러 60.2MB 초슬림 배포 및 깃 푸시 (v1.8.0)
+- [x] 글로벌 B2B 상용 표준 Lucide W3C SVG 57종 벡터 아이콘 엔진 전면 개편 (`RibbonIconProvider`)
+  - `QPainter` 기반의 조잡한 선/도형 낙서(`p.drawLine`, `p.drawRect`) 전면 폐기
+  - `PySide6.QtSvg.QSvgRenderer` 기반 모든 DPI 안티앨리어싱 고선명 렌더링 지원
+  - 도메인별 테마 컬러(오렌지, 스카이블루, 앰버, 에메랄드그린, 레드 등) 및 2-State 토글 아이콘 바인딩
+- [x] 플로우차트 9종 전 도구 리본 아이콘 모드 100% 연동 (워크플로우, 직선/직각 연결선, 6대 도형)
+- [x] 시스템 전역 잔여 OS 이모지 영구 박멸 (컨텍스트 메뉴, PII 창, 스토리보드 툴바 전면 QIcon 교체)
+- [x] 78개 전체 단위/통합 회귀 테스트 100% 무결점 통과 (`test_phase15_lucide_vector_icons_and_emoji_purge`)
+- [x] Nuitka C-컴파일러 60.2 MB 초슬림 단독 실행 파일 배포 완비 (`ManualStudio.exe`)
+- [x] `.gitignore`에 `!ManualStudio.exe` 허용 등록 및 Git 추적 탑재
+
+## [2026-09-14 11:15] 매뉴얼 스튜디오 Phase 11 구현: 플로우차트(7종 도형+상하좌우 4개 마그넷 포인트+머메이드 문법 지원), MarkItDown 외부 문서 변환 및 문서 참조 독 패널, 캔버스 텍스트박스 원클릭 삽입, 13개국어 번역 및 컴파일 완비 (v1.5.0.Build.6)
+- [x] 플로우차트 7종 도형 및 상하좌우 4개 마그넷 포인트(Magnet Points) 엔진 탑재
+  - `FlowchartNodeItem`: `process`, `decision`, `terminal`, `io`, `database`, `subroutine`, `document` 7종 고해상도 벡터 도형
+  - `get_magnet_points()`, `get_closest_magnet_point(threshold=22.0)` 정밀 계산 및 스냅
+  - 마우스 호버/선택 시 4개 마그넷 앵커 도트 및 십자 표식 시각 피드백
+  - 더블클릭 인라인/다이얼로그 텍스트 즉시 편집
+- [x] 머메이드(Mermaid) 문법 스크립트 파서 및 자동 계층형 레이아웃 엔진
+  - `MermaidFlowchartParser`: `graph TD`/`LR`, 7대 도형 표현식, 화살표 분기 라벨 전수 파싱
+  - `MermaidLayoutEngine`: 위상 레벨링(Topological Leveling) 알고리즘 및 4개 마그넷 포인트 자동 매핑
+  - `FlowchartStudioDialog`: Mermaid 에디터, 4대 프리셋 템플릿, 수동 도형 빠른 추가 버튼군, 캔버스 일괄 삽입
+- [x] `ElbowArrowItem` 분기 조건 라벨(`label`) 속성 및 화살표 선 위 뱃지 렌더링 지원
+- [x] MarkItDown 비동기 변환 및 문서 참조 독 패널(`DocumentReferenceDockWidget`) 탑재
+  - `markitdown` 0.1.7 패키지 연동 및 `MarkItDownWorkerThread` 비동기 변환 (PDF, DOCX, PPTX, XLSX, HTML 등)
+  - 단락 카드 뷰어: 원클릭 `[텍스트박스 삽입 ➔]` 및 `[슬라이드 제목]` 적용
+  - 마크다운 원문 뷰어: 선택 텍스트 ➔ 캔버스 텍스트박스 삽입
+- [x] 13개 언어 다국어(i18n) 신규 30개 키 전수 등록 (`i18n_manager.py`)
+- [x] 74개 전 단위/통합 테스트 100% 무결점 통과 (`test_phase11_flowchart_magnet_mermaid_and_markitdown_dock`)
+- [x] 불필요 거대 AI 패키지 30여종 excludes 등록으로 바이너리 정밀 다이어트 (2.46GB ➔ 98.3MB, 96% 감량)
+- [x] PyInstaller 컴파일 및 바이너리 교체 완료 (`ManualStudio.exe`)
+
 ## [2026-09-13 23:30] 매뉴얼 스튜디오 Phase 10 전수 오류 검사 및 결함 디버깅 완비: 17종 전 주석 객체 직렬화/렌더/판정/드래그 무결화, 스토리보드 캔버스 동기화 및 스탬프 번호 연속성 보장, 윈도우 타이틀 라이선스 정합성 (v1.5.0.Build.5)
 - [x] 17종 전 주석 객체 역직렬화 포맷 및 판정 함수 무결화
   - `StampItem`, `TextLabelItem`, `HotkeyBadgeItem`, `DraftStampItem`, `WordArtItem`, `ClickRippleItem`의 `from_dict`에서 `pos: [x, y]`와 `x, y` 양방향 지원 (KeyError 'x' 방지)
