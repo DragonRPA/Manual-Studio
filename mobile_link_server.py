@@ -216,11 +216,11 @@ header .actions {{ display: flex; gap: 8px; }}
 .tool-btn {{ background: #334155; color: #E2E8F0; border: 1px solid #475569; border-radius: 6px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }}
 .tool-btn.active {{ background: #2563EB; border-color: #60A5FA; color: #FFFFFF; }}
 #canvas-container {{ flex: 1; position: relative; background: #0B1120; overflow: hidden; touch-action: none; }}
-.node {{ position: absolute; min-width: 100px; min-height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; cursor: move; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 2px solid #3B82F6; background: #1E3A8A; color: #FFFFFF; padding: 6px 12px; text-align: center; }}
-.node.terminal {{ border-radius: 24px; border-color: #10B981; background: #064E3B; }}
+.node {{ position: absolute; min-width: 65px; min-height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; cursor: move; box-shadow: 0 2px 4px rgba(0,0,0,0.3); border: 1.5px solid #3B82F6; background: #1E3A8A; color: #FFFFFF; padding: 3px 6px; text-align: center; }}
+.node.terminal {{ border-radius: 14px; border-color: #10B981; background: #064E3B; }}
 .node.decision {{ transform: rotate(0deg); border-color: #F59E0B; background: #78350F; }}
-.node.database {{ border-radius: 6px; border-color: #8B5CF6; background: #4C1D95; }}
-.node.io {{ border-radius: 4px; transform: skew(-10deg); border-color: #10B981; background: #065F46; }}
+.node.database {{ border-radius: 3px; border-color: #8B5CF6; background: #4C1D95; }}
+.node.io {{ border-radius: 2px; transform: skew(-10deg); border-color: #10B981; background: #065F46; }}
 #toast {{ position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,0.95); border: 1px solid #38BDF8; color: #FFFFFF; padding: 10px 18px; border-radius: 20px; font-size: 13px; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }}
 #photo-input {{ display: none; }}
 </style>
@@ -261,9 +261,9 @@ function showToast(msg) {{
 
 function addNode(type, text, x, y) {{
   const id = 'node_' + (nextId++);
-  const cx = x || (container.clientWidth / 2 - 50 + (nodes.length % 5) * 15);
-  const cy = y || (60 + nodes.length * 65);
-  const node = {{ id, type, text, x: Math.max(10, cx), y: Math.max(10, cy), w: 120, h: 50 }};
+  const cx = x || (container.clientWidth / 2 - 32 + (nodes.length % 5) * 12);
+  const cy = y || (40 + nodes.length * 36);
+  const node = {{ id, type, text, x: Math.max(10, cx), y: Math.max(10, cy), w: 65, h: 28 }};
   nodes.push(node);
   renderNode(node);
   saveLocal();
@@ -314,9 +314,9 @@ let currentDirection = 'TD';
 function autoAlign() {{
   if (nodes.length === 0) return;
   currentDirection = (currentDirection === 'TD') ? 'LR' : 'TD';
-  const startX = 40, startY = 40;
-  const xGap = (currentDirection === 'TD') ? 140 : 150;
-  const yGap = (currentDirection === 'TD') ? 80 : 70;
+  const startX = 30, startY = 30;
+  const xGap = (currentDirection === 'TD') ? 75 : 85;
+  const yGap = (currentDirection === 'TD') ? 42 : 36;
   
   nodes.forEach((n, idx) => {{
     if (currentDirection === 'TD') {{
@@ -391,15 +391,15 @@ function sendToPc() {{
         text: n.text,
         x: n.x,
         y: n.y,
-        w: 150,
-        h: 60,
+        w: 75,
+        h: 32,
         shape_type: n.type,
         style: {{
           bg_color: n.type === 'terminal' ? '#ECFDF5' : (n.type === 'decision' ? '#FFFBEB' : (n.type === 'database' ? '#FAF5FF' : '#EFF6FF')),
           border_color: n.type === 'terminal' ? '#059669' : (n.type === 'decision' ? '#D97706' : (n.type === 'database' ? '#7C3AED' : '#2563EB')),
-          border_width: 2,
+          border_width: 1.5,
           text_color: '#1E293B',
-          font_size: 12,
+          font_size: 7,
           font_bold: true
         }}
       }}))

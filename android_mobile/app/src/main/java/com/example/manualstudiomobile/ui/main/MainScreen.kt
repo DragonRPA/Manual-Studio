@@ -60,8 +60,8 @@ data class FlowNode(
     val shape: NodeShape,
     var x: Float,
     var y: Float,
-    val width: Float = 140f,
-    val height: Float = 60f
+    val width: Float = 75f,
+    val height: Float = 32f
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,10 +76,10 @@ fun MainScreen(
     var nodes by remember {
         mutableStateOf(
             listOf(
-                FlowNode("n1", "시작", NodeShape.TERMINAL, 120f, 60f),
-                FlowNode("n2", "작업 수행", NodeShape.PROCESS, 120f, 160f),
-                FlowNode("n3", "성공 여부?", NodeShape.DECISION, 120f, 260f),
-                FlowNode("n4", "완료", NodeShape.TERMINAL, 120f, 360f)
+                FlowNode("n1", "시작", NodeShape.TERMINAL, 120f, 40f, 75f, 32f),
+                FlowNode("n2", "작업 수행", NodeShape.PROCESS, 120f, 85f, 75f, 32f),
+                FlowNode("n3", "성공 여부?", NodeShape.DECISION, 120f, 130f, 75f, 32f),
+                FlowNode("n4", "완료", NodeShape.TERMINAL, 120f, 175f, 75f, 32f)
             )
         )
     }
@@ -162,14 +162,16 @@ fun MainScreen(
                     NodeShape.values().forEach { shape ->
                         Button(
                             onClick = {
-                                val nextY = 80f + (nodes.size % 6) * 75f
-                                val nextX = 60f + (nodes.size % 4) * 30f
+                                val nextY = 50f + (nodes.size % 8) * 38f
+                                val nextX = 40f + (nodes.size % 4) * 20f
                                 val newNode = FlowNode(
                                     id = "n_${System.currentTimeMillis()}",
                                     text = shape.label,
                                     shape = shape,
                                     x = nextX,
-                                    y = nextY
+                                    y = nextY,
+                                    width = 75f,
+                                    height = 32f
                                 )
                                 nodes = nodes + newNode
                             },
@@ -412,9 +414,9 @@ fun NodeView(
     var offsetY by remember { mutableStateOf(node.y) }
 
     val shapeCorner = when (node.shape) {
-        NodeShape.TERMINAL -> 24.dp
-        NodeShape.DECISION -> 4.dp
-        else -> 8.dp
+        NodeShape.TERMINAL -> 14.dp
+        NodeShape.DECISION -> 2.dp
+        else -> 4.dp
     }
 
     Box(
@@ -431,14 +433,14 @@ fun NodeView(
             }
             .clip(RoundedCornerShape(shapeCorner))
             .background(node.shape.bgColor)
-            .border(2.dp, node.shape.borderColor, RoundedCornerShape(shapeCorner))
+            .border(1.5.dp, node.shape.borderColor, RoundedCornerShape(shapeCorner))
             .clickable { onNodeClick() }
-            .padding(6.dp),
+            .padding(3.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = node.text,
-            fontSize = 13.sp,
+            fontSize = 8.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1E293B),
             textAlign = TextAlign.Center,
@@ -448,9 +450,9 @@ fun NodeView(
 }
 
 fun autoAlignNodes(nodes: List<FlowNode>, direction: String): List<FlowNode> {
-    val startX = 60f
-    val startY = 60f
-    val gap = if (direction == "TD") 80f else 160f
+    val startX = 40f
+    val startY = 40f
+    val gap = if (direction == "TD") 45f else 90f
 
     nodes.forEachIndexed { index, node ->
         if (direction == "TD") {

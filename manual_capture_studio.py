@@ -110,7 +110,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.9.0"
+APP_VERSION = "v1.9.1"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -685,6 +685,33 @@ class ThemeManager:
             QMainWindow {
                 background-color: #F8FAFC;
             }
+            QDialog {
+                background-color: #FFFFFF;
+                color: #1E293B;
+            }
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
             QToolTip {
                 background-color: #1E293B;
                 color: #FFFFFF;
@@ -700,6 +727,33 @@ class ThemeManager:
         return """
             QMainWindow {
                 background-color: #F5F5F7;
+            }
+            QDialog {
+                background-color: #FFFFFF;
+                color: #1C1C1E;
+            }
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1C1C1E;
+                border: 1px solid #D1D1D6;
+                border-radius: 8px;
+                padding: 5px;
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 5px 22px 5px 12px;
+                border-radius: 5px;
+                color: #1C1C1E;
+            }
+            QMenu::item:selected {
+                background-color: #007AFF;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E5E5EA;
+                margin: 4px 8px;
             }
             QToolTip {
                 background-color: #1C1C1E;
@@ -3453,7 +3507,7 @@ ClickItem = ClickRippleItem
 
 class FlowchartNodeItem:
     """플로우차트 노드 도형 객체 (상하좌우 4개 마그넷 포인트 지원)"""
-    def __init__(self, text="Process", x=100, y=100, w=140, h=60, shape_type="process", style=None):
+    def __init__(self, text="Process", x=100, y=100, w=75, h=32, shape_type="process", style=None):
         self.text = str(text)
         self.rect = QRectF(float(x), float(y), float(w), float(h))
         self.shape_type = str(shape_type).lower()
@@ -3461,9 +3515,9 @@ class FlowchartNodeItem:
             self.style = {
                 "bg_color": "#EFF6FF",
                 "border_color": "#2563EB",
-                "border_width": 2,
+                "border_width": 1.5,
                 "text_color": "#1E293B",
-                "font_size": 12,
+                "font_size": 7,
                 "font_bold": True
             }
         else:
@@ -3538,8 +3592,8 @@ class FlowchartNodeItem:
         else:
             x = data.get("x", 100)
             y = data.get("y", 100)
-            w = data.get("w", 140)
-            h = data.get("h", 60)
+            w = data.get("w", 75)
+            h = data.get("h", 32)
         return cls(
             text=data.get("text", "Process"),
             x=x, y=y, w=w, h=h,
@@ -3553,9 +3607,9 @@ class FlowchartNodeItem:
         
         bg_col = QColor(self.style.get("bg_color", "#EFF6FF"))
         border_col = QColor(self.style.get("border_color", "#2563EB"))
-        border_w = int(self.style.get("border_width", 2))
+        border_w = float(self.style.get("border_width", 1.5))
         text_col = QColor(self.style.get("text_color", "#1E293B"))
-        f_size = int(self.style.get("font_size", 12))
+        f_size = int(self.style.get("font_size", 7))
         f_bold = bool(self.style.get("font_bold", True))
         
         pen = QPen(border_col, border_w)
@@ -3568,7 +3622,7 @@ class FlowchartNodeItem:
 
         # 1. 도형 드로잉
         if st == "process":
-            painter.drawRoundedRect(r, 6, 6)
+            painter.drawRoundedRect(r, 4, 4)
         elif st == "decision":
             poly = QPolygonF([
                 QPointF(r.center().x(), r.top()),
@@ -3590,7 +3644,7 @@ class FlowchartNodeItem:
             ])
             painter.drawPolygon(poly)
         elif st == "database":
-            h_top = min(16.0, r.height() * 0.22)
+            h_top = min(8.0, r.height() * 0.22)
             path = QPainterPath()
             path.moveTo(r.left(), r.top() + h_top)
             path.lineTo(r.left(), r.bottom() - h_top)
@@ -3602,7 +3656,7 @@ class FlowchartNodeItem:
             painter.drawEllipse(QRectF(r.left(), r.top(), r.width(), 2*h_top))
         elif st == "subroutine":
             painter.drawRoundedRect(r, 4, 4)
-            inner_m = 8
+            inner_m = max(5.0, r.width() * 0.1)
             if r.width() > inner_m * 3:
                 painter.drawLine(QPointF(r.left() + inner_m, r.top()), QPointF(r.left() + inner_m, r.bottom()))
                 painter.drawLine(QPointF(r.right() - inner_m, r.top()), QPointF(r.right() - inner_m, r.bottom()))
@@ -3610,11 +3664,11 @@ class FlowchartNodeItem:
             path = QPainterPath()
             path.moveTo(r.left(), r.top())
             path.lineTo(r.right(), r.top())
-            path.lineTo(r.right(), r.bottom() - 10)
+            path.lineTo(r.right(), r.bottom() - 5)
             path.cubicTo(
-                r.right() - r.width()*0.25, r.bottom() - 18,
+                r.right() - r.width()*0.25, r.bottom() - 9,
                 r.left() + r.width()*0.25, r.bottom(),
-                r.left(), r.bottom() - 10
+                r.left(), r.bottom() - 5
             )
             path.closeSubpath()
             painter.drawPath(path)
@@ -3626,17 +3680,17 @@ class FlowchartNodeItem:
         font.setBold(f_bold)
         painter.setFont(font)
         painter.setPen(QPen(text_col))
-        text_rect = r.adjusted(8, 6, -8, -6)
+        text_rect = r.adjusted(3, 2, -3, -2)
         painter.drawText(text_rect, Qt.AlignCenter | Qt.TextWordWrap, self.text)
 
         # 3. 상하좌우 4개 마그넷 포인트 시각화
         magnets = self.get_magnet_points()
         for m_key, m_pt in magnets.items():
             is_active = (self._hovered_magnet == m_key)
-            radius = 5.5 if is_active else 4.0
+            radius = 3.5 if is_active else 2.5
             dot_color = QColor("#10B981") if is_active else QColor("#0284C7")
             
-            painter.setPen(QPen(QColor("#FFFFFF"), 1.2))
+            painter.setPen(QPen(QColor("#FFFFFF"), 1.0))
             painter.setBrush(QBrush(dot_color))
             painter.drawEllipse(m_pt, radius, radius)
             
@@ -4018,7 +4072,7 @@ class MermaidFlowchartParser:
 class MermaidLayoutEngine:
     """계층형 자동 배치 및 상하좌우 4개 마그넷 포인트 자동 연결 엔진"""
     @staticmethod
-    def build_flowchart(parsed_data, base_x=80, base_y=80, node_w=150, node_h=60):
+    def build_flowchart(parsed_data, base_x=80, base_y=80, node_w=75, node_h=32):
         direction = parsed_data.get("direction", "TD")
         nodes = parsed_data.get("nodes", {})
         edges = parsed_data.get("edges", [])
@@ -4058,8 +4112,8 @@ class MermaidLayoutEngine:
             level_groups.setdefault(rk, []).append(nid)
 
         created_node_items = {}
-        x_gap = 210 if direction == "TD" else 230
-        y_gap = 130 if direction == "TD" else 110
+        x_gap = 105 if direction == "TD" else 115
+        y_gap = 65 if direction == "TD" else 55
 
         for rk, nids in level_groups.items():
             for idx, nid in enumerate(nids):
@@ -4090,9 +4144,9 @@ class MermaidLayoutEngine:
                 style = {
                     "bg_color": bg_col,
                     "border_color": border_col,
-                    "border_width": 2,
+                    "border_width": 1.5,
                     "text_color": "#1E293B",
-                    "font_size": 12,
+                    "font_size": 7,
                     "font_bold": True
                 }
                 node_item = FlowchartNodeItem(
@@ -4596,7 +4650,67 @@ class ItemPropertiesDialog(QDialog):
         self.setWindowTitle(f"{tr('prop_dialog_title', '객체 속성')} - {type_name}")
         self.setMinimumWidth(440)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #FFFFFF;
+                color: #1E293B;
+            }
+            QGroupBox {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 12px;
+                font-weight: bold;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 4px;
+                color: #0F172A;
+            }
+            QLabel {
+                color: #334155;
+            }
+            QLineEdit, QSpinBox, QComboBox, QFontComboBox {
+                background-color: #F8FAFC;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                padding: 4px 6px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+                border: 1px solid #2563EB;
+                background-color: #FFFFFF;
+            }
+            QPushButton {
+                background-color: #F1F5F9;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background-color: #E2E8F0;
+            }
+            QPushButton#btn_ok {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: 1px solid #1D4ED8;
+            }
+            QPushButton#btn_ok:hover {
+                background-color: #1D4ED8;
+            }
+        """)
         self._init_ui()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._on_apply_and_accept()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _get_item_type_name(self):
         cls_name = self.item.__class__.__name__
@@ -4618,6 +4732,7 @@ class ItemPropertiesDialog(QDialog):
             "SpotlightMaskItem": "스포트라이트",
             "ClickRippleItem": "클릭 인디케이터",
             "MagnifierZoomItem": "돋보기 렌즈",
+            "FlowchartNodeItem": "플로우차트 노드",
         }
         return mapping.get(cls_name, cls_name)
 
@@ -4697,6 +4812,8 @@ class ItemPropertiesDialog(QDialog):
         btn_layout.addStretch(1)
 
         self.btn_ok = QPushButton(tr("prop_btn_ok", "확인"))
+        self.btn_ok.setObjectName("btn_ok")
+        self.btn_ok.setDefault(True)
         self.btn_ok.setStyleSheet("font-weight: bold; min-width: 80px; height: 28px;")
         self.btn_ok.clicked.connect(self._on_apply_and_accept)
 
@@ -4814,26 +4931,32 @@ class ItemPropertiesDialog(QDialog):
                 row += 1
 
         if cls_name == "StampItem":
-            layout.addWidget(QLabel(tr("prop_size_diameter", "크기")), row, 0)
+            layout.addWidget(QLabel("스탬프 번호"), row, 0)
+            self.spn_stamp_index = QSpinBox()
+            self.spn_stamp_index.setRange(1, 999)
+            self.spn_stamp_index.setValue(int(getattr(item, "index", 1)))
+            layout.addWidget(self.spn_stamp_index, row, 1)
+
+            layout.addWidget(QLabel(tr("prop_size_diameter", "크기")), row, 2)
             self.spn_stamp_size = QSpinBox()
             self.spn_stamp_size.setRange(16, 120)
             self.spn_stamp_size.setValue(int(item.style.get("size", 32)))
-            layout.addWidget(self.spn_stamp_size, row, 1)
+            layout.addWidget(self.spn_stamp_size, row, 3)
+            row += 1
 
-            layout.addWidget(QLabel(tr("stamp_shape_label", "바탕 모양")), row, 2)
+            layout.addWidget(QLabel(tr("stamp_shape_label", "바탕 모양")), row, 0)
             self.cmb_stamp_shape = QComboBox()
             self.cmb_stamp_shape.addItem(tr("stamp_shape_circle", "원형"), "circle")
             self.cmb_stamp_shape.addItem(tr("stamp_shape_rounded_rect", "모서리가 둥근 사각형"), "rounded_rect")
             cur_shape = item.style.get("shape", "circle")
             self.cmb_stamp_shape.setCurrentIndex(1 if cur_shape == "rounded_rect" else 0)
-            layout.addWidget(self.cmb_stamp_shape, row, 3)
-            row += 1
+            layout.addWidget(self.cmb_stamp_shape, row, 1)
 
-            layout.addWidget(QLabel(tr("prop_corner_radius", "모서리 반경")), row, 0)
+            layout.addWidget(QLabel(tr("prop_corner_radius", "모서리 반경")), row, 2)
             self.spn_corner_radius = QSpinBox()
             self.spn_corner_radius.setRange(0, 50)
             self.spn_corner_radius.setValue(int(item.style.get("corner_radius", 6)))
-            layout.addWidget(self.spn_corner_radius, row, 1)
+            layout.addWidget(self.spn_corner_radius, row, 3)
             row += 1
 
         elif cls_name == "StepArrowItem":
@@ -4929,7 +5052,7 @@ class ItemPropertiesDialog(QDialog):
     def _has_font_properties(self):
         item = self.item
         cls_name = item.__class__.__name__
-        if cls_name in ("TextLabelItem", "CalloutItem", "HotkeyBadgeItem", "WordArtItem", "DimensionLineItem", "BoxDimensionItem", "DraftStampItem"):
+        if cls_name in ("TextLabelItem", "CalloutItem", "HotkeyBadgeItem", "WordArtItem", "DimensionLineItem", "BoxDimensionItem", "DraftStampItem", "FlowchartNodeItem"):
             return True
         return False
 
@@ -5082,6 +5205,9 @@ class ItemPropertiesDialog(QDialog):
             item.style["unit"] = self.cmb_unit.currentData()
         elif cls_name == "BlurMosaicItem":
             item.style["block_size"] = self.spn_block_size.value()
+
+        if hasattr(self, "spn_stamp_index") and hasattr(item, "index"):
+            item.index = self.spn_stamp_index.value()
 
         # 3. 글꼴 및 내용 반영
         if hasattr(self, "txt_content"):
@@ -5959,8 +6085,14 @@ class StudioCanvasWidget(QWidget):
 
         self.current_mode = "SELECT"
         self.selected_item = None
+        self.selected_items = []  # 다중 선택된 객체 목록
         self.dragging_item = None
         self.drag_offset = QPointF()
+        self.drag_start_pos = QPointF()
+        self.drag_items_orig_coords = {}
+        self.rubber_band_active = False
+        self.rubber_band_start = QPoint()
+        self.rubber_band_end = QPoint()
         self.resizing_overlay_handle = None
 
         self.next_stamp_index = 1
@@ -6232,19 +6364,155 @@ class StudioCanvasWidget(QWidget):
         self.next_stamp_index = len(stamps) + 1
 
     def delete_selected_item(self):
-        if self.selected_item and self.selected_item in self.items:
+        to_delete = [it for it in getattr(self, "selected_items", []) if it in self.items]
+        if not to_delete and self.selected_item and self.selected_item in self.items:
+            to_delete = [self.selected_item]
+        if to_delete:
             self.push_undo()
-            item = self.selected_item
-            self.items.remove(item)
+            has_stamp = False
+            for it in to_delete:
+                self.items.remove(it)
+                if isinstance(it, (StampItem, StepArrowItem)):
+                    has_stamp = True
+            if hasattr(self, "selected_items"):
+                self.selected_items.clear()
             self.selected_item = None
             self.sig_item_selected.emit(None)
-            if isinstance(item, (StampItem, StepArrowItem)):
+            if has_stamp:
                 self.reindex_stamps()
             self.update()
             self.sig_content_changed.emit()
-            self.sig_request_toast.emit("주석 객체가 삭제되었습니다.")
+            self.sig_request_toast.emit(f"{len(to_delete)}개 주석 객체가 삭제되었습니다.")
             return True
         return False
+
+    def get_item_bounding_rect(self, it):
+        """다양한 주석 객체의 외곽 바운딩 렉트 통일 계산"""
+        if not it:
+            return QRectF()
+        if hasattr(it, "rect") and isinstance(it.rect, QRectF):
+            return QRectF(it.rect)
+        if hasattr(it, "get_rect") and callable(it.get_rect):
+            return QRectF(it.get_rect())
+        if hasattr(it, "box_rect"):
+            return QRectF(it.box_rect)
+        if isinstance(it, StampItem):
+            sz = float(it.style.get("size", 32))
+            return QRectF(it.pos.x() - sz / 2.0, it.pos.y() - sz / 2.0, sz, sz)
+        if isinstance(it, (ArrowItem, StepArrowItem, DimensionLineItem)):
+            return QRectF(it.start_pos, it.end_pos).normalized()
+        if isinstance(it, ElbowArrowItem):
+            p1 = it.start_pos
+            p2 = it.end_pos
+            c = it.get_corner_point()
+            min_x = min(p1.x(), p2.x(), c.x())
+            min_y = min(p1.y(), p2.y(), c.y())
+            max_x = max(p1.x(), p2.x(), c.x())
+            max_y = max(p1.y(), p2.y(), c.y())
+            return QRectF(min_x, min_y, max(1.0, max_x - min_x), max(1.0, max_y - min_y))
+        if hasattr(it, "pos"):
+            return QRectF(it.pos.x() - 16, it.pos.y() - 16, 32, 32)
+        return QRectF()
+
+    def _translate_item(self, it, dx, dy):
+        """임의의 주석 객체를 dx, dy 만큼 이동"""
+        if dx == 0 and dy == 0:
+            return
+        if isinstance(it, ImageOverlayItem):
+            it.rect.translate(dx, dy)
+        elif isinstance(it, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
+            old_x = it.rect.x()
+            old_y = it.rect.y()
+            it.rect.translate(dx, dy)
+            if isinstance(it, FlowchartNodeItem):
+                self._update_attached_connectors(it, dx, dy, old_x, old_y)
+        elif isinstance(it, MagnifierZoomItem):
+            it.lens_rect.translate(dx, dy)
+            it.source_rect.translate(dx, dy)
+        elif isinstance(it, CalloutItem):
+            it.box_rect.translate(dx, dy)
+            it.target_pt += QPointF(dx, dy)
+        elif isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
+            it.start_pos += QPointF(dx, dy)
+            it.end_pos += QPointF(dx, dy)
+        elif hasattr(it, "pos"):
+            it.pos += QPointF(dx, dy)
+        elif hasattr(it, "rect"):
+            it.rect.translate(dx, dy)
+
+    def align_selected_items_center_x(self):
+        """다중 선택된 객체들을 세로 중심축 (X) 기준으로 일괄 정렬"""
+        sel = [it for it in getattr(self, "selected_items", []) if it in self.items]
+        if len(sel) < 2:
+            self.sig_request_toast.emit("2개 이상의 객체를 선택해주세요.")
+            return
+        self.push_undo()
+        target_cx = sum(self.get_item_bounding_rect(it).center().x() for it in sel) / len(sel)
+        for it in sel:
+            cur_cx = self.get_item_bounding_rect(it).center().x()
+            self._translate_item(it, target_cx - cur_cx, 0)
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit("중심 축 X 정렬 완료")
+
+    def align_selected_items_center_y(self):
+        """다중 선택된 객체들을 가로 중심축 (Y) 기준으로 일괄 정렬"""
+        sel = [it for it in getattr(self, "selected_items", []) if it in self.items]
+        if len(sel) < 2:
+            self.sig_request_toast.emit("2개 이상의 객체를 선택해주세요.")
+            return
+        self.push_undo()
+        target_cy = sum(self.get_item_bounding_rect(it).center().y() for it in sel) / len(sel)
+        for it in sel:
+            cur_cy = self.get_item_bounding_rect(it).center().y()
+            self._translate_item(it, 0, target_cy - cur_cy)
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit("중심 축 Y 정렬 완료")
+
+    def distribute_selected_items_horizontal(self):
+        """다중 선택된 객체들을 수평 방향으로 균등 비율/간격 재배치"""
+        sel = [it for it in getattr(self, "selected_items", []) if it in self.items]
+        if len(sel) < 3:
+            self.sig_request_toast.emit("3개 이상의 객체를 선택해주세요.")
+            return
+        self.push_undo()
+        sel_sorted = sorted(sel, key=lambda it: self.get_item_bounding_rect(it).left())
+        min_left = self.get_item_bounding_rect(sel_sorted[0]).left()
+        max_right = self.get_item_bounding_rect(sel_sorted[-1]).right()
+        total_w = sum(self.get_item_bounding_rect(it).width() for it in sel_sorted)
+        span = max_right - min_left
+        gap = (span - total_w) / float(len(sel_sorted) - 1)
+        curr_x = min_left
+        for it in sel_sorted:
+            br = self.get_item_bounding_rect(it)
+            self._translate_item(it, curr_x - br.left(), 0)
+            curr_x += br.width() + gap
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit("가로 균등 재배치 완료")
+
+    def distribute_selected_items_vertical(self):
+        """다중 선택된 객체들을 수직 방향으로 균등 비율/간격 재배치"""
+        sel = [it for it in getattr(self, "selected_items", []) if it in self.items]
+        if len(sel) < 3:
+            self.sig_request_toast.emit("3개 이상의 객체를 선택해주세요.")
+            return
+        self.push_undo()
+        sel_sorted = sorted(sel, key=lambda it: self.get_item_bounding_rect(it).top())
+        min_top = self.get_item_bounding_rect(sel_sorted[0]).top()
+        max_bottom = self.get_item_bounding_rect(sel_sorted[-1]).bottom()
+        total_h = sum(self.get_item_bounding_rect(it).height() for it in sel_sorted)
+        span = max_bottom - min_top
+        gap = (span - total_h) / float(len(sel_sorted) - 1)
+        curr_y = min_top
+        for it in sel_sorted:
+            br = self.get_item_bounding_rect(it)
+            self._translate_item(it, 0, curr_y - br.top())
+            curr_y += br.height() + gap
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit("세로 균등 재배치 완료")
 
     def add_image_overlay(self, pixmap: QPixmap):
         if not pixmap or pixmap.isNull():
@@ -6592,24 +6860,54 @@ class StudioCanvasWidget(QWidget):
                             hit_item = it
                             break
 
-                self.selected_item = hit_item
-                self.sig_item_selected.emit(hit_item)
+                modifiers = event.modifiers()
+                is_multi_key = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
+
+                if is_multi_key:
+                    if hit_item:
+                        if hit_item in self.selected_items:
+                            self.selected_items.remove(hit_item)
+                            self.selected_item = self.selected_items[-1] if self.selected_items else None
+                        else:
+                            self.selected_items.append(hit_item)
+                            self.selected_item = hit_item
+                else:
+                    if hit_item:
+                        if hit_item in self.selected_items and len(self.selected_items) > 1:
+                            # 이미 다중 선택된 그룹 중 하나를 클릭한 경우 그룹 선택 유지
+                            self.selected_item = hit_item
+                        else:
+                            self.selected_items = [hit_item]
+                            self.selected_item = hit_item
+                    else:
+                        # 빈 캔버스 클릭 시 선택 해제 및 러버밴드 드래그 시작
+                        self.selected_items.clear()
+                        self.selected_item = None
+                        self.rubber_band_active = True
+                        self.rubber_band_start = pt
+                        self.rubber_band_end = pt
+
+                self.sig_item_selected.emit(self.selected_item)
+
                 if hit_item:
                     self.dragging_item = hit_item
-                    if isinstance(hit_item, ImageOverlayItem):
-                        self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
-                    elif isinstance(hit_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
-                        self.drag_offset = QPointF(pt.x() - hit_item.rect.x(), pt.y() - hit_item.rect.y())
-                    elif isinstance(hit_item, MagnifierZoomItem):
-                        self.drag_offset = QPointF(pt.x() - hit_item.lens_rect.x(), pt.y() - hit_item.lens_rect.y())
-                    elif isinstance(hit_item, CalloutItem):
-                        self.drag_offset = QPointF(pt.x() - hit_item.box_rect.x(), pt.y() - hit_item.box_rect.y())
-                    elif isinstance(hit_item, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
-                        self.drag_offset = QPointF(pt.x() - hit_item.start_pos.x(), pt.y() - hit_item.start_pos.y())
-                    elif hasattr(hit_item, "pos"):
-                        self.drag_offset = QPointF(pt.x() - hit_item.pos.x(), pt.y() - hit_item.pos.y())
-                    else:
-                        self.drag_offset = QPointF(0, 0)
+                    self.drag_start_pos = QPointF(pt)
+                    self.drag_items_orig_coords.clear()
+                    for it in self.selected_items:
+                        if isinstance(it, ImageOverlayItem):
+                            self.drag_items_orig_coords[it] = QRectF(it.rect)
+                        elif isinstance(it, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
+                            self.drag_items_orig_coords[it] = QRectF(it.rect)
+                        elif isinstance(it, MagnifierZoomItem):
+                            self.drag_items_orig_coords[it] = (QRectF(it.lens_rect), QRectF(it.source_rect))
+                        elif isinstance(it, CalloutItem):
+                            self.drag_items_orig_coords[it] = (QRectF(it.box_rect), QPointF(it.target_pt))
+                        elif isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
+                            self.drag_items_orig_coords[it] = (QPointF(it.start_pos), QPointF(it.end_pos))
+                        elif hasattr(it, "pos"):
+                            self.drag_items_orig_coords[it] = QPointF(it.pos)
+                        elif hasattr(it, "rect"):
+                            self.drag_items_orig_coords[it] = QRectF(it.rect)
                 self.update()
 
         elif event.button() == Qt.RightButton:
@@ -6625,47 +6923,97 @@ class StudioCanvasWidget(QWidget):
                         hit_item = it
                         break
             if hit_item:
-                self.selected_item = hit_item
-                self.sig_item_selected.emit(hit_item)
+                if hit_item not in self.selected_items:
+                    self.selected_items = [hit_item]
+                    self.selected_item = hit_item
+                    self.sig_item_selected.emit(hit_item)
                 self.update()
                 global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
                 self.show_item_context_menu(hit_item, global_pt)
+            elif len(self.selected_items) > 1:
+                global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                self.show_item_context_menu(self.selected_items[-1], global_pt)
 
     def show_item_context_menu(self, item, global_pos):
         menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """)
+
+        num_sel = len(self.selected_items)
+        act_align_x = None
+        act_align_y = None
+        act_dist_h = None
+        act_dist_v = None
+
+        if num_sel > 1:
+            act_align_x = menu.addAction(RibbonIconProvider.get_icon("align_center", 16), "중심 축 X 정렬 (세로 중심)")
+            act_align_y = menu.addAction(RibbonIconProvider.get_icon("align_middle", 16), "중심 축 Y 정렬 (가로 중심)")
+            act_dist_h = menu.addAction(RibbonIconProvider.get_icon("distribute_h", 16), "가로 균등 재배치 (수평 간격 균등)")
+            act_dist_v = menu.addAction(RibbonIconProvider.get_icon("distribute_v", 16), "세로 균등 재배치 (수직 간격 균등)")
+            menu.addSeparator()
+
         act_props = menu.addAction(RibbonIconProvider.get_icon("settings", 16), f"{tr('menu_item_properties', '속성...')} (P)")
         menu.addSeparator()
         act_front = menu.addAction(RibbonIconProvider.get_icon("bring_front", 16), tr('menu_item_bring_front', '맨 앞으로 가져오기'))
         act_back = menu.addAction(RibbonIconProvider.get_icon("send_back", 16), tr('menu_item_send_back', '맨 뒤로 보내기'))
         menu.addSeparator()
-        act_del = menu.addAction(RibbonIconProvider.get_icon("clear", 16, "#DC2626"), f"{tr('menu_item_delete', '삭제')} (Del)")
+        del_label = f"선택 {num_sel}개 객체 일괄 삭제 (Del)" if num_sel > 1 else f"{tr('menu_item_delete', '삭제')} (Del)"
+        act_del = menu.addAction(RibbonIconProvider.get_icon("clear", 16, "#DC2626"), del_label)
 
         chosen = menu.exec_(global_pos)
-        if chosen == act_props:
+        if num_sel > 1 and chosen == act_align_x:
+            self.align_selected_items_center_x()
+        elif num_sel > 1 and chosen == act_align_y:
+            self.align_selected_items_center_y()
+        elif num_sel > 1 and chosen == act_dist_h:
+            self.distribute_selected_items_horizontal()
+        elif num_sel > 1 and chosen == act_dist_v:
+            self.distribute_selected_items_vertical()
+        elif chosen == act_props:
             self.open_item_properties_dialog(item)
         elif chosen == act_front:
             self.push_undo()
-            self.items.remove(item)
-            self.items.append(item)
+            targets = list(self.selected_items) if num_sel > 1 else [item]
+            for it in targets:
+                if it in self.items:
+                    self.items.remove(it)
+                    self.items.append(it)
             self.update()
             self.sig_content_changed.emit()
         elif chosen == act_back:
             self.push_undo()
-            self.items.remove(item)
-            self.items.insert(0, item)
+            targets = list(self.selected_items) if num_sel > 1 else [item]
+            for it in reversed(targets):
+                if it in self.items:
+                    self.items.remove(it)
+                    self.items.insert(0, it)
             self.update()
             self.sig_content_changed.emit()
         elif chosen == act_del:
-            self.push_undo()
-            self.items.remove(item)
-            if item == self.selected_item:
-                self.selected_item = None
-                self.sig_item_selected.emit(None)
-            if isinstance(item, (StampItem, StepArrowItem)):
-                self.reindex_stamps()
-            self.update()
-            self.sig_content_changed.emit()
-            self.sig_request_toast.emit(tr("menu_item_delete", "삭제"))
+            self.delete_selected_item()
 
     def open_item_properties_dialog(self, item):
         if not item:
@@ -6687,38 +7035,53 @@ class StudioCanvasWidget(QWidget):
             self.update()
             self.sig_content_changed.emit()
             return
+        elif getattr(self, "rubber_band_active", False):
+            self.rubber_band_end = pt
+            rb_rect = QRectF(self.rubber_band_start, self.rubber_band_end).normalized()
+            hit_list = []
+            for it in self.items:
+                br = self.get_item_bounding_rect(it)
+                if rb_rect.intersects(br):
+                    hit_list.append(it)
+            self.selected_items = hit_list
+            self.selected_item = hit_list[-1] if hit_list else None
+            self.sig_item_selected.emit(self.selected_item)
+            self.update()
+            return
         elif self.dragging_item and self.current_mode == "SELECT":
-            new_x = pt.x() - self.drag_offset.x()
-            new_y = pt.y() - self.drag_offset.y()
-            if isinstance(self.dragging_item, ImageOverlayItem):
-                self.dragging_item.rect.moveTo(new_x, new_y)
-            elif isinstance(self.dragging_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
-                old_x = self.dragging_item.rect.x()
-                old_y = self.dragging_item.rect.y()
-                self.dragging_item.rect.moveTo(int(new_x), int(new_y))
-                if isinstance(self.dragging_item, FlowchartNodeItem):
-                    dx = int(new_x) - old_x
-                    dy = int(new_y) - old_y
-                    self._update_attached_connectors(self.dragging_item, dx, dy, old_x, old_y)
-            elif isinstance(self.dragging_item, MagnifierZoomItem):
-                dx = int(new_x) - self.dragging_item.lens_rect.x()
-                dy = int(new_y) - self.dragging_item.lens_rect.y()
-                self.dragging_item.lens_rect.moveTo(int(new_x), int(new_y))
-                self.dragging_item.source_rect.moveTo(self.dragging_item.source_rect.x() + dx, self.dragging_item.source_rect.y() + dy)
-            elif isinstance(self.dragging_item, CalloutItem):
-                dx = new_x - self.dragging_item.box_rect.x()
-                dy = new_y - self.dragging_item.box_rect.y()
-                self.dragging_item.box_rect.moveTo(new_x, new_y)
-                self.dragging_item.target_pt += QPointF(dx, dy)
-            elif isinstance(self.dragging_item, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
-                dx = new_x - self.dragging_item.start_pos.x()
-                dy = new_y - self.dragging_item.start_pos.y()
-                self.dragging_item.start_pos = QPointF(new_x, new_y)
-                self.dragging_item.end_pos = QPointF(self.dragging_item.end_pos.x() + dx, self.dragging_item.end_pos.y() + dy)
-            elif hasattr(self.dragging_item, "pos"):
-                self.dragging_item.pos = QPointF(new_x, new_y)
+            dx = pt.x() - self.drag_start_pos.x()
+            dy = pt.y() - self.drag_start_pos.y()
+            for it in self.selected_items:
+                orig = self.drag_items_orig_coords.get(it)
+                if orig is None:
+                    continue
+                if isinstance(it, ImageOverlayItem):
+                    it.rect.moveTo(orig.x() + dx, orig.y() + dy)
+                elif isinstance(it, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
+                    old_x = it.rect.x()
+                    old_y = it.rect.y()
+                    it.rect.moveTo(int(orig.x() + dx), int(orig.y() + dy))
+                    if isinstance(it, FlowchartNodeItem):
+                        self._update_attached_connectors(it, int(orig.x() + dx) - old_x, int(orig.y() + dy) - old_y, old_x, old_y)
+                elif isinstance(it, MagnifierZoomItem):
+                    lens_orig, src_orig = orig
+                    it.lens_rect.moveTo(int(lens_orig.x() + dx), int(lens_orig.y() + dy))
+                    it.source_rect.moveTo(int(src_orig.x() + dx), int(src_orig.y() + dy))
+                elif isinstance(it, CalloutItem):
+                    box_orig, tgt_orig = orig
+                    it.box_rect.moveTo(box_orig.x() + dx, box_orig.y() + dy)
+                    it.target_pt = QPointF(tgt_orig.x() + dx, tgt_orig.y() + dy)
+                elif isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem, DimensionLineItem)):
+                    sp_orig, ep_orig = orig
+                    it.start_pos = QPointF(sp_orig.x() + dx, sp_orig.y() + dy)
+                    it.end_pos = QPointF(ep_orig.x() + dx, ep_orig.y() + dy)
+                elif hasattr(it, "pos"):
+                    it.pos = QPointF(orig.x() + dx, orig.y() + dy)
+                elif hasattr(it, "rect"):
+                    it.rect.moveTo(orig.x() + dx, orig.y() + dy)
             self.update()
             self.sig_content_changed.emit()
+            return
         elif self.drawing_box:
             self.box_end = pt
             self.update()
@@ -6823,10 +7186,14 @@ class StudioCanvasWidget(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if getattr(self, "rubber_band_active", False):
+                self.rubber_band_active = False
+                self.update()
             if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle:
                 self.resizing_overlay_handle = None
             if self.dragging_item:
                 self.dragging_item = None
+                self.drag_items_orig_coords.clear()
             elif self.drawing_box:
                 self.drawing_box = False
                 r = QRect(self.box_start, self.box_end).normalized()
@@ -7000,15 +7367,15 @@ class StudioCanvasWidget(QWidget):
                 shape_type, def_txt = flow_shapes.get(self.current_mode, ("process", "처리 작업"))
                 r = QRectF(self.flow_node_start, self.flow_node_end).normalized()
                 if r.width() < 15 or r.height() < 15:
-                    w, h = 140.0, 60.0
+                    w, h = 75.0, 32.0
                     if shape_type == "terminal":
-                        w, h = 120.0, 46.0
+                        w, h = 65.0, 26.0
                     elif shape_type == "decision":
-                        w, h = 130.0, 70.0
+                        w, h = 70.0, 38.0
                     elif shape_type == "database":
-                        w, h = 120.0, 70.0
+                        w, h = 65.0, 36.0
                     elif shape_type == "io":
-                        w, h = 130.0, 54.0
+                        w, h = 70.0, 30.0
                     node_rect = QRectF(self.flow_node_start.x() - w / 2.0, self.flow_node_start.y() - h / 2.0, w, h)
                 else:
                     node_rect = r
@@ -7016,9 +7383,9 @@ class StudioCanvasWidget(QWidget):
                 node_style = {
                     "bg_color": "#EFF6FF",
                     "border_color": "#2563EB",
-                    "border_width": 2,
+                    "border_width": 1.5,
                     "text_color": "#1E293B",
-                    "font_size": 12,
+                    "font_size": 7,
                     "font_bold": True
                 }
                 node_item = FlowchartNodeItem(
@@ -7078,6 +7445,14 @@ class StudioCanvasWidget(QWidget):
                     self.update()
                     self.sig_content_changed.emit()
                 break
+            elif isinstance(it, StampItem) and it.contains(pt):
+                new_idx, ok = self.prompt_stamp_dialog(it.index)
+                if ok:
+                    self.push_undo()
+                    it.index = new_idx
+                    self.update()
+                    self.sig_content_changed.emit()
+                break
             elif isinstance(it, FlowchartNodeItem) and it.contains(pt):
                 new_text, ok = self.prompt_text_dialog(it.text, title="플로우차트 노드 텍스트 수정")
                 if ok and new_text.strip():
@@ -7090,11 +7465,70 @@ class StudioCanvasWidget(QWidget):
                 self.open_item_properties_dialog(it)
                 break
 
+    def prompt_stamp_dialog(self, initial_index=1):
+        try:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("스탬프 번호 변경")
+            dlg.setFixedSize(340, 140)
+            dlg.setStyleSheet("""
+                QDialog { background-color: #FFFFFF; color: #1E293B; }
+                QLabel { color: #1E293B; font-weight: bold; }
+                QSpinBox { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 14px; font-weight: bold; }
+                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px 14px; color: #1E293B; font-weight: bold; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+            """)
+            layout = QVBoxLayout(dlg)
+            lbl = QLabel("스탬프 번호를 입력하세요 (1 ~ 999):", dlg)
+            lbl.setFont(QFont("Malgun Gothic", 10))
+            layout.addWidget(lbl)
+
+            spn = QSpinBox(dlg)
+            spn.setRange(1, 999)
+            spn.setValue(int(initial_index))
+            spn.setFont(QFont("Malgun Gothic", 12, QFont.Bold))
+            layout.addWidget(spn)
+
+            btn_box = QHBoxLayout()
+            btn_ok = QPushButton("확인", dlg)
+            btn_ok.setObjectName("btn_ok")
+            btn_ok.setDefault(True)
+            btn_ok.clicked.connect(dlg.accept)
+            btn_cancel = QPushButton("취소", dlg)
+            btn_cancel.clicked.connect(dlg.reject)
+            btn_box.addStretch()
+            btn_box.addWidget(btn_ok)
+            btn_box.addWidget(btn_cancel)
+            layout.addLayout(btn_box)
+
+            def dlg_key_press(ev):
+                if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    dlg.accept()
+                    ev.accept()
+                    return
+                QDialog.keyPressEvent(dlg, ev)
+            dlg.keyPressEvent = dlg_key_press
+
+            spn.setFocus()
+            spn.selectAll()
+            if dlg.exec() == QDialog.Accepted:
+                return spn.value(), True
+        except Exception as e:
+            print(f"[스탬프 번호 입력 오류]: {e}")
+        return initial_index, False
+
     def prompt_text_dialog(self, initial_text, title="설명 텍스트 입력"):
         try:
             dlg = QDialog(self)
             dlg.setWindowTitle(title)
-            dlg.setFixedSize(360, 140)
+            dlg.setFixedSize(380, 140)
+            dlg.setStyleSheet("""
+                QDialog { background-color: #FFFFFF; color: #1E293B; }
+                QLabel { color: #1E293B; font-weight: bold; }
+                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
+                QLineEdit:focus { border: 1px solid #2563EB; }
+                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px 14px; color: #1E293B; font-weight: bold; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+            """)
             layout = QVBoxLayout(dlg)
 
             lbl = QLabel(f"표시할 {title}을(를) 입력하세요:", dlg)
@@ -7108,6 +7542,7 @@ class StudioCanvasWidget(QWidget):
 
             btn_box = QHBoxLayout()
             btn_ok = QPushButton("확인", dlg)
+            btn_ok.setObjectName("btn_ok")
             btn_ok.setDefault(True)
             btn_ok.clicked.connect(dlg.accept)
             btn_cancel = QPushButton("취소", dlg)
@@ -7116,6 +7551,14 @@ class StudioCanvasWidget(QWidget):
             btn_box.addWidget(btn_ok)
             btn_box.addWidget(btn_cancel)
             layout.addLayout(btn_box)
+
+            def dlg_key_press(ev):
+                if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    dlg.accept()
+                    ev.accept()
+                    return
+                QDialog.keyPressEvent(dlg, ev)
+            dlg.keyPressEvent = dlg_key_press
 
             line_edit.setFocus()
             line_edit.selectAll()
@@ -7130,6 +7573,14 @@ class StudioCanvasWidget(QWidget):
             dlg = QDialog(self)
             dlg.setWindowTitle("단축키 뱃지 선택/입력")
             dlg.setFixedSize(380, 240)
+            dlg.setStyleSheet("""
+                QDialog { background-color: #FFFFFF; color: #1E293B; }
+                QLabel { color: #1E293B; }
+                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
+                QLineEdit:focus { border: 1px solid #2563EB; }
+                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 4px 8px; color: #1E293B; font-weight: bold; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+            """)
             layout = QVBoxLayout(dlg)
             layout.setSpacing(8)
 
@@ -7166,6 +7617,7 @@ class StudioCanvasWidget(QWidget):
             layout.addStretch()
             btn_box = QHBoxLayout()
             btn_ok = QPushButton("확인", dlg)
+            btn_ok.setObjectName("btn_ok")
             btn_ok.setDefault(True)
             btn_ok.clicked.connect(dlg.accept)
             btn_cancel = QPushButton("취소", dlg)
@@ -7174,6 +7626,14 @@ class StudioCanvasWidget(QWidget):
             btn_box.addWidget(btn_ok)
             btn_box.addWidget(btn_cancel)
             layout.addLayout(btn_box)
+
+            def dlg_key_press(ev):
+                if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    dlg.accept()
+                    ev.accept()
+                    return
+                QDialog.keyPressEvent(dlg, ev)
+            dlg.keyPressEvent = dlg_key_press
 
             line_edit.setFocus()
             line_edit.selectAll()
@@ -7188,6 +7648,14 @@ class StudioCanvasWidget(QWidget):
             dlg = QDialog(self)
             dlg.setWindowTitle("Draft 스탬프 텍스트 변경")
             dlg.setFixedSize(380, 240)
+            dlg.setStyleSheet("""
+                QDialog { background-color: #FFFFFF; color: #1E293B; }
+                QLabel { color: #1E293B; }
+                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
+                QLineEdit:focus { border: 1px solid #2563EB; }
+                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 4px 8px; color: #1E293B; font-weight: bold; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+            """)
             layout = QVBoxLayout(dlg)
             layout.setSpacing(8)
 
@@ -7223,6 +7691,7 @@ class StudioCanvasWidget(QWidget):
             layout.addStretch()
             btn_box = QHBoxLayout()
             btn_ok = QPushButton("확인", dlg)
+            btn_ok.setObjectName("btn_ok")
             btn_ok.setDefault(True)
             btn_ok.clicked.connect(dlg.accept)
             btn_cancel = QPushButton("취소", dlg)
@@ -7232,12 +7701,20 @@ class StudioCanvasWidget(QWidget):
             btn_box.addWidget(btn_cancel)
             layout.addLayout(btn_box)
 
+            def dlg_key_press(ev):
+                if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    dlg.accept()
+                    ev.accept()
+                    return
+                QDialog.keyPressEvent(dlg, ev)
+            dlg.keyPressEvent = dlg_key_press
+
             line_edit.setFocus()
             line_edit.selectAll()
             if dlg.exec() == QDialog.Accepted:
                 return line_edit.text(), True
         except Exception as e:
-            print(f"[Draft 텍스트 입력 오류]: {e}")
+            print(f"[드래프트 입력 오류]: {e}")
         return "", False
 
     def paintEvent(self, event):
@@ -7398,15 +7875,15 @@ class StudioCanvasWidget(QWidget):
                 shape_type = flow_shapes.get(self.current_mode, "process")
                 r = QRectF(self.flow_node_start, self.flow_node_end).normalized()
                 if r.width() < 15 or r.height() < 15:
-                    w, h = 140.0, 60.0
+                    w, h = 75.0, 32.0
                     if shape_type == "terminal":
-                        w, h = 120.0, 46.0
+                        w, h = 65.0, 26.0
                     elif shape_type == "decision":
-                        w, h = 130.0, 70.0
+                        w, h = 70.0, 38.0
                     elif shape_type == "database":
-                        w, h = 120.0, 70.0
+                        w, h = 65.0, 36.0
                     elif shape_type == "io":
-                        w, h = 130.0, 54.0
+                        w, h = 70.0, 30.0
                     r = QRectF(self.flow_node_start.x() - w / 2.0, self.flow_node_start.y() - h / 2.0, w, h)
                 pen = QPen(QColor("#2563EB"), 1.5, Qt.DashLine)
                 brush = QBrush(QColor(37, 99, 235, 35))
@@ -7436,55 +7913,73 @@ class StudioCanvasWidget(QWidget):
                     painter.drawRoundedRect(r, 6, 6)
                 painter.restore()
 
-            # 4. 선택된 객체 하이라이트
-            if self.selected_item and self.current_mode == "SELECT":
+            # 4. 선택된 객체 하이라이트 (다중 선택 객체 일체 지원)
+            all_selected = list(getattr(self, "selected_items", []))
+            if self.selected_item and self.selected_item not in all_selected:
+                all_selected.append(self.selected_item)
+
+            if all_selected and self.current_mode == "SELECT":
                 painter.save()
                 painter.setPen(QPen(QColor(33, 150, 243), 1.5, Qt.DotLine))
                 painter.setBrush(Qt.NoBrush)
-                if isinstance(self.selected_item, (ImageOverlayItem, DraftStampItem)):
-                    pass
-                elif isinstance(self.selected_item, StampItem):
-                    sz = self.selected_item.style.get("size", 32)
-                    r = sz / 2.0 + 3
-                    if self.selected_item.style.get("shape") == "rounded_rect":
-                        cr = float(self.selected_item.style.get("corner_radius", max(4, int(sz * 0.25)))) + 2
-                        rect = QRectF(self.selected_item.pos.x() - r, self.selected_item.pos.y() - r, sz + 6, sz + 6)
-                        painter.drawRoundedRect(rect, cr, cr)
-                    else:
-                        painter.drawEllipse(self.selected_item.pos, r, r)
-                elif isinstance(self.selected_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
-                    painter.drawRect(self.selected_item.get_rect().adjusted(-2, -2, 2, 2))
-                elif isinstance(self.selected_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem)):
-                    painter.drawRect(self.selected_item.rect.adjusted(-2, -2, 2, 2))
-                elif isinstance(self.selected_item, MagnifierZoomItem):
-                    painter.drawRect(self.selected_item.lens_rect.adjusted(-2, -2, 2, 2))
-                    painter.drawRect(self.selected_item.source_rect.adjusted(-2, -2, 2, 2))
-                elif isinstance(self.selected_item, ClickRippleItem):
-                    size = float(self.selected_item.style.get("size", 36))
-                    r = size / 2.0 + 4
-                    painter.drawEllipse(self.selected_item.pos, r, r)
-                elif isinstance(self.selected_item, CalloutItem):
-                    painter.drawRect(self.selected_item.box_rect.adjusted(-2, -2, 2, 2))
-                    painter.setBrush(QBrush(QColor(33, 150, 243)))
-                    painter.drawEllipse(self.selected_item.target_pt, 3.5, 3.5)
-                elif isinstance(self.selected_item, (ArrowItem, StepArrowItem, DimensionLineItem)):
-                    p1 = self.selected_item.start_pos
-                    p2 = self.selected_item.end_pos
-                    painter.drawLine(p1, p2)
-                    painter.setBrush(QBrush(QColor(33, 150, 243)))
-                    painter.drawEllipse(p1, 3.5, 3.5)
-                    painter.drawEllipse(p2, 3.5, 3.5)
-                elif isinstance(self.selected_item, ElbowArrowItem):
-                    p1 = self.selected_item.start_pos
-                    corner = self.selected_item.get_corner_point()
-                    p2 = self.selected_item.end_pos
-                    painter.drawLine(p1, corner)
-                    painter.drawLine(corner, p2)
-                    painter.setBrush(QBrush(QColor(33, 150, 243)))
-                    painter.drawEllipse(p1, 3.5, 3.5)
-                    painter.drawEllipse(corner, 3.0, 3.0)
-                    painter.drawEllipse(p2, 3.5, 3.5)
+                for s_item in all_selected:
+                    if isinstance(s_item, (ImageOverlayItem, DraftStampItem)):
+                        pass
+                    elif isinstance(s_item, StampItem):
+                        sz = s_item.style.get("size", 32)
+                        r = sz / 2.0 + 3
+                        if s_item.style.get("shape") == "rounded_rect":
+                            cr = float(s_item.style.get("corner_radius", max(4, int(sz * 0.25)))) + 2
+                            rect = QRectF(s_item.pos.x() - r, s_item.pos.y() - r, sz + 6, sz + 6)
+                            painter.drawRoundedRect(rect, cr, cr)
+                        else:
+                            painter.drawEllipse(s_item.pos, r, r)
+                    elif isinstance(s_item, (TextLabelItem, HotkeyBadgeItem, WordArtItem)):
+                        painter.drawRect(s_item.get_rect().adjusted(-2, -2, 2, 2))
+                    elif isinstance(s_item, (HighlightBoxItem, BlurMosaicItem, BoxDimensionItem, SpotlightMaskItem, FlowchartNodeItem)):
+                        painter.drawRect(s_item.rect.adjusted(-2, -2, 2, 2))
+                    elif isinstance(s_item, MagnifierZoomItem):
+                        painter.drawRect(s_item.lens_rect.adjusted(-2, -2, 2, 2))
+                        painter.drawRect(s_item.source_rect.adjusted(-2, -2, 2, 2))
+                    elif isinstance(s_item, ClickRippleItem):
+                        size = float(s_item.style.get("size", 36))
+                        r = size / 2.0 + 4
+                        painter.drawEllipse(s_item.pos, r, r)
+                    elif isinstance(s_item, CalloutItem):
+                        painter.drawRect(s_item.box_rect.adjusted(-2, -2, 2, 2))
+                        painter.setBrush(QBrush(QColor(33, 150, 243)))
+                        painter.drawEllipse(s_item.target_pt, 3.5, 3.5)
+                        painter.setBrush(Qt.NoBrush)
+                    elif isinstance(s_item, (ArrowItem, StepArrowItem, DimensionLineItem)):
+                        p1 = s_item.start_pos
+                        p2 = s_item.end_pos
+                        painter.drawLine(p1, p2)
+                        painter.setBrush(QBrush(QColor(33, 150, 243)))
+                        painter.drawEllipse(p1, 3.5, 3.5)
+                        painter.drawEllipse(p2, 3.5, 3.5)
+                        painter.setBrush(Qt.NoBrush)
+                    elif isinstance(s_item, ElbowArrowItem):
+                        p1 = s_item.start_pos
+                        corner = s_item.get_corner_point()
+                        p2 = s_item.end_pos
+                        painter.drawLine(p1, corner)
+                        painter.drawLine(corner, p2)
+                        painter.setBrush(QBrush(QColor(33, 150, 243)))
+                        painter.drawEllipse(p1, 3.5, 3.5)
+                        painter.drawEllipse(corner, 3.0, 3.0)
+                        painter.drawEllipse(p2, 3.5, 3.5)
+                        painter.setBrush(Qt.NoBrush)
                 painter.restore()
+
+            # 5. 러버밴드 드래그 선택 사각형 시각화
+            if getattr(self, "rubber_band_active", False):
+                rb_rect = QRectF(self.rubber_band_start, self.rubber_band_end).normalized()
+                if rb_rect.width() > 2 and rb_rect.height() > 2:
+                    painter.save()
+                    painter.setPen(QPen(QColor(37, 99, 235), 1.2, Qt.DashLine))
+                    painter.setBrush(QBrush(QColor(59, 130, 246, 35)))
+                    painter.drawRect(rb_rect)
+                    painter.restore()
         finally:
             painter.end()
 
@@ -10134,8 +10629,29 @@ class ManualStudioWindow(QMainWindow):
         self.btn_flow_doc = self.btn_flow_document
 
         self.btn_flow_align = QPushButton(tr("btn_flow_align", "자동정렬"), self)
-        self.btn_flow_align.setToolTip(tr("tip_flow_align", "캔버스의 플로우차트 노드들을 상하(TD) 또는 좌우(LR) 계층 순서로 깔끔하게 자동정렬합니다. (클릭 시 방향 전환)"))
+        self.btn_flow_align.setToolTip(tr("tip_flow_align", "캔버스의 플로우차트 노드들을 상하(TD) 또는 좌우(LR) 계층 순서로 깔끔하게 자동정렬합니다. (드롭다운으로 축 정렬/균등 배치)"))
         self.btn_flow_align.clicked.connect(self.action_auto_align_flowchart)
+
+        align_menu = QMenu(self.btn_flow_align)
+        align_menu.setStyleSheet("""
+            QMenu { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 6px; padding: 4px; }
+            QMenu::item { padding: 6px 20px 6px 10px; color: #1E293B; }
+            QMenu::item:selected { background-color: #2563EB; color: #FFFFFF; }
+            QMenu::separator { height: 1px; background-color: #E2E8F0; margin: 4px 6px; }
+        """)
+        act_m_auto = align_menu.addAction("플로우차트 자동정렬 (TD ↔ LR)")
+        act_m_auto.triggered.connect(self.action_auto_align_flowchart)
+        align_menu.addSeparator()
+        act_m_cx = align_menu.addAction("선택 객체 중심 축 X 정렬 (세로 중심)")
+        act_m_cx.triggered.connect(lambda: self.canvas.align_selected_items_center_x())
+        act_m_cy = align_menu.addAction("선택 객체 중심 축 Y 정렬 (가로 중심)")
+        act_m_cy.triggered.connect(lambda: self.canvas.align_selected_items_center_y())
+        align_menu.addSeparator()
+        act_m_dh = align_menu.addAction("선택 객체 가로 균등 재배치")
+        act_m_dh.triggered.connect(lambda: self.canvas.distribute_selected_items_horizontal())
+        act_m_dv = align_menu.addAction("선택 객체 세로 균등 재배치")
+        act_m_dv.triggered.connect(lambda: self.canvas.distribute_selected_items_vertical())
+        self.btn_flow_align.setMenu(align_menu)
 
         self.btn_mobile_link = QPushButton(tr("btn_mobile_link", "모바일 연동"), self)
         self.btn_mobile_link.setToolTip(tr("tip_mobile_link", "스마트폰/태블릿에서 손으로 그린 다이어그램을 QR 코드로 즉시 전송받습니다. (서버 무저장 P2P)"))
@@ -15012,25 +15528,25 @@ class ManualStudioWindow(QMainWindow):
                         "dst_port": dk
                     })
 
-        # 2. 정렬 방향 결정 (수직 TD ↔ 수평 LR 토글)
-        if not hasattr(self, "current_flow_direction"):
-            min_x = min(n.rect.left() for n in nodes)
-            max_x = max(n.rect.right() for n in nodes)
-            min_y = min(n.rect.top() for n in nodes)
-            max_y = max(n.rect.bottom() for n in nodes)
-            span_x = max_x - min_x
-            span_y = max_y - min_y
-            self.current_flow_direction = "LR" if span_x > span_y * 1.35 else "TD"
-        else:
-            self.current_flow_direction = "LR" if self.current_flow_direction == "TD" else "TD"
+        # 2. 정렬 방향 결정 (기하 형상 분석 및 동일 상태 연속 클릭 시 TD ↔ LR 피벗 토글)
+        min_x = min(n.rect.left() for n in nodes)
+        max_x = max(n.rect.right() for n in nodes)
+        min_y = min(n.rect.top() for n in nodes)
+        max_y = max(n.rect.bottom() for n in nodes)
+        span_x = max_x - min_x
+        span_y = max_y - min_y
 
-        direction = self.current_flow_direction
+        current_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
+        last_fingerprint = getattr(self, "_last_aligned_fingerprint", None)
+        last_dir = getattr(self, "_last_aligned_direction", None)
+
+        if last_fingerprint is not None and last_fingerprint == current_fingerprint and last_dir:
+            direction = "LR" if last_dir == "TD" else "TD"
+        else:
+            direction = "LR" if span_x > span_y * 1.25 else "TD"
 
         canvas_w = self.canvas.pixmap.width() if self.canvas.pixmap else 1920
         canvas_h = self.canvas.pixmap.height() if self.canvas.pixmap else 1080
-
-        node_w = int(nodes[0].rect.width())
-        node_h = int(nodes[0].rect.height())
 
         # 3. 그래프 위상 분석 (Topological Level / Layering)
         in_degree = {n: 0 for n in nodes}
@@ -15050,18 +15566,7 @@ class ManualStudioWindow(QMainWindow):
             layers[curr] = max(layers.get(curr, 0), lvl)
             for e in out_edges[curr]:
                 nxt = e["dst_node"]
-                it = e["item"]
-                sk = e["src_port"]
-                if isinstance(it, ElbowArrowItem) and e["dst_port"] in ("left", "right") and direction == "TD":
-                    continue
-                if isinstance(it, ElbowArrowItem) and e["dst_port"] in ("top", "bottom") and direction == "LR":
-                    continue
-                if direction == "TD" and sk in ("left", "right") and abs(curr.rect.top() - nxt.rect.top()) < 100:
-                    queue.append((nxt, lvl))
-                elif direction == "LR" and sk in ("top", "bottom") and abs(curr.rect.left() - nxt.rect.left()) < 100:
-                    queue.append((nxt, lvl))
-                else:
-                    queue.append((nxt, lvl + 1))
+                queue.append((nxt, lvl + 1))
 
         for n in nodes:
             if n not in layers:
@@ -15081,11 +15586,11 @@ class ManualStudioWindow(QMainWindow):
                     n_list_sorted = sorted(n_list, key=lambda n: n.rect.center().x())
                 else:
                     n_list_sorted = sorted(n_list, key=lambda n: n.rect.center().y())
-                mid_idx = len(n_list_sorted) // 2
+                mid_idx = (len(n_list_sorted) - 1) / 2.0
                 for i, n in enumerate(n_list_sorted):
                     cols[n] = i - mid_idx
 
-        # 5. 좌표 배치 계산 (사용자 원래 드로잉 영역 중심 보존 및 캔버스 클램핑)
+        # 5. 좌표 배치 계산 (사용자 원래 드로잉 영역 중심 보존 및 균일 간격 정렬)
         orig_min_x = min(n.rect.left() for n in nodes)
         orig_max_x = max(n.rect.right() for n in nodes)
         orig_min_y = min(n.rect.top() for n in nodes)
@@ -15095,35 +15600,54 @@ class ManualStudioWindow(QMainWindow):
 
         num_layers = max(layers.values()) + 1
 
+        layer_max_w = {l: max(n.rect.width() for n in by_layer.get(l, [nodes[0]])) for l in range(num_layers)}
+        layer_max_h = {l: max(n.rect.height() for n in by_layer.get(l, [nodes[0]])) for l in range(num_layers)}
+
         if direction == "TD":
-            row_gap = min(130.0, max(node_h + 36.0, (canvas_h - 120.0) // max(1, num_layers)))
-            col_gap = node_w + 60.0
-            total_h = (num_layers - 1) * row_gap + node_h
+            vertical_margin = min(90.0, max(42.0, (canvas_h - sum(layer_max_h.values()) - 100.0) / max(1, num_layers - 1)))
+            col_gap = max(layer_max_w.values()) + 60.0
+            total_h = sum(layer_max_h[l] for l in range(num_layers)) + (num_layers - 1) * vertical_margin
 
             start_y = max(40.0, min(canvas_h - total_h - 40.0, orig_cy - total_h / 2.0))
-            center_x = max(node_w / 2.0 + 40.0, min(canvas_w - node_w / 2.0 - 40.0, orig_cx))
+            center_x = max(max(layer_max_w.values()) / 2.0 + 40.0, min(canvas_w - max(layer_max_w.values()) / 2.0 - 40.0, orig_cx))
+
+            layer_y = {}
+            cur_y = start_y
+            for l in range(num_layers):
+                layer_y[l] = cur_y
+                cur_y += layer_max_h[l] + vertical_margin
 
             for n in nodes:
-                r = layers[n]
+                l = layers[n]
                 c = cols[n]
-                nx = center_x + c * col_gap - node_w / 2.0
-                ny = start_y + r * row_gap
-                n.rect = QRectF(nx, ny, node_w, node_h)
+                w = n.rect.width()
+                h = n.rect.height()
+                nx = center_x + c * col_gap - w / 2.0
+                ny = layer_y[l] + (layer_max_h[l] - h) / 2.0
+                n.rect = QRectF(nx, ny, w, h)
 
-        else:
-            col_gap = min(220.0, max(node_w + 40.0, (canvas_w - 140.0) // max(1, num_layers)))
-            row_gap = node_h + 50.0
-            total_w = (num_layers - 1) * col_gap + node_w
+        else:  # direction == "LR"
+            horizontal_margin = min(120.0, max(46.0, (canvas_w - sum(layer_max_w.values()) - 100.0) / max(1, num_layers - 1)))
+            row_gap = max(layer_max_h.values()) + 50.0
+            total_w = sum(layer_max_w[l] for l in range(num_layers)) + (num_layers - 1) * horizontal_margin
 
-            start_x = max(50.0, min(canvas_w - total_w - 50.0, orig_cx - total_w / 2.0))
-            center_y = max(node_h / 2.0 + 40.0, min(canvas_h - node_h / 2.0 - 40.0, orig_cy))
+            start_x = max(40.0, min(canvas_w - total_w - 40.0, orig_cx - total_w / 2.0))
+            center_y = max(max(layer_max_h.values()) / 2.0 + 40.0, min(canvas_h - max(layer_max_h.values()) / 2.0 - 40.0, orig_cy))
+
+            layer_x = {}
+            cur_x = start_x
+            for l in range(num_layers):
+                layer_x[l] = cur_x
+                cur_x += layer_max_w[l] + horizontal_margin
 
             for n in nodes:
-                c = layers[n]
+                l = layers[n]
                 r = cols[n]
-                nx = start_x + c * col_gap
-                ny = center_y + r * row_gap - node_h / 2.0
-                n.rect = QRectF(nx, ny, node_w, node_h)
+                w = n.rect.width()
+                h = n.rect.height()
+                nx = layer_x[l] + (layer_max_w[l] - w) / 2.0
+                ny = center_y + r * row_gap - h / 2.0
+                n.rect = QRectF(nx, ny, w, h)
 
         # 6. 연결선(화살표 및 직각 연결선) 100% 자동 재부착 및 직하향/수평 포트 보정
         for e in edges:
@@ -15133,54 +15657,130 @@ class ManualStudioWindow(QMainWindow):
             u_m = u.get_magnet_points()
             v_m = v.get_magnet_points()
 
-            ru, cu = layers[u], cols[u]
-            rv, cv = layers[v], cols[v]
-
             if direction == "TD":
-                if cu == cv and ru < rv:
+                row_u, col_u = layers[u], cols[u]
+                row_v, col_v = layers[v], cols[v]
+
+                if col_u == col_v and row_u < row_v:
+                    # 1. 수직 직하향 직렬 흐름 (↓)
                     it.start_pos = u_m["bottom"]
                     it.end_pos = v_m["top"]
-                elif ru == rv and cu < cv:
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "VH"
+                elif row_u == row_v and col_u < col_v:
+                    # 2. 동일 행 좌->우 수평 이동
                     it.start_pos = u_m["right"]
                     it.end_pos = v_m["left"]
-                elif ru == rv and cu > cv:
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "HV"
+                elif row_u == row_v and col_u > col_v:
+                    # 3. 동일 행 우->좌 수평 이동
                     it.start_pos = u_m["left"]
                     it.end_pos = v_m["right"]
-                elif isinstance(it, ElbowArrowItem):
-                    if cu > cv:
-                        it.start_pos = u_m["bottom"]
-                        it.end_pos = v_m["right"]
-                        it.route_mode = "VH"
-                    else:
-                        it.start_pos = u_m["bottom"]
-                        it.end_pos = v_m["left"]
-                        it.route_mode = "VH"
-                else:
-                    it.start_pos = u_m.get(e["src_port"], it.start_pos)
-                    it.end_pos = v_m.get(e["dst_port"], it.end_pos)
-
-            else:
-                if ru == rv and cu < cv:
-                    it.start_pos = u_m["right"]
-                    it.end_pos = v_m["left"]
-                elif cu == cv and ru < rv:
-                    it.start_pos = u_m["bottom"]
-                    it.end_pos = v_m["top"]
-                elif cu == cv and ru > rv:
-                    it.start_pos = u_m["top"]
-                    it.end_pos = v_m["bottom"]
-                elif isinstance(it, ElbowArrowItem):
-                    if ru > rv:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["bottom"]
+                    if isinstance(it, ElbowArrowItem):
                         it.route_mode = "HV"
-                    else:
+                elif row_u < row_v:
+                    # 4. 하향 분기 또는 복귀
+                    if col_u == 0 and col_v > 0:
                         it.start_pos = u_m["right"]
                         it.end_pos = v_m["top"]
-                        it.route_mode = "HV"
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    elif col_u == 0 and col_v < 0:
+                        it.start_pos = u_m["left"]
+                        it.end_pos = v_m["top"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    elif col_v == 0 and col_u > 0:
+                        it.start_pos = u_m["bottom"]
+                        it.end_pos = v_m["right"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "VH"
+                    elif col_v == 0 and col_u < 0:
+                        it.start_pos = u_m["bottom"]
+                        it.end_pos = v_m["left"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "VH"
+                    elif col_u < col_v:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["top"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    else:
+                        it.start_pos = u_m["left"]
+                        it.end_pos = v_m["top"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
                 else:
-                    it.start_pos = u_m.get(e["src_port"], it.start_pos)
-                    it.end_pos = v_m.get(e["dst_port"], it.end_pos)
+                    # 5. 상향 루프백
+                    it.start_pos = u_m["left"] if col_u <= col_v else u_m["right"]
+                    it.end_pos = v_m["left"] if col_u <= col_v else v_m["right"]
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "VHV"
+
+            else:  # direction == "LR"
+                col_u, row_u = layers[u], cols[u]
+                col_v, row_v = layers[v], cols[v]
+
+                if row_u == row_v and col_u < col_v:
+                    # 1. 수평 직렬 좌->우 흐름 (───>)
+                    it.start_pos = u_m["right"]
+                    it.end_pos = v_m["left"]
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "HV"
+                elif col_u == col_v and row_u < row_v:
+                    # 2. 동일 열 상->하 수직 이동
+                    it.start_pos = u_m["bottom"]
+                    it.end_pos = v_m["top"]
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "VH"
+                elif col_u == col_v and row_u > row_v:
+                    # 3. 동일 열 하->상 수직 이동
+                    it.start_pos = u_m["top"]
+                    it.end_pos = v_m["bottom"]
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "VH"
+                elif col_u < col_v:
+                    # 4. 우측 분기 또는 복귀
+                    if row_u == 0 and row_v < 0:
+                        it.start_pos = u_m["top"]
+                        it.end_pos = v_m["left"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "VH"
+                    elif row_u == 0 and row_v > 0:
+                        it.start_pos = u_m["bottom"]
+                        it.end_pos = v_m["left"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "VH"
+                    elif row_v == 0 and row_u < 0:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["top"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    elif row_v == 0 and row_u > 0:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["bottom"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    elif row_u < row_v:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["top"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                    else:
+                        it.start_pos = u_m["right"]
+                        it.end_pos = v_m["bottom"]
+                        if isinstance(it, ElbowArrowItem):
+                            it.route_mode = "HV"
+                else:
+                    # 5. 좌향 루프백
+                    it.start_pos = u_m["top"]
+                    it.end_pos = v_m["top"]
+                    if isinstance(it, ElbowArrowItem):
+                        it.route_mode = "VHV"
+
+        self._last_aligned_direction = direction
+        self._last_aligned_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
 
         self.canvas.update()
         self.canvas.sig_content_changed.emit()
