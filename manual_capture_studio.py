@@ -10365,6 +10365,267 @@ class StoryboardToggleBar(QFrame):
 
 
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# QATEditDialog — 빠른 실행 도구 모음 편집 다이얼로그
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class QATEditDialog(QDialog):
+    """빠른 실행 도구 모음(QAT)에 배치할 명령을 편집하는 다이얼로그."""
+
+    # 전체 등록 가능 명령 목록 (cmd_id, 표시명, 이모지 아이콘)
+    ALL_COMMANDS = [
+        ("capture",      "고정 캡처",      "📷"),
+        ("drag_capture", "영역 지정",      "✂️"),
+        ("sub_capture",  "부분 캡처",      "🔲"),
+        ("scroll_stitch","스크롤 캡처",    "📜"),
+        ("flowchart",    "플로우차트",     "🔷"),
+        ("doc_dock",     "문서 참조",      "📄"),
+        ("new_project",  "새 프로젝트",    "🆕"),
+        ("open_project", "열기",           "📂"),
+        ("save_project", "저장",           "💾"),
+        ("merge_project","병합",           "🔗"),
+        ("undo",         "실행 취소",      "↩️"),
+        ("redo",         "다시 실행",      "↪️"),
+        ("delete",       "삭제",           "🗑️"),
+        ("select_all",   "전체 선택",      "⬛"),
+        ("add_step",     "슬라이드 추가",  "➕"),
+        ("del_step",     "슬라이드 삭제",  "➖"),
+        ("export_ppt",   "PowerPoint",     "📊"),
+        ("export_hwp",   "HWP",            "📝"),
+        ("send_slides",  "Google Slides",  "🎞️"),
+        ("export_md",    "Markdown",       "⬇️"),
+        ("export_html",  "HTML",           "🌐"),
+        ("mode_select",  "선택 도구",      "↖️"),
+        ("mode_stamp",   "스탬프",         "🔵"),
+        ("mode_box",     "박스",           "⬜"),
+        ("mode_arrow",   "화살표",         "➡️"),
+        ("mode_elbow",   "꺾임 화살표",    "↪"),
+        ("mode_text",    "텍스트",         "T"),
+        ("mode_callout", "말풍선",         "💬"),
+        ("mode_blur",    "블러",           "〰️"),
+        ("mode_eraser",  "지우개",         "🧹"),
+        ("align_flow",   "자동정렬",       "⚡"),
+        ("renumber",     "번호 재정렬",    "🔢"),
+        ("mobile_link",  "모바일 연결",    "📱"),
+        ("ocr",          "텍스트 인식",    "🔍"),
+        ("spotlight",    "스포트라이트",   "🔆"),
+        ("dimension",    "치수선",         "📐"),
+        ("ribbon_edit",  "리본 편집",      "⚙️"),
+    ]
+    DEFAULT_QAT = ["capture", "drag_capture", "add_step", "undo", "redo", "export_ppt"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("빠른 실행 도구 모음 편집")
+        self.setFixedSize(560, 480)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog { background: #FFFFFF; }
+            QLabel#title_lbl { font-size: 13px; font-weight: bold; color: #0F172A; padding: 4px 0; }
+            QLabel#col_lbl   { font-size: 11px; font-weight: bold; color: #475569; padding: 2px 0; }
+            QListWidget {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                background: #F8FAFC; font-size: 12px; color: #1E293B; outline: none;
+            }
+            QListWidget::item { height: 32px; padding: 0 8px; border-bottom: 1px solid #E2E8F0; }
+            QListWidget::item:selected { background: #EFF6FF; color: #1D4ED8; }
+            QPushButton#btn_add { background:#EFF6FF; border:1px solid #BFDBFE; border-radius:4px;
+                color:#1D4ED8; font-size:13px; font-weight:bold; min-width:32px; min-height:28px; }
+            QPushButton#btn_add:hover { background:#DBEAFE; }
+            QPushButton#btn_remove { background:#FEF2F2; border:1px solid #FECACA; border-radius:4px;
+                color:#DC2626; font-size:13px; font-weight:bold; min-width:32px; min-height:28px; }
+            QPushButton#btn_remove:hover { background:#FEE2E2; }
+            QPushButton#btn_up, QPushButton#btn_down {
+                background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px;
+                font-size:13px; color:#334155; min-width:28px; min-height:28px; }
+            QPushButton#btn_up:hover, QPushButton#btn_down:hover { background:#E2E8F0; }
+            QPushButton#btn_up:disabled, QPushButton#btn_down:disabled { color:#CBD5E1; }
+            QPushButton#btn_reset { background:#FEF2F2; border:1px solid #FECACA; border-radius:5px;
+                color:#DC2626; font-size:11px; font-weight:bold; padding:6px 12px; }
+            QPushButton#btn_cancel { background:#F8FAFC; border:1px solid #CBD5E1; border-radius:5px;
+                color:#475569; font-size:11px; font-weight:bold; padding:6px 14px; }
+            QPushButton#btn_apply { background:#2563EB; border:1px solid #1D4ED8; border-radius:5px;
+                color:#FFFFFF; font-size:11px; font-weight:bold; padding:6px 18px; }
+            QPushButton#btn_apply:hover { background:#1D4ED8; }
+        """)
+
+        # 현재 QAT 구성 읽기
+        current_ids = []
+        if parent and hasattr(parent, "config"):
+            current_ids = list(parent.config.get("qat_items", self.DEFAULT_QAT[:]))
+        else:
+            current_ids = self.DEFAULT_QAT[:]
+
+        cmd_map = {c[0]: c for c in self.ALL_COMMANDS}
+        in_qat = set(current_ids)
+
+        # ── UI 구성 ──────────────────────────────────────────────────────
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(8)
+
+        lbl_title = QLabel("빠른 실행 도구 모음 편집")
+        lbl_title.setObjectName("title_lbl")
+        root.addWidget(lbl_title)
+
+        mid = QHBoxLayout()
+        mid.setSpacing(8)
+
+        # 좌측: 사용 가능 명령
+        left_col = QVBoxLayout()
+        lbl_left = QLabel("사용 가능한 명령")
+        lbl_left.setObjectName("col_lbl")
+        left_col.addWidget(lbl_left)
+        self.list_avail = QListWidget()
+        self.list_avail.setSelectionMode(QListWidget.SingleSelection)
+        for cmd_id, name, icon in self.ALL_COMMANDS:
+            if cmd_id not in in_qat:
+                item = QListWidgetItem(f"{icon}  {name}")
+                item.setData(Qt.UserRole, cmd_id)
+                self.list_avail.addItem(item)
+        left_col.addWidget(self.list_avail)
+        mid.addLayout(left_col)
+
+        # 중앙: >> << 버튼
+        center_col = QVBoxLayout()
+        center_col.setAlignment(Qt.AlignCenter)
+        center_col.setSpacing(6)
+        self.btn_add = QPushButton("▶▶")
+        self.btn_add.setObjectName("btn_add")
+        self.btn_add.setToolTip("선택 명령을 QAT에 추가")
+        self.btn_add.clicked.connect(self._add_cmd)
+        self.btn_remove = QPushButton("◀◀")
+        self.btn_remove.setObjectName("btn_remove")
+        self.btn_remove.setToolTip("선택 명령을 QAT에서 제거")
+        self.btn_remove.clicked.connect(self._remove_cmd)
+        center_col.addWidget(self.btn_add)
+        center_col.addWidget(self.btn_remove)
+        mid.addLayout(center_col)
+
+        # 우측: 현재 QAT 목록
+        right_col = QVBoxLayout()
+        lbl_right = QLabel("현재 도구 모음")
+        lbl_right.setObjectName("col_lbl")
+        right_col.addWidget(lbl_right)
+        self.list_qat = QListWidget()
+        self.list_qat.setSelectionMode(QListWidget.SingleSelection)
+        self.list_qat.currentRowChanged.connect(self._on_qat_row_changed)
+        for cmd_id in current_ids:
+            if cmd_id in cmd_map:
+                cid, name, icon = cmd_map[cmd_id]
+                item = QListWidgetItem(f"{icon}  {name}")
+                item.setData(Qt.UserRole, cmd_id)
+                self.list_qat.addItem(item)
+        right_col.addWidget(self.list_qat)
+
+        # 우측 ▲▼
+        updown = QHBoxLayout()
+        updown.setSpacing(4)
+        self.btn_up = QPushButton("▲")
+        self.btn_up.setObjectName("btn_up")
+        self.btn_up.clicked.connect(self._move_up)
+        self.btn_down = QPushButton("▼")
+        self.btn_down.setObjectName("btn_down")
+        self.btn_down.clicked.connect(self._move_down)
+        updown.addWidget(self.btn_up)
+        updown.addWidget(self.btn_down)
+        updown.addStretch(1)
+        right_col.addLayout(updown)
+        mid.addLayout(right_col)
+        root.addLayout(mid)
+
+        # 하단 버튼
+        bottom = QHBoxLayout()
+        self.btn_reset = QPushButton("초기화")
+        self.btn_reset.setObjectName("btn_reset")
+        self.btn_reset.clicked.connect(self._reset)
+        bottom.addWidget(self.btn_reset)
+        bottom.addStretch(1)
+        self.btn_cancel = QPushButton("취소")
+        self.btn_cancel.setObjectName("btn_cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_apply = QPushButton("적용")
+        self.btn_apply.setObjectName("btn_apply")
+        self.btn_apply.setDefault(True)
+        self.btn_apply.clicked.connect(self._apply)
+        bottom.addWidget(self.btn_cancel)
+        bottom.addWidget(self.btn_apply)
+        root.addLayout(bottom)
+
+        self._on_qat_row_changed(-1)
+        self._cmd_map = cmd_map
+
+    def _on_qat_row_changed(self, row):
+        n = self.list_qat.count()
+        self.btn_up.setEnabled(row > 0)
+        self.btn_down.setEnabled(0 <= row < n - 1)
+
+    def _add_cmd(self):
+        item = self.list_avail.currentItem()
+        if not item:
+            return
+        cmd_id = item.data(Qt.UserRole)
+        if cmd_id in self._cmd_map:
+            cid, name, icon = self._cmd_map[cmd_id]
+            new_item = QListWidgetItem(f"{icon}  {name}")
+            new_item.setData(Qt.UserRole, cmd_id)
+            self.list_qat.addItem(new_item)
+        self.list_avail.takeItem(self.list_avail.row(item))
+
+    def _remove_cmd(self):
+        item = self.list_qat.currentItem()
+        if not item:
+            return
+        cmd_id = item.data(Qt.UserRole)
+        if cmd_id in self._cmd_map:
+            cid, name, icon = self._cmd_map[cmd_id]
+            new_item = QListWidgetItem(f"{icon}  {name}")
+            new_item.setData(Qt.UserRole, cmd_id)
+            self.list_avail.addItem(new_item)
+        self.list_qat.takeItem(self.list_qat.row(item))
+
+    def _move_up(self):
+        row = self.list_qat.currentRow()
+        if row <= 0:
+            return
+        item = self.list_qat.takeItem(row)
+        self.list_qat.insertItem(row - 1, item)
+        self.list_qat.setCurrentRow(row - 1)
+
+    def _move_down(self):
+        row = self.list_qat.currentRow()
+        if row < 0 or row >= self.list_qat.count() - 1:
+            return
+        item = self.list_qat.takeItem(row)
+        self.list_qat.insertItem(row + 1, item)
+        self.list_qat.setCurrentRow(row + 1)
+
+    def _reset(self):
+        cmd_map = {c[0]: c for c in self.ALL_COMMANDS}
+        self.list_qat.clear()
+        self.list_avail.clear()
+        for cmd_id in self.DEFAULT_QAT:
+            if cmd_id in cmd_map:
+                cid, name, icon = cmd_map[cmd_id]
+                item = QListWidgetItem(f"{icon}  {name}")
+                item.setData(Qt.UserRole, cmd_id)
+                self.list_qat.addItem(item)
+        for cmd_id, name, icon in self.ALL_COMMANDS:
+            if cmd_id not in self.DEFAULT_QAT:
+                item = QListWidgetItem(f"{icon}  {name}")
+                item.setData(Qt.UserRole, cmd_id)
+                self.list_avail.addItem(item)
+
+    def _apply(self):
+        w = self.list_qat
+        order = [w.item(i).data(Qt.UserRole) for i in range(w.count())]
+        parent = self.parent()
+        if parent and hasattr(parent, "config"):
+            parent.config["qat_items"] = order
+            save_config(parent.config)
+            parent.rebuild_qat()
+        self.accept()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RibbonCustomizeDialog — MS Office 스타일 리본 그룹 편집 다이얼로그
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -11816,6 +12077,52 @@ class ManualStudioWindow(QMainWindow):
         qs_lay.addStretch(1)
         ribbon_vlayout.addWidget(quick_strip)
 
+        # ─── QAT: 빠른 실행 도구 모음 ────────────────────────────────────
+        self.qat_bar = QFrame(self)
+        self.qat_bar.setObjectName("QATBar")
+        self.qat_bar.setFixedHeight(34)
+        self.qat_bar.setStyleSheet("""
+            QFrame#QATBar {
+                background-color: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 4px;
+            }
+            QToolButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 2px;
+                font-size: 15px;
+                min-width: 26px;
+                min-height: 26px;
+            }
+            QToolButton:hover {
+                background: #EFF6FF;
+                border-color: #BFDBFE;
+            }
+            QToolButton:pressed {
+                background: #DBEAFE;
+            }
+        """)
+        self.qat_lay = QHBoxLayout(self.qat_bar)
+        self.qat_lay.setContentsMargins(4, 2, 4, 2)
+        self.qat_lay.setSpacing(2)
+        self.qat_lay.addStretch(1)
+        # 편집 버튼 (항상 우측 고정)
+        self.btn_qat_edit = QPushButton("⚙", self.qat_bar)
+        self.btn_qat_edit.setFixedSize(22, 22)
+        self.btn_qat_edit.setToolTip("빠른 실행 도구 모음 편집")
+        self.btn_qat_edit.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: 1px solid #CBD5E1;
+                border-radius: 3px; color: #94A3B8; font-size: 12px;
+            }
+            QPushButton:hover { background: #F1F5F9; color: #475569; }
+        """)
+        self.btn_qat_edit.clicked.connect(self.open_qat_edit)
+        self.qat_lay.addWidget(self.btn_qat_edit)
+        ribbon_vlayout.addWidget(self.qat_bar)
+
         main_layout.addWidget(ribbon_frame)
 
         # 2. 캔버스 영역 (스크롤 지원)
@@ -12097,6 +12404,179 @@ class ManualStudioWindow(QMainWindow):
     def open_ribbon_customize(self):
         dlg = RibbonCustomizeDialog(self)
         dlg.exec()
+
+    # ── QAT 빠른 실행 도구 모음 메서드 ────────────────────────────────────
+    _QAT_DEFAULT = ["capture", "drag_capture", "add_step", "undo", "redo", "export_ppt"]
+
+    # cmd_id → (이모지, 툴팁, callable)
+    def _get_qat_action(self, cmd_id):
+        """cmd_id에 해당하는 (이모지 아이콘 텍스트, 툴팁, 실행 함수) 반환."""
+        m = {
+            "capture":       ("📷", "고정 캡처 (F9)",          self.handle_hotkey_capture),
+            "drag_capture":  ("✂️",  "영역 지정 (Shift+F9)",   self.start_capture),
+            "sub_capture":   ("🔲", "부분 캡처 (F8)",           self.start_sub_capture),
+            "scroll_stitch": ("📜", "스크롤 캡처",              self.action_scroll_stitch),
+            "flowchart":     ("🔷", "플로우차트",               self.open_flowchart_studio),
+            "doc_dock":      ("📄", "문서 참조 패널",           self.toggle_document_dock),
+            "new_project":   ("🆕", "새 프로젝트 (Ctrl+N)",     self.action_new_project),
+            "open_project":  ("📂", "열기 (Ctrl+O)",            self.action_open_project),
+            "save_project":  ("💾", "저장 (Ctrl+S)",            self.action_save_project),
+            "merge_project": ("🔗", "프로젝트 병합",            self.action_merge_project),
+            "undo":          ("↩️",  "실행 취소 (Ctrl+Z)",      self.action_undo),
+            "redo":          ("↪️",  "다시 실행 (Ctrl+Y)",      self._qat_redo),
+            "delete":        ("🗑️", "삭제",                    self._qat_delete),
+            "select_all":    ("⬛", "전체 선택 (Ctrl+A)",       self._qat_select_all),
+            "add_step":      ("➕", "슬라이드 추가 (F10)",      self._qat_add_step),
+            "del_step":      ("➖", "슬라이드 삭제",            self._qat_del_step),
+            "export_ppt":    ("📊", "PowerPoint 내보내기 (F10)",self._qat_export_ppt),
+            "export_hwp":    ("📝", "HWP 내보내기",             self.action_export_all_hwp),
+            "send_slides":   ("🎞️", "Google Slides 전송",      self.action_send_to_google_slides),
+            "export_md":     ("⬇️",  "Markdown 내보내기",       self._qat_export_md),
+            "export_html":   ("🌐", "HTML 내보내기",            self._qat_export_html),
+            "mode_select":   ("↖️",  "선택 도구 (V)",           lambda: self.switch_mode("select")),
+            "mode_stamp":    ("🔵", "스탬프 (S)",               lambda: self.switch_mode("stamp")),
+            "mode_box":      ("⬜", "박스 (B)",                 lambda: self.switch_mode("box")),
+            "mode_arrow":    ("➡️",  "화살표 (A)",              lambda: self.switch_mode("arrow")),
+            "mode_elbow":    ("↪",  "꺾임 화살표 (E)",          lambda: self.switch_mode("elbow")),
+            "mode_text":     ("T",   "텍스트 (T)",              lambda: self.switch_mode("text")),
+            "mode_callout":  ("💬", "말풍선 (C)",               lambda: self.switch_mode("callout")),
+            "mode_blur":     ("〰️", "블러 (M)",                lambda: self.switch_mode("blur")),
+            "mode_eraser":   ("🧹", "지우개 (X)",               lambda: self.switch_mode("eraser")),
+            "align_flow":    ("⚡", "자동정렬",                  self.action_auto_align_flowchart),
+            "renumber":      ("🔢", "번호 재정렬",               self.action_renumber_stamps),
+            "mobile_link":   ("📱", "모바일 연결",              self.action_open_mobile_link),
+            "ocr":           ("🔍", "텍스트 인식",              self._qat_ocr),
+            "spotlight":     ("🔆", "스포트라이트",             lambda: self.switch_mode("spotlight")),
+            "dimension":     ("📐", "치수선",                   lambda: self.switch_mode("dimension")),
+            "ribbon_edit":   ("⚙️", "리본 편집",               self.open_ribbon_customize),
+        }
+        return m.get(cmd_id, None)
+
+    # QAT 전용 헬퍼 (직접 메서드가 없는 액션)
+    def _qat_redo(self):
+        if hasattr(self, "canvas"):
+            self.canvas.redo()
+    def _qat_delete(self):
+        if hasattr(self, "canvas"):
+            self.canvas.delete_selected_item()
+    def _qat_select_all(self):
+        if hasattr(self, "canvas"):
+            self.canvas.select_all()
+    def _qat_add_step(self):
+        self.on_filmstrip_add_step()
+    def _qat_del_step(self):
+        if hasattr(self, "filmstrip") and self.filmstrip:
+            self.filmstrip.request_delete_selected()
+    def _qat_export_ppt(self):
+        if hasattr(self, "btn_export_ppt"):
+            self.btn_export_ppt.click()
+    def _qat_export_md(self):
+        if hasattr(self, "btn_export_md"):
+            self.btn_export_md.click()
+    def _qat_export_html(self):
+        if hasattr(self, "btn_export_html"):
+            self.btn_export_html.click()
+    def _qat_ocr(self):
+        if hasattr(self, "btn_ocr"):
+            self.btn_ocr.click()
+
+    def open_qat_edit(self):
+        dlg = QATEditDialog(self)
+        dlg.exec()
+
+    def rebuild_qat(self):
+        """config의 qat_items를 읽어 qat_bar를 동적으로 재구성."""
+        if not hasattr(self, "qat_lay") or not hasattr(self, "btn_qat_edit"):
+            return
+        # 기존 버튼 전부 제거 (btn_qat_edit 제외)
+        while self.qat_lay.count() > 0:
+            item = self.qat_lay.takeAt(0)
+            if item.widget() and item.widget() is not self.btn_qat_edit:
+                item.widget().deleteLater()
+
+        cmd_ids = self.config.get("qat_items", self._QAT_DEFAULT[:])
+
+        for cmd_id in cmd_ids:
+            info = self._get_qat_action(cmd_id)
+            if info is None:
+                continue
+            icon_text, tooltip, callback = info
+            btn = QToolButton(self.qat_bar)
+            btn.setText(icon_text)
+            btn.setToolTip(tooltip)
+            btn.setFixedSize(28, 28)
+            btn.setContextMenuPolicy(Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, cid=cmd_id, b=btn: self._qat_btn_context_menu(b, cid)
+            )
+            try:
+                btn.clicked.connect(callback)
+            except Exception:
+                pass
+            self.qat_lay.addWidget(btn)
+
+        self.qat_lay.addStretch(1)
+        self.qat_lay.addWidget(self.btn_qat_edit)
+
+    def _qat_btn_context_menu(self, btn, cmd_id):
+        """QAT 버튼 우클릭: '빠른 실행에서 제거' 메뉴."""
+        menu = QMenu(self)
+        act = menu.addAction("빠른 실행에서 제거")
+        result = menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        if result == act:
+            items = list(self.config.get("qat_items", self._QAT_DEFAULT[:]))
+            if cmd_id in items:
+                items.remove(cmd_id)
+            self.config["qat_items"] = items
+            save_config(self.config)
+            self.rebuild_qat()
+
+    def _install_qat_context_menus(self):
+        """리본 탭 1의 QPushButton에 우클릭 '빠른 실행에 추가' 메뉴 설치."""
+        btn_to_cmd = {
+            "btn_capture":        "capture",
+            "btn_drag_capture":   "drag_capture",
+            "btn_sub_capture":    "sub_capture",
+            "btn_scroll_stitch":  "scroll_stitch",
+            "btn_flowchart":      "flowchart",
+            "btn_toggle_doc_dock":"doc_dock",
+            "btn_new_project":    "new_project",
+            "btn_open_project":   "open_project",
+            "btn_save_project":   "save_project",
+            "btn_merge_project":  "merge_project",
+            "btn_undo":           "undo",
+            "btn_export_all_ppt": "export_ppt",
+            "btn_export_hwp":     "export_hwp",
+            "btn_send_slides":    "send_slides",
+            "btn_mobile_link":    "mobile_link",
+        }
+        for attr, cmd_id in btn_to_cmd.items():
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            btn.setContextMenuPolicy(Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, b=btn, cid=cmd_id: self._ribbon_btn_context_menu(b, cid)
+            )
+
+    def _ribbon_btn_context_menu(self, btn, cmd_id):
+        """리본 버튼 우클릭: QAT 추가/제거 메뉴."""
+        current = list(self.config.get("qat_items", self._QAT_DEFAULT[:]))
+        menu = QMenu(self)
+        if cmd_id in current:
+            act = menu.addAction("빠른 실행에서 제거")
+        else:
+            act = menu.addAction("빠른 실행에 추가")
+        result = menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        if result == act:
+            if cmd_id in current:
+                current.remove(cmd_id)
+            else:
+                current.append(cmd_id)
+            self.config["qat_items"] = current
+            save_config(self.config)
+            self.rebuild_qat()
+
 
     def _apply_ribbon_layout(self):
         """config의 ribbon_layout 설정을 읽어 그룹 표시/숨김 즉시 적용.
@@ -13308,6 +13788,10 @@ class ManualStudioWindow(QMainWindow):
 
         # 리본 그룹 표시/숨김 복원
         self._apply_ribbon_layout()
+
+        # QAT 빠른 실행 도구 모음 구성
+        self.rebuild_qat()
+        self._install_qat_context_menus()
 
     def toggle_ribbon_collapsed(self):
         """리본 탭 패널 접기/펼치기 토글 (Ctrl+B)"""
