@@ -10363,6 +10363,219 @@ class StoryboardToggleBar(QFrame):
         self.update_btn_text()
 
 
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RibbonCustomizeDialog — MS Office 스타일 리본 그룹 편집 다이얼로그
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class RibbonCustomizeDialog(QDialog):
+    """리본 탭 1(도구) 그룹의 표시/숨김·순서를 편집하는 다이얼로그."""
+
+    # 기본 순서 및 표시 이름 (group_id → 표시명)
+    _DEFAULT_ORDER = [
+        "grp_capture", "grp_flowchart", "grp_project", "grp_select_edit",
+        "grp_step_flow", "grp_highlight_security", "grp_ocr",
+        "grp_dimension", "grp_text_wordart", "grp_slide_options",
+    ]
+    _DISPLAY_NAMES = {
+        "grp_capture":            "캡처",
+        "grp_flowchart":          "플로우차트",
+        "grp_project":            "프로젝트",
+        "grp_select_edit":        "선택·편집",
+        "grp_step_flow":          "단계·흐름",
+        "grp_highlight_security": "강조·보안",
+        "grp_ocr":                "텍스트 인식",
+        "grp_dimension":          "치수선",
+        "grp_text_wordart":       "텍스트·워드아트",
+        "grp_slide_options":      "슬라이드 옵션",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("리본 편집")
+        self.setFixedSize(360, 480)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog { background: #FFFFFF; }
+            QLabel#title_lbl {
+                font-size: 13px; font-weight: bold; color: #0F172A;
+                padding: 4px 0;
+            }
+            QLabel#hint_lbl {
+                font-size: 10px; color: #64748B; padding: 0;
+            }
+            QListWidget {
+                border: 1px solid #CBD5E1; border-radius: 6px;
+                background: #F8FAFC; font-size: 12px; color: #1E293B;
+                outline: none;
+            }
+            QListWidget::item {
+                height: 36px; padding: 0 8px; border-bottom: 1px solid #E2E8F0;
+            }
+            QListWidget::item:selected {
+                background: #EFF6FF; color: #1D4ED8;
+            }
+            QPushButton#btn_up, QPushButton#btn_down {
+                background: #F1F5F9; border: 1px solid #CBD5E1;
+                border-radius: 4px; font-size: 14px; color: #334155;
+                min-width: 32px; min-height: 32px;
+            }
+            QPushButton#btn_up:hover, QPushButton#btn_down:hover {
+                background: #E2E8F0;
+            }
+            QPushButton#btn_up:disabled, QPushButton#btn_down:disabled {
+                color: #CBD5E1;
+            }
+            QPushButton#btn_reset {
+                background: #FEF2F2; border: 1px solid #FECACA;
+                border-radius: 5px; color: #DC2626;
+                font-size: 11px; font-weight: bold; padding: 6px 12px;
+            }
+            QPushButton#btn_reset:hover { background: #FEE2E2; }
+            QPushButton#btn_cancel {
+                background: #F8FAFC; border: 1px solid #CBD5E1;
+                border-radius: 5px; color: #475569;
+                font-size: 11px; font-weight: bold; padding: 6px 14px;
+            }
+            QPushButton#btn_cancel:hover { background: #F1F5F9; }
+            QPushButton#btn_apply {
+                background: #2563EB; border: 1px solid #1D4ED8;
+                border-radius: 5px; color: #FFFFFF;
+                font-size: 11px; font-weight: bold; padding: 6px 18px;
+            }
+            QPushButton#btn_apply:hover { background: #1D4ED8; }
+        """)
+
+        # config에서 현재 순서·visible 읽기
+        cfg = {}
+        if parent and hasattr(parent, "config"):
+            cfg = parent.config.get("ribbon_layout", {}).get("tab_tools", {})
+        saved_order   = cfg.get("group_order",   self._DEFAULT_ORDER[:])
+        saved_visible = cfg.get("group_visible", {})
+
+        # saved_order에 누락된 그룹 보완 (새 버전 추가 시 대비)
+        for gid in self._DEFAULT_ORDER:
+            if gid not in saved_order:
+                saved_order.append(gid)
+
+        # ── UI 구성 ──────────────────────────────────────────────────────
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
+
+        lbl_title = QLabel("도구 탭 그룹 편집")
+        lbl_title.setObjectName("title_lbl")
+        root.addWidget(lbl_title)
+
+        lbl_hint = QLabel("• 체크 해제 시 즉시 숨김 적용\n• 순서 변경은 다음 시작 시 반영")
+        lbl_hint.setObjectName("hint_lbl")
+        root.addWidget(lbl_hint)
+
+        # 리스트 + 위아래 버튼
+        list_row = QHBoxLayout()
+        list_row.setSpacing(6)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.SingleSelection)
+        self.list_widget.currentRowChanged.connect(self._on_row_changed)
+        for gid in saved_order:
+            display = self._DISPLAY_NAMES.get(gid, gid)
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, gid)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            is_vis = saved_visible.get(gid, True)
+            item.setCheckState(Qt.Checked if is_vis else Qt.Unchecked)
+            self.list_widget.addItem(item)
+        list_row.addWidget(self.list_widget)
+
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(4)
+        btn_col.setAlignment(Qt.AlignTop)
+        self.btn_up = QPushButton("▲")
+        self.btn_up.setObjectName("btn_up")
+        self.btn_up.setToolTip("위로")
+        self.btn_up.clicked.connect(self._move_up)
+        self.btn_down = QPushButton("▼")
+        self.btn_down.setObjectName("btn_down")
+        self.btn_down.setToolTip("아래로")
+        self.btn_down.clicked.connect(self._move_down)
+        btn_col.addWidget(self.btn_up)
+        btn_col.addWidget(self.btn_down)
+        list_row.addLayout(btn_col)
+        root.addLayout(list_row)
+
+        # 하단 버튼
+        bottom = QHBoxLayout()
+        self.btn_reset = QPushButton("초기화")
+        self.btn_reset.setObjectName("btn_reset")
+        self.btn_reset.setToolTip("모든 그룹을 기본 순서·표시 상태로 복원")
+        self.btn_reset.clicked.connect(self._reset)
+        bottom.addWidget(self.btn_reset)
+        bottom.addStretch(1)
+        self.btn_cancel = QPushButton("취소")
+        self.btn_cancel.setObjectName("btn_cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_apply = QPushButton("적용")
+        self.btn_apply.setObjectName("btn_apply")
+        self.btn_apply.setDefault(True)
+        self.btn_apply.clicked.connect(self._apply)
+        bottom.addWidget(self.btn_cancel)
+        bottom.addWidget(self.btn_apply)
+        root.addLayout(bottom)
+
+        self._on_row_changed(self.list_widget.currentRow())
+
+    # ── 슬롯 ──────────────────────────────────────────────────────────────
+    def _on_row_changed(self, row):
+        self.btn_up.setEnabled(row > 0)
+        self.btn_down.setEnabled(0 <= row < self.list_widget.count() - 1)
+
+    def _move_up(self):
+        row = self.list_widget.currentRow()
+        if row <= 0:
+            return
+        item = self.list_widget.takeItem(row)
+        self.list_widget.insertItem(row - 1, item)
+        self.list_widget.setCurrentRow(row - 1)
+
+    def _move_down(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= self.list_widget.count() - 1:
+            return
+        item = self.list_widget.takeItem(row)
+        self.list_widget.insertItem(row + 1, item)
+        self.list_widget.setCurrentRow(row + 1)
+
+    def _reset(self):
+        self.list_widget.clear()
+        for gid in self._DEFAULT_ORDER:
+            display = self._DISPLAY_NAMES.get(gid, gid)
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, gid)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self.list_widget.addItem(item)
+
+    def _apply(self):
+        w = self.list_widget
+        order   = [w.item(i).data(Qt.UserRole) for i in range(w.count())]
+        visible = {w.item(i).data(Qt.UserRole): (w.item(i).checkState() == Qt.Checked)
+                   for i in range(w.count())}
+
+        parent = self.parent()
+        if parent and hasattr(parent, "config"):
+            if "ribbon_layout" not in parent.config:
+                parent.config["ribbon_layout"] = {}
+            parent.config["ribbon_layout"]["tab_tools"] = {
+                "group_order":   order,
+                "group_visible": visible,
+            }
+            save_config(parent.config)
+            parent._apply_ribbon_layout()
+
+        self.accept()
+
+
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -10573,6 +10786,20 @@ class ManualStudioWindow(QMainWindow):
         toggle_bar_lay.addWidget(self.btn_ribbon_toggle)
         toggle_bar_lay.addStretch(1)
 
+        self.btn_ribbon_customize = QPushButton("⚙ 리본 편집", toggle_bar)
+        self.btn_ribbon_customize.setFixedHeight(18)
+        self.btn_ribbon_customize.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: 1px solid #CBD5E1;
+                border-radius: 3px; color: #64748B;
+                font-size: 10px; font-weight: bold; padding: 0 6px;
+            }
+            QPushButton:hover { background: #F1F5F9; color: #1E293B; border-color: #94A3B8; }
+        """)
+        self.btn_ribbon_customize.setToolTip("리본 그룹 표시/숨김 및 순서 편집")
+        self.btn_ribbon_customize.clicked.connect(self.open_ribbon_customize)
+        toggle_bar_lay.addWidget(self.btn_ribbon_customize)
+
         ribbon_vlayout.addWidget(toggle_bar)
 
         # 1-1. 리본 탭 위젯 (2개 탭: '도구', '서식·설정')
@@ -10622,8 +10849,12 @@ class ManualStudioWindow(QMainWindow):
         cap_grid.addWidget(self.btn_sub_capture, 0, 1)
         cap_grid.addWidget(self.btn_drag_capture, 1, 0)
         cap_grid.addWidget(self.btn_scroll_stitch, 1, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture"))
-        tools_layout.addWidget(self.create_separator())
+        if not hasattr(self, "_ribbon_group_widgets"):
+            self._ribbon_group_widgets = {}
+        _g = self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture")
+        self._ribbon_group_widgets["grp_capture"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets.setdefault("_sep_grp_capture", _sep); tools_layout.addWidget(_sep)
 
         # 플로우차트 그룹 (상단: 빌더 + 문서참조, 하단: 흔히 사용하는 6대 도형)
         self.btn_flowchart = QPushButton(tr("btn_flowchart_builder", "플로우차트"), self)
@@ -10727,8 +10958,10 @@ class ManualStudioWindow(QMainWindow):
         flow_grid.addWidget(self.btn_flow_document, 1, 5)
         flow_grid.addWidget(self.btn_mobile_link, 1, 6)
 
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart")
+        self._ribbon_group_widgets["grp_flowchart"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_flowchart"] = _sep; tools_layout.addWidget(_sep)
 
         # 2) [프로젝트] 그룹
         self.btn_new_project = QPushButton(tr("btn_new_project", "새 프로젝트"), self)
@@ -10771,8 +11004,10 @@ class ManualStudioWindow(QMainWindow):
         proj_grid.addWidget(self.btn_merge_project, 1, 0)
         proj_grid.addWidget(self.btn_open_file, 1, 1)
         proj_grid.addWidget(self.btn_copy_image, 1, 2)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_project", "프로젝트"), proj_grid, "grp_project"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_project", "프로젝트"), proj_grid, "grp_project")
+        self._ribbon_group_widgets["grp_project"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_project"] = _sep; tools_layout.addWidget(_sep)
 
         # 3) [선택·편집] 그룹
         self.btn_mode_select = QPushButton(tr("btn_mode_select", "선택 도구"), self)
@@ -10795,8 +11030,10 @@ class ManualStudioWindow(QMainWindow):
         edit_grid.addWidget(self.btn_mode_select, 0, 0)
         edit_grid.addWidget(self.btn_undo, 0, 1)
         edit_grid.addWidget(self.btn_clear, 1, 0, 1, 2)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_select_edit", "선택·편집"), edit_grid, "grp_select_edit"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_select_edit", "선택·편집"), edit_grid, "grp_select_edit")
+        self._ribbon_group_widgets["grp_select_edit"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_select_edit"] = _sep; tools_layout.addWidget(_sep)
 
         # 4) [단계·흐름] 그룹 (스탬프 화살표, 직각 꺾은선 화살표 포함)
         self.btn_mode_stamp = QPushButton(tr("btn_mode_stamp", "번호 스탬프"), self)
@@ -10826,8 +11063,10 @@ class ManualStudioWindow(QMainWindow):
         step_grid.addWidget(self.btn_mode_step_arrow, 0, 1)
         step_grid.addWidget(self.btn_mode_elbow, 1, 0)
         step_grid.addWidget(self.btn_mode_arrow, 1, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_step_flow", "단계·흐름"), step_grid, "grp_step_flow"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_step_flow", "단계·흐름"), step_grid, "grp_step_flow")
+        self._ribbon_group_widgets["grp_step_flow"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_step_flow"] = _sep; tools_layout.addWidget(_sep)
 
         # 5) [강조·보안] 그룹 (비파괴 모자이크 블러 포함)
         self.btn_mode_box = QPushButton(tr("btn_mode_box", "사각 강조"), self)
@@ -10862,8 +11101,10 @@ class ManualStudioWindow(QMainWindow):
         box_grid.addWidget(self.btn_mode_eraser, 0, 1)
         box_grid.addWidget(self.btn_auto_pii, 1, 1)
         box_grid.addWidget(self.btn_draft_stamp, 0, 2, 2, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security")
+        self._ribbon_group_widgets["grp_highlight_security"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_highlight_security"] = _sep; tools_layout.addWidget(_sep)
 
         # 5-OCR) [텍스트 인식] 그룹
         self.btn_mode_ocr = QPushButton(tr("btn_mode_ocr", "OCR 추출"), self)
@@ -10881,8 +11122,10 @@ class ManualStudioWindow(QMainWindow):
         ocr_grid.setSpacing(2)
         ocr_grid.addWidget(self.btn_mode_ocr, 0, 0)
         ocr_grid.addWidget(self.btn_mode_ocr_label, 1, 0)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_ocr", "텍스트 인식"), ocr_grid, "grp_ocr"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_ocr", "텍스트 인식"), ocr_grid, "grp_ocr")
+        self._ribbon_group_widgets["grp_ocr"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_ocr"] = _sep; tools_layout.addWidget(_sep)
 
         # 5-DIM) [치수선] 그룹
         self.btn_mode_dimension = QPushButton(tr("btn_mode_dimension", "선 치수선"), self)
@@ -10900,8 +11143,10 @@ class ManualStudioWindow(QMainWindow):
         dim_grid.setSpacing(2)
         dim_grid.addWidget(self.btn_mode_dimension, 0, 0)
         dim_grid.addWidget(self.btn_mode_box_dimension, 1, 0)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_dimension", "치수선"), dim_grid, "grp_dimension"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_dimension", "치수선"), dim_grid, "grp_dimension")
+        self._ribbon_group_widgets["grp_dimension"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_dimension"] = _sep; tools_layout.addWidget(_sep)
 
         # 6) [텍스트·워드아트] 그룹
         self.btn_mode_callout = QPushButton(tr("btn_mode_callout", "설명 말풍선"), self)
@@ -10931,8 +11176,10 @@ class ManualStudioWindow(QMainWindow):
         text_grid.addWidget(self.btn_mode_text, 0, 1)
         text_grid.addWidget(self.btn_mode_hotkey, 1, 0)
         text_grid.addWidget(self.btn_mode_wordart, 1, 1)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_text_wordart", "텍스트·워드아트"), text_grid, "grp_text_wordart"))
-        tools_layout.addWidget(self.create_separator())
+        _g = self.create_ribbon_group(tr("grp_text_wordart", "텍스트·워드아트"), text_grid, "grp_text_wordart")
+        self._ribbon_group_widgets["grp_text_wordart"] = _g
+        tools_layout.addWidget(_g)
+        _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_text_wordart"] = _sep; tools_layout.addWidget(_sep)
 
         # 7) [PPT 전송] 그룹
         self.btn_ppt_fit = QPushButton(tr("btn_ppt_fit", "배율 맞춤"), self)
@@ -10974,7 +11221,9 @@ class ManualStudioWindow(QMainWindow):
         ppt_grid.addWidget(self.btn_toggle_window_frame, 0, 0)
         ppt_grid.addWidget(self.btn_ppt_fit, 0, 1)
         ppt_grid.addWidget(self.chk_ppt_title, 1, 0, 1, 2)
-        tools_layout.addWidget(self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options"))
+        _g = self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options")
+        self._ribbon_group_widgets["grp_slide_options"] = _g
+        tools_layout.addWidget(_g)
 
         tools_layout.addStretch(1)
 
@@ -11835,6 +12084,35 @@ class ManualStudioWindow(QMainWindow):
         dlg = EulaDialog(self)
         dlg.exec()
 
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 리본 편집 (MS Office 스타일 그룹 표시/순서 사용자 지정)
+    # ──────────────────────────────────────────────────────────────────────
+    _RIBBON_DEFAULT_ORDER = [
+        "grp_capture", "grp_flowchart", "grp_project", "grp_select_edit",
+        "grp_step_flow", "grp_highlight_security", "grp_ocr",
+        "grp_dimension", "grp_text_wordart", "grp_slide_options",
+    ]
+
+    def open_ribbon_customize(self):
+        dlg = RibbonCustomizeDialog(self)
+        dlg.exec()
+
+    def _apply_ribbon_layout(self):
+        """config의 ribbon_layout 설정을 읽어 그룹 표시/숨김 즉시 적용.
+        순서 변경은 다음 앱 시작 시 init_ui() 단계에서 반영됨."""
+        if not hasattr(self, "_ribbon_group_widgets"):
+            return
+        layout_cfg = self.config.get("ribbon_layout", {}).get("tab_tools", {})
+        visible_map = layout_cfg.get("group_visible", {})
+        for gid, widget in self._ribbon_group_widgets.items():
+            if gid.startswith("_sep_"):
+                # 구분선은 해당 그룹이 보일 때만 표시
+                base_gid = gid[5:]  # "_sep_grp_xxx" → "grp_xxx"
+                grp_visible = visible_map.get(base_gid, True)
+                widget.setVisible(grp_visible)
+            else:
+                widget.setVisible(visible_map.get(gid, True))
 
     def create_ribbon_group(self, title_text, layout_content, group_id=None):
         group = QFrame(self)
@@ -13027,6 +13305,9 @@ class ManualStudioWindow(QMainWindow):
         # 리본 접힘 상태 복원
         collapsed = self.config.get("ribbon_collapsed", False)
         self._apply_ribbon_collapsed(collapsed)
+
+        # 리본 그룹 표시/숨김 복원
+        self._apply_ribbon_layout()
 
     def toggle_ribbon_collapsed(self):
         """리본 탭 패널 접기/펼치기 토글 (Ctrl+B)"""
