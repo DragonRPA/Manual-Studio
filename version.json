@@ -1,7 +1,8 @@
-﻿{
-  "version": "1.9.5",
+{
+  "version": "1.9.6",
   "release_date": "2026-09-17",
   "channel": "stable",
-  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/latest",
-  "release_notes_url": "https://github.com/DragonRPA/Manual-Studio/blob/main/RELEASE_NOTES.md"
+  "download_url": "https://pub-4bd1b65a7bcc4eef8993da27e7362727.r2.dev/releases/ManualStudio_latest.exe",
+  "release_notes_url": "https://github.com/DragonRPA/Manual-Studio/blob/main/RELEASE_NOTES.md",
+  "version_code": 195
 }

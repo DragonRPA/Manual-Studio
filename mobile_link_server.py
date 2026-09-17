@@ -203,25 +203,31 @@ class MobileLinkServer(QObject):
 <title>매뉴얼 스튜디오 모바일 (Manual Studio Mobile)</title>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }}
-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #F8FAFC; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }}
-header {{ background: #1E293B; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }}
-header h1 {{ font-size: 15px; font-weight: 700; color: #38BDF8; display: flex; align-items: center; gap: 6px; }}
-header .actions {{ display: flex; gap: 8px; }}
-.btn {{ border: none; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #F8FAFC; height: 100vh; display: flex; flex-direction: column; overflow: hidden; padding-bottom: env(safe-area-inset-bottom, 0); }}
+header {{ background: #1E293B; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }}
+header h1 {{ font-size: 14px; font-weight: 700; color: #38BDF8; display: flex; align-items: center; gap: 4px; }}
+header .actions {{ display: flex; gap: 6px; }}
+.btn {{ border: none; border-radius: 5px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }}
 .btn-primary {{ background: #2563EB; color: #FFFFFF; }}
 .btn-primary:active {{ background: #1D4ED8; }}
 .btn-secondary {{ background: #334155; color: #E2E8F0; }}
 .btn-camera {{ background: #059669; color: #FFFFFF; }}
-#toolbar {{ background: #1E293B; padding: 8px 12px; display: flex; gap: 6px; overflow-x: auto; border-bottom: 1px solid #334155; }}
-.tool-btn {{ background: #334155; color: #E2E8F0; border: 1px solid #475569; border-radius: 6px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }}
+#toolbar {{ background: #1E293B; padding: 6px 8px; display: flex; gap: 5px; overflow-x: auto; border-bottom: 1px solid #334155; }}
+.tool-btn {{ background: #334155; color: #E2E8F0; border: 1px solid #475569; border-radius: 4px; padding: 4px 8px; font-size: 10px; white-space: nowrap; }}
 .tool-btn.active {{ background: #2563EB; border-color: #60A5FA; color: #FFFFFF; }}
 #canvas-container {{ flex: 1; position: relative; background: #0B1120; overflow: hidden; touch-action: none; }}
-.node {{ position: absolute; min-width: 65px; min-height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; cursor: move; box-shadow: 0 2px 4px rgba(0,0,0,0.3); border: 1.5px solid #3B82F6; background: #1E3A8A; color: #FFFFFF; padding: 3px 6px; text-align: center; }}
-.node.terminal {{ border-radius: 14px; border-color: #10B981; background: #064E3B; }}
-.node.decision {{ transform: rotate(0deg); border-color: #F59E0B; background: #78350F; }}
-.node.database {{ border-radius: 3px; border-color: #8B5CF6; background: #4C1D95; }}
-.node.io {{ border-radius: 2px; transform: skew(-10deg); border-color: #10B981; background: #065F46; }}
-#toast {{ position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,0.95); border: 1px solid #38BDF8; color: #FFFFFF; padding: 10px 18px; border-radius: 20px; font-size: 13px; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }}
+.node {{ position: absolute; min-width: 66px; min-height: 30px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold; cursor: move; border: 1.5px solid #2563EB; background: #EFF6FF; color: #0F172A; padding: 2px 4px; text-align: center; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }}
+.node.terminal {{ border-radius: 15px; border-color: #059669; background: #ECFDF5; }}
+.node.decision {{ clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); border: none; background: #FFFBEB; color: #D97706; outline: 1.5px solid #D97706; outline-offset: -1.5px; }}
+.node.database {{ border-radius: 3px; border-color: #7C3AED; background: #FAF5FF; }}
+.node.io {{ transform: skew(-12deg); border-color: #16A34A; background: #F0FDF4; }}
+.node.document {{ clip-path: polygon(0% 0%, 100% 0%, 100% 85%, 75% 100%, 25% 75%, 0% 90%); border: none; background: #EEF2FF; color: #4F46E5; outline: 1.5px solid #4F46E5; outline-offset: -1.5px; }}
+.port {{ position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #3B82F6; border: 1px solid #FFFFFF; }}
+.port.top {{ top: -3px; left: calc(50% - 3px); }}
+.port.bottom {{ bottom: -3px; left: calc(50% - 3px); }}
+.port.left {{ left: -3px; top: calc(50% - 3px); }}
+.port.right {{ right: -3px; top: calc(50% - 3px); }}
+#toast {{ position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,0.95); border: 1px solid #38BDF8; color: #FFFFFF; padding: 8px 16px; border-radius: 16px; font-size: 12px; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }}
 #photo-input {{ display: none; }}
 </style>
 </head>
@@ -229,17 +235,18 @@ header .actions {{ display: flex; gap: 8px; }}
 <header>
   <h1>매뉴얼 스튜디오 모바일</h1>
   <div class="actions">
-    <button class="btn btn-camera" onclick="document.getElementById('photo-input').click()">📷 손그림 사진</button>
-    <button class="btn btn-secondary" onclick="autoAlign()">⚡ 자동정렬</button>
+    <button class="btn btn-camera" onclick="document.getElementById('photo-input').click()">📷 사진</button>
+    <button class="btn btn-secondary" onclick="autoAlign()">⚡ 정렬</button>
     <button class="btn btn-primary" onclick="sendToPc()">💻 PC 전송</button>
   </div>
 </header>
 <div id="toolbar">
   <button class="tool-btn" onclick="addNode('terminal', '시작/종료')">🟢 시작/종료</button>
-  <button class="tool-btn" onclick="addNode('process', '작업 단계')">🟦 일반작업</button>
+  <button class="tool-btn" onclick="addNode('process', '일반 작업')">🟦 일반작업</button>
   <button class="tool-btn" onclick="addNode('decision', '조건 분기')">🔶 조건분기</button>
-  <button class="tool-btn" onclick="addNode('io', '입출력')">🟩 입출력</button>
+  <button class="tool-btn" onclick="addNode('io', '데이터 입출력')">🟩 입출력</button>
   <button class="tool-btn" onclick="addNode('database', '데이터베이스')">🟪 DB</button>
+  <button class="tool-btn" onclick="addNode('document', '문서 서식')">📄 문서</button>
   <button class="tool-btn" onclick="clearCanvas()">🗑️ 비우기</button>
 </div>
 <div id="canvas-container"></div>
