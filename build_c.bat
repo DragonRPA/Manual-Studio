@@ -9,7 +9,23 @@ if not exist "C:\ManualStudioBuild\temp" mkdir "C:\ManualStudioBuild\temp"
 set TEMP=C:\ManualStudioBuild\temp
 set TMP=C:\ManualStudioBuild\temp
 
-REM 2. Run Nuitka C-Compilation
+REM 2. Read version from version.json (Python one-liner)
+for /f "delims=" %%V in ('python -c "import json; d=json.load(open('version.json',encoding='utf-8')); print(d['version'])"') do set APP_VERSION=%%V
+if "%APP_VERSION%"=="" (
+  echo [WARN] version.json 읽기 실패 - 기본값 1.0.0 사용
+  set APP_VERSION=1.0.0
+)
+
+REM 3. Build version suffix for filename: v1.9.3 -> v1_9_3 (경로 안전)
+set VER_SAFE=%APP_VERSION:.=_%
+set OUTPUT_NAME=ManualStudio_v%APP_VERSION%.exe
+set OUTPUT_NAME_SAFE=ManualStudio_v%VER_SAFE%.exe
+
+echo Version  : %APP_VERSION%
+echo Output   : %OUTPUT_NAME%
+echo.
+
+REM 4. Run Nuitka C-Compilation
 python -m nuitka ^
   --standalone ^
   --onefile ^
@@ -32,12 +48,12 @@ python -m nuitka ^
   --windows-icon-from-ico="assets/manual_studio.ico" ^
   --windows-company-name="DragonRPA Co." ^
   --windows-product-name="Manual Studio" ^
-  --windows-file-version=1.9.2.0 ^
-  --windows-product-version=1.9.2.0 ^
-  --windows-file-description="DragonRPA Manual Studio" ^
+  --windows-file-version=%APP_VERSION%.0 ^
+  --windows-product-version=%APP_VERSION%.0 ^
+  --windows-file-description="DragonRPA Manual Studio v%APP_VERSION%" ^
   --assume-yes-for-downloads ^
   --output-dir="C:\ManualStudioBuild" ^
-  --output-filename="ManualStudio.exe" ^
+  --output-filename="%OUTPUT_NAME%" ^
   manual_capture_studio.py
 
 if %ERRORLEVEL% NEQ 0 (
@@ -45,10 +61,18 @@ if %ERRORLEVEL% NEQ 0 (
   exit /b %ERRORLEVEL%
 )
 
-REM 3. Copy compiled executable to project directory
+REM 5. Copy to project root (버전 포함 파일명 + 최신본 고정 파일명 둘 다 유지)
 if not exist "dist_c" mkdir "dist_c"
-copy /y "C:\ManualStudioBuild\ManualStudio.exe" "dist_c\ManualStudio.exe"
-copy /y "C:\ManualStudioBuild\ManualStudio.exe" "ManualStudio.exe"
+copy /y "C:\ManualStudioBuild\%OUTPUT_NAME%" "dist_c\%OUTPUT_NAME%"
+copy /y "C:\ManualStudioBuild\%OUTPUT_NAME%" "%OUTPUT_NAME%"
+copy /y "C:\ManualStudioBuild\%OUTPUT_NAME%" "ManualStudio_latest.exe"
 
+REM 6. 빌드 크기 출력
+for %%F in ("%OUTPUT_NAME%") do set FILE_SIZE=%%~zF
+set /a FILE_MB=%FILE_SIZE% / 1048576
+
+echo.
 echo [SUCCESS] C-Compilation completed successfully!
-echo Binary path: ManualStudio.exe (27.97 MB)
+echo Output (versioned) : %OUTPUT_NAME%  (%FILE_MB% MB)
+echo Output (latest)    : ManualStudio_latest.exe
+echo dist_c\            : dist_c\%OUTPUT_NAME%
