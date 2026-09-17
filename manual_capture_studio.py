@@ -110,7 +110,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.9.1"
+APP_VERSION = "v1.9.2"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -4111,19 +4111,37 @@ class MermaidLayoutEngine:
         for nid, rk in ranks.items():
             level_groups.setdefault(rk, []).append(nid)
 
-        created_node_items = {}
-        x_gap = 105 if direction == "TD" else 115
-        y_gap = 65 if direction == "TD" else 55
+        # ── 간격 계산: 노드 크기 기반 상대 공식 (겹침 완전 방지)
+        # TD 방향: 가로(x) = 노드폭 + 여유30px, 세로(y) = 노드높이 + 화살표/레이블 여유50px
+        # LR 방향: 가로(x) = 노드폭 + 화살표/레이블 여유60px, 세로(y) = 노드높이 + 여유28px
+        if direction == "TD":
+            x_step = node_w + 30    # 각 노드 간 수평 간격 (노드폭 포함)
+            y_step = node_h + 50    # 각 레벨 간 수직 간격 (노드높이 포함) → 최소 50px 여백
+        else:  # LR
+            x_step = node_w + 60    # 각 레벨 간 수평 간격
+            y_step = node_h + 28    # 각 노드 간 수직 간격
 
+        # 각 rank별 최대 노드 수 계산 (중앙 정렬용)
+        max_count_cross = max((len(v) for v in level_groups.values()), default=1)
+
+        created_node_items = {}
         for rk, nids in level_groups.items():
+            count = len(nids)
             for idx, nid in enumerate(nids):
                 info = nodes[nid]
                 if direction == "TD":
-                    x = base_x + idx * x_gap
-                    y = base_y + rk * y_gap
+                    # 같은 rank 내 노드들을 중앙 정렬
+                    total_width = count * x_step - 30  # 마지막 노드는 gap 없음
+                    max_width = max_count_cross * x_step - 30
+                    offset_x = (max_width - total_width) // 2
+                    x = base_x + offset_x + idx * x_step
+                    y = base_y + rk * y_step
                 else:  # LR
-                    x = base_x + rk * x_gap
-                    y = base_y + idx * y_gap
+                    x = base_x + rk * x_step
+                    total_height = count * y_step - 28
+                    max_height = max_count_cross * y_step - 28
+                    offset_y = (max_height - total_height) // 2
+                    y = base_y + offset_y + idx * y_step
 
                 shape = info.get("shape", "process")
                 bg_col = "#EFF6FF"
@@ -14482,6 +14500,20 @@ class ManualStudioWindow(QMainWindow):
             self.hide_keytips()
             return
 
+        # PgUp / PgDn: 이전/다음 슬라이드 이동
+        if key == Qt.Key_PageUp:
+            target = self.current_step_idx - 1
+            if target >= 0:
+                self.on_filmstrip_step_selected(target)
+            self.hide_keytips()
+            return
+        elif key == Qt.Key_PageDown:
+            target = self.current_step_idx + 1
+            if target < len(self.storyboard_steps):
+                self.on_filmstrip_step_selected(target)
+            self.hide_keytips()
+            return
+
         # 5. 단일 키 모드 전환 (입력창에 포커스가 없을 때만 작동)
         focus_w = QApplication.focusWidget()
         in_editor = isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox))
@@ -15668,8 +15700,12 @@ class ManualStudioWindow(QMainWindow):
         layer_max_h = {l: max(n.rect.height() for n in by_layer.get(l, [nodes[0]])) for l in range(num_layers)}
 
         if direction == "TD":
-            vertical_margin = min(90.0, max(42.0, (canvas_h - sum(layer_max_h.values()) - 100.0) / max(1, num_layers - 1)))
-            col_gap = max(layer_max_w.values()) + 60.0
+            # 최소 수직 여백 = 노드 높이 × 1.5 (화살표 + 레이블 공간 보장)
+            avg_node_h = sum(layer_max_h.values()) / max(1, num_layers)
+            min_v_margin = avg_node_h * 1.5
+            vertical_margin = max(min_v_margin, min(90.0, (canvas_h - sum(layer_max_h.values()) - 100.0) / max(1, num_layers - 1)))
+            # 최소 수평 간격 = 최대 노드폭 + 30px 여유
+            col_gap = max(layer_max_w.values()) + 30.0
             total_h = sum(layer_max_h[l] for l in range(num_layers)) + (num_layers - 1) * vertical_margin
 
             start_y = max(40.0, min(canvas_h - total_h - 40.0, orig_cy - total_h / 2.0))
@@ -15691,8 +15727,12 @@ class ManualStudioWindow(QMainWindow):
                 n.rect = QRectF(nx, ny, w, h)
 
         else:  # direction == "LR"
-            horizontal_margin = min(120.0, max(46.0, (canvas_w - sum(layer_max_w.values()) - 100.0) / max(1, num_layers - 1)))
-            row_gap = max(layer_max_h.values()) + 50.0
+            # 최소 수평 여백 = 노드 폭 × 1.8 (화살표 + 레이블 공간 보장)
+            avg_node_w = sum(layer_max_w.values()) / max(1, num_layers)
+            min_h_margin = avg_node_w * 1.8
+            horizontal_margin = max(min_h_margin, min(160.0, (canvas_w - sum(layer_max_w.values()) - 100.0) / max(1, num_layers - 1)))
+            # 최소 수직 간격 = 최대 노드높이 + 24px 여유
+            row_gap = max(layer_max_h.values()) + 24.0
             total_w = sum(layer_max_w[l] for l in range(num_layers)) + (num_layers - 1) * horizontal_margin
 
             start_x = max(40.0, min(canvas_w - total_w - 40.0, orig_cx - total_w / 2.0))

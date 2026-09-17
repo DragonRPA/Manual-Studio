@@ -24,7 +24,7 @@ from PySide6.QtGui import QIcon, QFont, QColor, QDesktopServices
 from dragon_rpa_ci_data import get_dragon_rpa_ci_pixmap
 from i18n_manager import tr
 
-PRIMARY_VERSION_URL = "https://raw.githubusercontent.com/DragonRPA/Manual-Studio/main/version.json"
+PRIMARY_VERSION_URL = "https://pub-4bd1b65a7bcc4eef8993da27e7362727.r2.dev/releases/version.json"
 FALLBACK_GITHUB_API = "https://api.github.com/repos/DragonRPA/Manual-Studio/releases/latest"
 DEFAULT_RELEASE_PAGE = "https://github.com/DragonRPA/Manual-Studio/releases"
 

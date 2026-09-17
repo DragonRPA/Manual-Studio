@@ -1,10 +1,10 @@
 {
-  "version": "1.9.2",
-  "version_code": 192,
+  "version": "1.9.3",
+  "version_code": 193,
   "release_date": "2026-09-17",
-  "release_title": "Manual Studio v1.9.2 도구 리본 접기/펼치기 (저해상도 자동 최적화)",
-  "release_notes": "• 도구 리본 접기/펼치기 토글 버튼 추가 (▼/▶ 도구 리본)\n• 단축키 Ctrl+B로 리본 탭 패널 즉시 접기/펼치기\n• 화면 높이 800px 미만 저해상도 환경에서 앱 시작 시 리본 자동 접힘\n• 접힘 상태 config.json 영속 저장 - 재시작 후 복원\n• 퀵스트립(색상·두께·상태 배지)은 리본 접힘과 무관하게 항상 표시",
-  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.9.2/ManualStudio.exe",
+  "release_title": "Manual Studio v1.9.3 PgUp/PgDn 슬라이드 이동 및 Mermaid 플로우차트 겹침 근본 수정",
+  "release_notes": "• PgUp/PgDn 키로 이전/다음 슬라이드 즉시 이동\n• Mermaid 플로우차트 레이아웃 엔진 근본 재설계: 노드 크기 기반 상대 간격 공식 적용\n• TD 방향: y_step = 노드높이+50px, x_step = 노드폭+30px (기존 하드코딩 65/105 대체)\n• LR 방향: x_step = 노드폭+60px, y_step = 노드높이+28px (기존 115/55 대체)\n• 같은 rank 노드 중앙 정렬: 상위 노드 기준 자식 노드들을 가운데 정렬\n• 자동정렬(auto_align) 최소 여백도 노드 크기 비례 공식으로 통일 (샌드위치 겹침 완전 해소)",
+  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.9.3/ManualStudio.exe",
   "release_page_url": "https://github.com/DragonRPA/Manual-Studio/releases",
   "min_required_version": "1.0.0",
   "force_update": false
