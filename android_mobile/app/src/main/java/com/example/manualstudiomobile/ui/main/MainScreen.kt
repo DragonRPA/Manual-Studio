@@ -1,6 +1,5 @@
 package com.example.manualstudiomobile.ui.main
 
-import androidx.compose.ui.draw.clip
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -25,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -51,6 +51,7 @@ import java.io.ByteArrayOutputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -71,10 +72,10 @@ enum class PortPosition {
 
 data class FlowNode(
     val id: String,
-    var text: String,
+    val text: String,
     val shape: NodeShape,
-    var x: Float,
-    var y: Float,
+    val x: Float,
+    val y: Float,
     val width: Float = 66f,
     val height: Float = 30f
 )
@@ -85,7 +86,7 @@ data class FlowEdge(
     val toNodeId: String,
     val fromPort: PortPosition = PortPosition.BOTTOM,
     val toPort: PortPosition = PortPosition.TOP,
-    var label: String = ""
+    val label: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,33 +98,40 @@ fun MainScreen(
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("ManualStudioPrefs", Context.MODE_PRIVATE) }
 
-    // SharedPreferences 영속 데이터 불러오기 (화면 회전/앱 재실행 시 100% 복원)
+    // SharedPreferences 영속 데이터 불러오기 (최초 실행 시 완전 빈 캔버스)
     val savedData = remember { loadFlowchartFromPrefs(prefs) }
 
     var nodes by remember { mutableStateOf(savedData.first) }
     var edges by remember { mutableStateOf(savedData.second) }
     var direction by remember { mutableStateOf(prefs.getString("flow_direction", "TD") ?: "TD") }
 
+    // 선택 상태 (노드 선택 vs 선 선택)
+    var selectedNodeId by remember { mutableStateOf<String?>(null) }
+    var selectedEdgeId by remember { mutableStateOf<String?>(null) }
+
+    // 마그넷 포트 연결 모드 상태
+    var connectMode by remember { mutableStateOf(false) }
+    var connectStartNodeId by remember { mutableStateOf<String?>(null) }
+    var connectStartPort by remember { mutableStateOf<PortPosition?>(null) }
+
+    var editingNode by remember { mutableStateOf<FlowNode?>(null) }
+    var showSendDialog by remember { mutableStateOf(false) }
+    var lastCapturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showPhotoDialog by remember { mutableStateOf(false) }
+
+    // 전송 설정 (Wi-Fi 직접 vs 원격 중계)
+    var sendMode by remember { mutableStateOf(prefs.getString("send_mode", "wifi") ?: "wifi") } // "wifi" or "cloud"
+    var pcIp by remember { mutableStateOf(prefs.getString("pc_ip", "192.168.0.") ?: "192.168.0.") }
+    var pcPin by remember { mutableStateOf(prefs.getString("pc_pin", "") ?: "") }
+    var cloudServerUrl by remember { mutableStateOf(prefs.getString("cloud_relay_url", "https://pub-4bd1b65a7bcc4eef8993da27e7362727.r2.dev") ?: "https://pub-4bd1b65a7bcc4eef8993da27e7362727.r2.dev") }
+    var isSending by remember { mutableStateOf(false) }
+
     // 변경사항 자동 저장
     fun persistState() {
         saveFlowchartToPrefs(prefs, nodes, edges, direction)
     }
 
-    // 마그넷 포트 연결 모드 상태
-    var connectMode by remember { mutableStateOf(false) }
-    var selectedPortNodeId by remember { mutableStateOf<String?>(null) }
-    var selectedPortPos by remember { mutableStateOf<PortPosition?>(null) }
-
-    var selectedNodeForEdit by remember { mutableStateOf<FlowNode?>(null) }
-    var showSendDialog by remember { mutableStateOf(false) }
-    var lastCapturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var showPhotoDialog by remember { mutableStateOf(false) }
-
-    var pcIp by remember { mutableStateOf(prefs.getString("pc_ip", "192.168.0.") ?: "192.168.0.") }
-    var pcPin by remember { mutableStateOf(prefs.getString("pc_pin", "") ?: "") }
-    var isSending by remember { mutableStateOf(false) }
-
-    // 카메라 직접 촬영 런처 (파일 선택기 우회, 카메라 앱 직접 실행)
+    // 카메라 직접 촬영 런처
     val directCameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -136,7 +144,6 @@ fun MainScreen(
         }
     }
 
-    // 카메라 권한 요청 런처
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -157,6 +164,39 @@ fun MainScreen(
         }
     }
 
+    // 두 노드 간 지능형 연결 함수 (기존 연결선 자동 교체 및 최적 포트 자동 계산)
+    fun connectNodesSmart(fromId: String, toId: String, manualFromPort: PortPosition? = null, manualToPort: PortPosition? = null) {
+        if (fromId == toId) return
+
+        val nodeMap = nodes.associateBy { it.id }
+        val fromNode = nodeMap[fromId] ?: return
+        val toNode = nodeMap[toId] ?: return
+
+        val (bestFromPort, bestToPort) = if (manualFromPort != null && manualToPort != null) {
+            Pair(manualFromPort, manualToPort)
+        } else {
+            calculateBestPorts(fromNode, toNode)
+        }
+
+        // 기존에 두 노드 사이에 연결된 선이 있다면 제거 (재차 연결 시 마지막 선만 단일 유지)
+        val filteredEdges = edges.filterNot {
+            (it.fromNodeId == fromId && it.toNodeId == toId) || (it.fromNodeId == toId && it.toNodeId == fromId)
+        }
+
+        val newEdge = FlowEdge(
+            id = "e_${System.currentTimeMillis()}",
+            fromNodeId = fromId,
+            toNodeId = toId,
+            fromPort = manualFromPort ?: bestFromPort,
+            toPort = manualToPort ?: bestToPort
+        )
+
+        edges = filteredEdges + newEdge
+        selectedEdgeId = newEdge.id
+        persistState()
+        Toast.makeText(context, "✅ 연결선이 설정되었습니다 (기존 연결선 자동 정리)", Toast.LENGTH_SHORT).show()
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -173,11 +213,11 @@ fun MainScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         if (connectMode) {
                             Surface(
-                                color = Color(0xFF2563EB),
+                                color = Color(0xFFEF4444),
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    "연결 모드",
+                                    "연결 모드 ON",
                                     fontSize = 10.sp,
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
@@ -199,13 +239,13 @@ fun MainScreen(
                         Text("📷", fontSize = 16.sp)
                     }
 
-                    // 2. 마그넷 연결선 모드 토글 버튼
+                    // 2. 마그넷 연결 모드 토글
                     IconButton(
                         onClick = {
                             connectMode = !connectMode
-                            selectedPortNodeId = null
-                            selectedPortPos = null
-                            val msg = if (connectMode) "연결 모드: 노드의 접점을 차례로 터치하세요" else "연결 모드 종료"
+                            connectStartNodeId = null
+                            connectStartPort = null
+                            val msg = if (connectMode) "연결 모드: 노드나 접점을 차례로 터치하세요" else "연결 모드 종료"
                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.size(36.dp)
@@ -213,21 +253,21 @@ fun MainScreen(
                         Text(if (connectMode) "🔗" else "⛓️", fontSize = 16.sp)
                     }
 
-                    // 3. 자동정렬 (TD/LR 전환 및 겹침 제로 정렬)
+                    // 3. 자동정렬 (계층형 트리 재정렬, 실시간 리스트 재생성)
                     IconButton(
                         onClick = {
                             direction = if (direction == "TD") "LR" else "TD"
                             prefs.edit().putString("flow_direction", direction).apply()
-                            nodes = autoAlignNodes(nodes, direction)
+                            nodes = autoAlignNodes(nodes, edges, direction)
                             persistState()
-                            Toast.makeText(context, "자동정렬 완료 (${if (direction == "TD") "상하 TD" else "좌우 LR"})", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "⚡ 자동정렬 완료 (${if (direction == "TD") "상하 TD" else "좌우 LR"})", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Text("⚡", fontSize = 16.sp)
                     }
 
-                    // 4. PC 전송 버튼
+                    // 4. PC 전송 버튼 (원터치 전송)
                     Button(
                         onClick = { showSendDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
@@ -242,14 +282,82 @@ fun MainScreen(
             )
         },
         bottomBar = {
-            // 하단 초슬림 팔레트 (시스템 내비게이션 바 겹침 완벽 방지)
+            // 하단 팔레트 및 선택 조작 패널 (시스템 내비게이션 바 완벽 패딩)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1E293B))
-                    .navigationBarsPadding() // 필수: 세로/가로 모드 시 홈 버튼 및 제스처 바 겹침 완벽 차단
+                    .navigationBarsPadding() // 세로/가로 모드 시 홈 버튼/제스처 바 겹침 완벽 차단
                     .padding(vertical = 4.dp)
             ) {
+                // 선택된 노드나 선이 있을 때 나타나는 즉시 조작 액션 바
+                if (selectedNodeId != null || selectedEdgeId != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (selectedNodeId != null) "선택된 노드: ${nodes.find { it.id == selectedNodeId }?.text}" else "선택된 연결선",
+                            fontSize = 11.sp,
+                            color = Color(0xFF93C5FD),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (selectedNodeId != null) {
+                                Button(
+                                    onClick = {
+                                        editingNode = nodes.find { it.id == selectedNodeId }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text("✏️ 수정", fontSize = 10.sp)
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    if (selectedNodeId != null) {
+                                        val delId = selectedNodeId
+                                        nodes = nodes.filter { it.id != delId }
+                                        edges = edges.filter { it.fromNodeId != delId && it.toNodeId != delId }
+                                        selectedNodeId = null
+                                        persistState()
+                                        Toast.makeText(context, "노드가 삭제되었습니다.", Toast.LENGTH_SHORT).show()
+                                    } else if (selectedEdgeId != null) {
+                                        val delId = selectedEdgeId
+                                        edges = edges.filter { it.id != delId }
+                                        selectedEdgeId = null
+                                        persistState()
+                                        Toast.makeText(context, "연결선이 삭제되었습니다.", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text("🗑️ 삭제", fontSize = 10.sp, color = Color.White)
+                            }
+                            Button(
+                                onClick = {
+                                    selectedNodeId = null
+                                    selectedEdgeId = null
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF475569)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text("선택 해제", fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    Divider(color = Color(0xFF334155), thickness = 0.5.dp, modifier = Modifier.padding(vertical = 2.dp))
+                }
+
+                // 하단 다이어그램 도형 추가 버튼군 (컴팩트 마이크로 버튼)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -258,7 +366,6 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // ISO 표준 다이어그램 도형 추가 버튼군 (컴팩트 마이크로 사이즈)
                     NodeShape.values().forEach { shape ->
                         Button(
                             onClick = {
@@ -273,20 +380,24 @@ fun MainScreen(
                                     width = 66f,
                                     height = 30f
                                 )
-                                // 이전 노드가 있으면 자동으로 연결선 연결
+
+                                // 이전 노드가 있다면 자동으로 자연스럽게 연결
                                 val newEdges = if (nodes.isNotEmpty()) {
                                     val prev = nodes.last()
+                                    val (fPort, tPort) = calculateBestPorts(prev, newNode)
                                     edges + FlowEdge(
                                         id = "e_${System.currentTimeMillis()}",
                                         fromNodeId = prev.id,
                                         toNodeId = newNodeId,
-                                        fromPort = if (direction == "TD") PortPosition.BOTTOM else PortPosition.RIGHT,
-                                        toPort = if (direction == "TD") PortPosition.TOP else PortPosition.LEFT
+                                        fromPort = fPort,
+                                        toPort = tPort
                                     )
                                 } else edges
 
                                 nodes = nodes + newNode
                                 edges = newEdges
+                                selectedNodeId = newNodeId
+                                selectedEdgeId = null
                                 persistState()
                             },
                             colors = ButtonDefaults.buttonColors(
@@ -298,19 +409,17 @@ fun MainScreen(
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 3.dp),
                             modifier = Modifier.height(28.dp)
                         ) {
-                            Text(
-                                shape.label,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Text(shape.label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
-                    // 캔버스 초기화 버튼
+                    // 캔버스 전체 초기화 버튼
                     Button(
                         onClick = {
                             nodes = emptyList()
                             edges = emptyList()
+                            selectedNodeId = null
+                            selectedEdgeId = null
                             persistState()
                             Toast.makeText(context, "캔버스가 초기화되었습니다.", Toast.LENGTH_SHORT).show()
                         },
@@ -330,8 +439,15 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(Color(0xFF0B1120))
+                .clickable {
+                    // 배경 터치 시 선택 해제
+                    selectedNodeId = null
+                    selectedEdgeId = null
+                    connectStartNodeId = null
+                    connectStartPort = null
+                }
         ) {
-            // 1. 커스텀 연결선(FlowEdge) 렌더링 캔버스
+            // 1. 커스텀 연결선(FlowEdge) 렌더링 캔버스 (노드 드래그 시 실시간 마그넷 추종)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val nodeMap = nodes.associateBy { it.id }
 
@@ -340,10 +456,13 @@ fun MainScreen(
                     val toNode = nodeMap[edge.toNodeId]
 
                     if (fromNode != null && toNode != null) {
+                        val isEdgeSelected = (selectedEdgeId == edge.id)
+                        val edgeColor = if (isEdgeSelected) Color(0xFFF59E0B) else Color(0xFF60A5FA)
+                        val strokeW = if (isEdgeSelected) 5.5f else 3.5f
+
                         val start = calculatePortOffset(fromNode, edge.fromPort)
                         val end = calculatePortOffset(toNode, edge.toPort)
 
-                        // 직각 꺾임선 패스 계산
                         val path = Path().apply {
                             moveTo(start.x, start.y)
                             if (edge.fromPort == PortPosition.BOTTOM && edge.toPort == PortPosition.TOP) {
@@ -364,61 +483,86 @@ fun MainScreen(
                             }
                         }
 
-                        // 연결선 본체
-                        drawPath(
-                            path = path,
-                            color = Color(0xFF60A5FA),
-                            style = Stroke(width = 3.5f)
-                        )
-
-                        // 화살표 머리 그리기
-                        drawArrowHead(
-                            endOffset = end,
-                            port = edge.toPort,
-                            color = Color(0xFF60A5FA)
-                        )
+                        drawPath(path = path, color = edgeColor, style = Stroke(width = strokeW))
+                        drawArrowHead(endOffset = end, port = edge.toPort, color = edgeColor)
                     }
                 }
             }
 
-            // 2. ISO 표준 플로우차트 노드 및 4개 마그넷 접점 렌더링
+            // 2. 연결선 선택을 위한 미니 터치 인터랙터 오버레이
+            val nodeMap = nodes.associateBy { it.id }
+            edges.forEach { edge ->
+                val fromNode = nodeMap[edge.fromNodeId]
+                val toNode = nodeMap[edge.toNodeId]
+                if (fromNode != null && toNode != null) {
+                    val s = calculatePortOffset(fromNode, edge.fromPort)
+                    val e = calculatePortOffset(toNode, edge.toPort)
+                    val midX = (s.x + e.x) / 2
+                    val midY = (s.y + e.y) / 2
+                    val isEdgeSelected = (selectedEdgeId == edge.id)
+
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset((midX - 10).roundToInt(), (midY - 10).roundToInt()) }
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (isEdgeSelected) Color(0xFFF59E0B) else Color(0x3360A5FA))
+                            .border(1.dp, if (isEdgeSelected) Color.White else Color(0x8860A5FA), CircleShape)
+                            .clickable {
+                                selectedEdgeId = edge.id
+                                selectedNodeId = null
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✕", fontSize = 9.sp, color = if (isEdgeSelected) Color.White else Color(0xFF93C5FD))
+                    }
+                }
+            }
+
+            // 3. ISO 표준 플로우차트 노드 및 4개 마그넷 접점 렌더링
             nodes.forEach { node ->
                 key(node.id) {
                     IsoNodeView(
                         node = node,
+                        isSelected = selectedNodeId == node.id,
                         isConnectMode = connectMode,
-                        selectedPortPos = if (selectedPortNodeId == node.id) selectedPortPos else null,
+                        selectedPortPos = if (connectStartNodeId == node.id) connectStartPort else null,
                         onPositionChanged = { dx, dy ->
-                            node.x += dx
-                            node.y += dy
+                            // 노드 좌표를 실시간 리스트 갱신하여 Canvas의 연결선이 즉시 마그넷처럼 따라오도록 보장
+                            nodes = nodes.map {
+                                if (it.id == node.id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                            }
+                        },
+                        onDragEnd = {
                             persistState()
                         },
                         onNodeClick = {
-                            selectedNodeForEdit = node
+                            if (connectMode) {
+                                if (connectStartNodeId == null) {
+                                    connectStartNodeId = node.id
+                                    Toast.makeText(context, "시작 노드 선택됨: 연결할 대상 노드를 터치하세요", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    connectNodesSmart(connectStartNodeId!!, node.id)
+                                    connectStartNodeId = null
+                                    connectStartPort = null
+                                }
+                            } else {
+                                selectedNodeId = node.id
+                                selectedEdgeId = null
+                            }
                         },
                         onPortClick = { port ->
                             if (!connectMode) {
                                 connectMode = true
                             }
-                            if (selectedPortNodeId == null) {
-                                selectedPortNodeId = node.id
-                                selectedPortPos = port
+                            if (connectStartNodeId == null) {
+                                connectStartNodeId = node.id
+                                connectStartPort = port
                                 Toast.makeText(context, "시작 접점 선택됨: 대상 노드의 접점을 터치하세요", Toast.LENGTH_SHORT).show()
                             } else {
-                                if (selectedPortNodeId != node.id) {
-                                    val newEdge = FlowEdge(
-                                        id = "e_${System.currentTimeMillis()}",
-                                        fromNodeId = selectedPortNodeId!!,
-                                        toNodeId = node.id,
-                                        fromPort = selectedPortPos ?: PortPosition.BOTTOM,
-                                        toPort = port
-                                    )
-                                    edges = edges + newEdge
-                                    persistState()
-                                    Toast.makeText(context, "✅ 연결선 생성 완료!", Toast.LENGTH_SHORT).show()
-                                }
-                                selectedPortNodeId = null
-                                selectedPortPos = null
+                                connectNodesSmart(connectStartNodeId!!, node.id, connectStartPort, port)
+                                connectStartNodeId = null
+                                connectStartPort = null
                             }
                         }
                     )
@@ -427,68 +571,98 @@ fun MainScreen(
         }
     }
 
-    // 1. 노드 텍스트 수정 및 삭제 다이얼로그
-    selectedNodeForEdit?.let { node ->
+    // 1. 노드 텍스트 편집 다이얼로그
+    editingNode?.let { node ->
         var editText by remember { mutableStateOf(node.text) }
         AlertDialog(
-            onDismissRequest = { selectedNodeForEdit = null },
-            title = { Text("노드 편집", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { editingNode = null },
+            title = { Text("노드 내용 편집", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("유형: ${node.shape.label}", fontSize = 12.sp, color = Color.Gray)
+                    Text("도형 유형: ${node.shape.label}", fontSize = 12.sp, color = Color.Gray)
                     OutlinedTextField(
                         value = editText,
                         onValueChange = { editText = it },
-                        label = { Text("표시할 내용") },
+                        label = { Text("표시할 텍스트") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    node.text = editText
-                    selectedNodeForEdit = null
+                    nodes = nodes.map { if (it.id == node.id) it.copy(text = editText) else it }
+                    editingNode = null
                     persistState()
                 }) {
                     Text("확인")
                 }
             },
             dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        nodes = nodes.filter { it.id != node.id }
-                        edges = edges.filter { it.fromNodeId != node.id && it.toNodeId != node.id }
-                        selectedNodeForEdit = null
-                        persistState()
-                    }) {
-                        Text("삭제", color = Color(0xFFDC2626))
-                    }
-                    TextButton(onClick = { selectedNodeForEdit = null }) {
-                        Text("취소")
-                    }
+                TextButton(onClick = { editingNode = null }) {
+                    Text("취소")
                 }
             }
         )
     }
 
-    // 2. PC 전송 다이얼로그 (노드 + 연결선 일체형 JSON 전송)
+    // 2. PC 전송 다이얼로그 (🌐 원격/외부망 전송 vs 📶 사내 Wi-Fi 고속 전송 2트랙 완벽 지원)
     if (showSendDialog) {
         AlertDialog(
             onDismissRequest = { showSendDialog = false },
             title = { Text("PC 매뉴얼 스튜디오로 전송", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("PC 화면의 QR 코드 또는 IP/PIN 번호를 입력하세요.", fontSize = 12.sp, color = Color.Gray)
-                    OutlinedTextField(
-                        value = pcIp,
-                        onValueChange = { pcIp = it },
-                        label = { Text("PC IP 주소 (예: 192.168.0.25)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // 전송 모드 탭 선택 (🌐 원격지 vs 📶 Wi-Fi)
+                    TabRow(selectedTabIndex = if (sendMode == "wifi") 0 else 1) {
+                        Tab(
+                            selected = sendMode == "wifi",
+                            onClick = {
+                                sendMode = "wifi"
+                                prefs.edit().putString("send_mode", "wifi").apply()
+                            },
+                            text = { Text("📶 사내 Wi-Fi") }
+                        )
+                        Tab(
+                            selected = sendMode == "cloud",
+                            onClick = {
+                                sendMode = "cloud"
+                                prefs.edit().putString("send_mode", "cloud").apply()
+                            },
+                            text = { Text("🌐 원격/LTE 어디서나") }
+                        )
+                    }
+
+                    if (sendMode == "wifi") {
+                        Text("같은 공유기(Wi-Fi)에 연결된 PC로 직접 초고속 전송합니다.", fontSize = 12.sp, color = Color.Gray)
+                        OutlinedTextField(
+                            value = pcIp,
+                            onValueChange = {
+                                pcIp = it
+                                prefs.edit().putString("pc_ip", it).apply()
+                            },
+                            label = { Text("PC IP 주소 (예: 192.168.0.25)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text("외부 LTE/5G나 다른 네트워크에서도 PIN 번호만으로 원격 전송합니다.", fontSize = 12.sp, color = Color.Gray)
+                        OutlinedTextField(
+                            value = cloudServerUrl,
+                            onValueChange = {
+                                cloudServerUrl = it
+                                prefs.edit().putString("cloud_relay_url", it).apply()
+                            },
+                            label = { Text("원격 릴레이 서버 URL") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
                     OutlinedTextField(
                         value = pcPin,
-                        onValueChange = { pcPin = it },
-                        label = { Text("6자리 PIN (예: 376-310)") },
+                        onValueChange = {
+                            pcPin = it
+                            prefs.edit().putString("pc_pin", it).apply()
+                        },
+                        label = { Text("PC 화면 6자리 PIN (예: 376-310)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -496,17 +670,21 @@ fun MainScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        prefs.edit().putString("pc_ip", pcIp).putString("pc_pin", pcPin).apply()
                         isSending = true
                         CoroutineScope(Dispatchers.IO).launch {
-                            val success = sendDiagramToPc(pcIp, pcPin, nodes, edges, direction)
+                            val success = if (sendMode == "wifi") {
+                                sendDiagramToPc(pcIp, pcPin, nodes, edges, direction)
+                            } else {
+                                sendDiagramViaCloud(cloudServerUrl, pcPin, nodes, edges, direction)
+                            }
                             withContext(Dispatchers.Main) {
                                 isSending = false
                                 if (success) {
                                     Toast.makeText(context, "🎉 PC 매뉴얼 스튜디오로 전송 성공!", Toast.LENGTH_LONG).show()
                                     showSendDialog = false
                                 } else {
-                                    Toast.makeText(context, "전송 실패: IP와 PIN 번호를 확인하세요.", Toast.LENGTH_LONG).show()
+                                    val err = if (sendMode == "wifi") "Wi-Fi 연결 실패: IP와 PIN 번호를 확인하세요." else "원격 전송 실패: PIN 번호를 확인하세요."
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
@@ -532,12 +710,14 @@ fun MainScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("직접 촬영한 손그림/화이트보드 사진을 PC로 즉시 전송하시겠습니까?", fontSize = 12.sp)
-                    OutlinedTextField(
-                        value = pcIp,
-                        onValueChange = { pcIp = it },
-                        label = { Text("PC IP 주소") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (sendMode == "wifi") {
+                        OutlinedTextField(
+                            value = pcIp,
+                            onValueChange = { pcIp = it },
+                            label = { Text("PC IP 주소") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     OutlinedTextField(
                         value = pcPin,
                         onValueChange = { pcPin = it },
@@ -549,15 +729,15 @@ fun MainScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        prefs.edit().putString("pc_ip", pcIp).putString("pc_pin", pcPin).apply()
                         CoroutineScope(Dispatchers.IO).launch {
-                            val success = sendPhotoToPc(pcIp, pcPin, lastCapturedBitmap!!)
+                            val targetHost = if (sendMode == "wifi") pcIp else cloudServerUrl
+                            val success = sendPhotoToPc(targetHost, pcPin, lastCapturedBitmap!!)
                             withContext(Dispatchers.Main) {
                                 if (success) {
                                     Toast.makeText(context, "📷 손그림 사진 PC 전송 완료!", Toast.LENGTH_LONG).show()
                                     showPhotoDialog = false
                                 } else {
-                                    Toast.makeText(context, "전송 실패: 연결을 확인하세요.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "전송 실패: 네트워크 및 PIN을 확인하세요.", Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
@@ -576,48 +756,75 @@ fun MainScreen(
 }
 
 /**
+ * 두 노드의 기하학적 상대 위치에 따른 최적 마그넷 포트 자동 판정
+ */
+fun calculateBestPorts(from: FlowNode, to: FlowNode): Pair<PortPosition, PortPosition> {
+    val centerFromX = from.x + from.width / 2
+    val centerFromY = from.y + from.height / 2
+    val centerToX = to.x + to.width / 2
+    val centerToY = to.y + to.height / 2
+
+    val dx = centerToX - centerFromX
+    val dy = centerToY - centerFromY
+
+    return if (abs(dy) >= abs(dx)) {
+        // 수직 배치 성향
+        if (dy >= 0) {
+            Pair(PortPosition.BOTTOM, PortPosition.TOP)
+        } else {
+            Pair(PortPosition.TOP, PortPosition.BOTTOM)
+        }
+    } else {
+        // 수평 배치 성향
+        if (dx >= 0) {
+            Pair(PortPosition.RIGHT, PortPosition.LEFT)
+        } else {
+            Pair(PortPosition.LEFT, PortPosition.RIGHT)
+        }
+    }
+}
+
+/**
  * ISO 5807 표준 플로우차트 노드 뷰 + 4개 마그넷 접점 포트
  */
 @Composable
 fun IsoNodeView(
     node: FlowNode,
+    isSelected: Boolean,
     isConnectMode: Boolean,
     selectedPortPos: PortPosition?,
     onPositionChanged: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
     onNodeClick: () -> Unit,
     onPortClick: (PortPosition) -> Unit
 ) {
-    var offsetX by remember { mutableStateOf(node.x) }
-    var offsetY by remember { mutableStateOf(node.y) }
-
-    LaunchedEffect(node.x, node.y) {
-        offsetX = node.x
-        offsetY = node.y
-    }
-
     Box(
         modifier = Modifier
-            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+            .offset { IntOffset(node.x.roundToInt(), node.y.roundToInt()) }
             .size(node.width.dp, node.height.dp)
             .pointerInput(node.id) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    offsetX += dragAmount.x
-                    offsetY += dragAmount.y
-                    onPositionChanged(dragAmount.x, dragAmount.y)
-                }
+                detectDragGestures(
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onPositionChanged(dragAmount.x, dragAmount.y)
+                    },
+                    onDragEnd = {
+                        onDragEnd()
+                    }
+                )
             }
             .clickable { onNodeClick() },
         contentAlignment = Alignment.Center
     ) {
-        // 1. ISO 표준 도형 그래픽 (Canvas로 직접 렌더링)
+        // 1. ISO 표준 도형 그래픽 (Canvas 직접 렌더링)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
+            val strokeW = if (isSelected) 5.5f else 3.5f
+            val borderCol = if (isSelected) Color(0xFFF59E0B) else node.shape.borderColor
 
             when (node.shape) {
                 NodeShape.TERMINAL -> {
-                    // 시작/종료: 완전한 둥근 알약형 (Stadium/Capsule)
                     val radius = h / 2
                     drawRoundRect(
                         color = node.shape.bgColor,
@@ -626,14 +833,13 @@ fun IsoNodeView(
                         style = Fill
                     )
                     drawRoundRect(
-                        color = node.shape.borderColor,
+                        color = borderCol,
                         size = size,
                         cornerRadius = CornerRadius(radius, radius),
-                        style = Stroke(width = 3.5f)
+                        style = Stroke(width = strokeW)
                     )
                 }
                 NodeShape.PROCESS -> {
-                    // 일반 작업: 표준 직사각형
                     drawRoundRect(
                         color = node.shape.bgColor,
                         size = size,
@@ -641,14 +847,13 @@ fun IsoNodeView(
                         style = Fill
                     )
                     drawRoundRect(
-                        color = node.shape.borderColor,
+                        color = borderCol,
                         size = size,
                         cornerRadius = CornerRadius(4f, 4f),
-                        style = Stroke(width = 3.5f)
+                        style = Stroke(width = strokeW)
                     )
                 }
                 NodeShape.DECISION -> {
-                    // 조건 분기: ISO 표준 마름모 (Rhombus / Diamond)
                     val path = Path().apply {
                         moveTo(w / 2, 0f)
                         lineTo(w, h / 2)
@@ -657,10 +862,9 @@ fun IsoNodeView(
                         close()
                     }
                     drawPath(path = path, color = node.shape.bgColor, style = Fill)
-                    drawPath(path = path, color = node.shape.borderColor, style = Stroke(width = 3.5f))
+                    drawPath(path = path, color = borderCol, style = Stroke(width = strokeW))
                 }
                 NodeShape.IO -> {
-                    // 데이터 입출력: ISO 표준 평행사변형 (Parallelogram)
                     val skew = w * 0.18f
                     val path = Path().apply {
                         moveTo(skew, 0f)
@@ -670,10 +874,9 @@ fun IsoNodeView(
                         close()
                     }
                     drawPath(path = path, color = node.shape.bgColor, style = Fill)
-                    drawPath(path = path, color = node.shape.borderColor, style = Stroke(width = 3.5f))
+                    drawPath(path = path, color = borderCol, style = Stroke(width = strokeW))
                 }
                 NodeShape.DATABASE -> {
-                    // 데이터베이스: ISO 표준 원통형 실린더 (Cylinder)
                     val capH = h * 0.25f
                     val bodyPath = Path().apply {
                         moveTo(0f, capH / 2)
@@ -683,43 +886,27 @@ fun IsoNodeView(
                         close()
                     }
                     drawPath(path = bodyPath, color = node.shape.bgColor, style = Fill)
-                    drawPath(path = bodyPath, color = node.shape.borderColor, style = Stroke(width = 3.5f))
+                    drawPath(path = bodyPath, color = borderCol, style = Stroke(width = strokeW))
 
-                    // 상단 타원 캡
-                    drawOval(
-                        color = node.shape.bgColor,
-                        topLeft = Offset(0f, 0f),
-                        size = Size(w, capH),
-                        style = Fill
-                    )
-                    drawOval(
-                        color = node.shape.borderColor,
-                        topLeft = Offset(0f, 0f),
-                        size = Size(w, capH),
-                        style = Stroke(width = 3.5f)
-                    )
+                    drawOval(color = node.shape.bgColor, topLeft = Offset(0f, 0f), size = Size(w, capH), style = Fill)
+                    drawOval(color = borderCol, topLeft = Offset(0f, 0f), size = Size(w, capH), style = Stroke(width = strokeW))
                 }
                 NodeShape.DOCUMENT -> {
-                    // 문서 서식: ISO 표준 하단 물결형 문서 (Document with wavy bottom)
                     val waveH = h * 0.22f
                     val docPath = Path().apply {
                         moveTo(0f, 0f)
                         lineTo(w, 0f)
                         lineTo(w, h - waveH)
-                        cubicTo(
-                            w * 0.75f, h,
-                            w * 0.25f, h - 2 * waveH,
-                            0f, h - waveH
-                        )
+                        cubicTo(w * 0.75f, h, w * 0.25f, h - 2 * waveH, 0f, h - waveH)
                         close()
                     }
                     drawPath(path = docPath, color = node.shape.bgColor, style = Fill)
-                    drawPath(path = docPath, color = node.shape.borderColor, style = Stroke(width = 3.5f))
+                    drawPath(path = docPath, color = borderCol, style = Stroke(width = strokeW))
                 }
             }
         }
 
-        // 2. 텍스트 라벨 (컴팩트 폰트, 시인성 극대화)
+        // 2. 텍스트 라벨
         Text(
             text = node.text,
             fontSize = 9.sp,
@@ -774,9 +961,6 @@ fun BoxScope.MagnetPort(
     )
 }
 
-/**
- * 포트 위치에 따른 절대 오프셋 좌표 계산
- */
 fun calculatePortOffset(node: FlowNode, port: PortPosition): Offset {
     val x = node.x
     val y = node.y
@@ -791,9 +975,6 @@ fun calculatePortOffset(node: FlowNode, port: PortPosition): Offset {
     }
 }
 
-/**
- * 화살표 머리(삼각형) 렌더링
- */
 fun androidx.compose.ui.graphics.drawscope.DrawScope.drawArrowHead(
     endOffset: Offset,
     port: PortPosition,
@@ -832,56 +1013,76 @@ fun androidx.compose.ui.graphics.drawscope.DrawScope.drawArrowHead(
 }
 
 /**
- * 겹침 방지 스마트 자동 배치 (Anti-collision Smart Placement)
+ * 겹침 방지 스마트 자동 배치 (충분하고 쾌적한 간격 확보)
  */
 fun findNextSmartPosition(nodes: List<FlowNode>, direction: String): Pair<Float, Float> {
-    if (nodes.isEmpty()) return Pair(40f, 40f)
+    if (nodes.isEmpty()) return Pair(35f, 35f)
 
     val last = nodes.last()
-    val gap = 20f
+    val gapY = 42f // 세로 넉넉한 간격
+    val gapX = 55f // 가로 넉넉한 간격
 
     return if (direction == "TD") {
-        var candY = last.y + last.height + gap
+        var candY = last.y + last.height + gapY
         var candX = last.x
         if (candY > 360f) {
-            candY = 40f
-            candX = last.x + last.width + gap + 10f
+            candY = 35f
+            candX = last.x + last.width + gapX
         }
         Pair(candX, candY)
     } else {
-        var candX = last.x + last.width + gap
+        var candX = last.x + last.width + gapX
         var candY = last.y
         if (candX > 640f) {
-            candX = 40f
-            candY = last.y + last.height + gap + 10f
+            candX = 35f
+            candY = last.y + last.height + gapY
         }
         Pair(candX, candY)
     }
 }
 
 /**
- * 전체 노드 자동 격자 정렬 (⚡ 버튼)
+ * 전체 노드 자동 정렬 (새 객체 인스턴스 반환으로 Compose 실시간 재렌더링 100% 보장)
  */
-fun autoAlignNodes(nodes: List<FlowNode>, direction: String): List<FlowNode> {
+fun autoAlignNodes(nodes: List<FlowNode>, edges: List<FlowEdge>, direction: String): List<FlowNode> {
+    if (nodes.isEmpty()) return emptyList()
+
     val startX = 40f
     val startY = 40f
-    val gap = if (direction == "TD") 50f else 85f
+    val stepGap = if (direction == "TD") 58f else 95f
 
-    nodes.forEachIndexed { index, node ->
-        if (direction == "TD") {
-            node.x = startX
-            node.y = startY + index * gap
-        } else {
-            node.x = startX + index * gap
-            node.y = startY
+    // 연결선 기반 시작 노드 탐색 (들어오는 선이 없는 노드 우선)
+    val targetIds = edges.map { it.toNodeId }.toSet()
+    val startNodes = nodes.filterNot { targetIds.contains(it.id) }
+    val orderedNodes = mutableListOf<FlowNode>()
+    val visited = mutableSetOf<String>()
+
+    fun traverse(node: FlowNode) {
+        if (visited.contains(node.id)) return
+        visited.add(node.id)
+        orderedNodes.add(node)
+        val outgoingEdges = edges.filter { it.fromNodeId == node.id }
+        outgoingEdges.forEach { edge ->
+            val nextNode = nodes.find { it.id == edge.toNodeId }
+            if (nextNode != null && !visited.contains(nextNode.id)) {
+                traverse(nextNode)
+            }
         }
     }
-    return nodes
+
+    startNodes.forEach { traverse(it) }
+    nodes.forEach { if (!visited.contains(it.id)) traverse(it) }
+
+    // 새로운 인스턴스로 반환하여 Compose 강제 리컴포지션 트리거
+    return orderedNodes.mapIndexed { index, node ->
+        if (direction == "TD") {
+            node.copy(x = startX, y = startY + index * stepGap)
+        } else {
+            node.copy(x = startX + index * stepGap, y = startY)
+        }
+    }
 }
 
-/**
- * SharedPreferences 영속 저장
- */
 fun saveFlowchartToPrefs(prefs: android.content.SharedPreferences, nodes: List<FlowNode>, edges: List<FlowEdge>, direction: String) {
     try {
         val root = JSONObject()
@@ -920,25 +1121,11 @@ fun saveFlowchartToPrefs(prefs: android.content.SharedPreferences, nodes: List<F
     }
 }
 
-/**
- * SharedPreferences 영속 복원
- */
 fun loadFlowchartFromPrefs(prefs: android.content.SharedPreferences): Pair<List<FlowNode>, List<FlowEdge>> {
     val rawJson = prefs.getString("saved_flowchart_json", null)
     if (rawJson.isNullOrBlank()) {
-        // 기본 시작 템플릿
-        val defaultNodes = listOf(
-            FlowNode("n1", "시작", NodeShape.TERMINAL, 40f, 40f, 66f, 30f),
-            FlowNode("n2", "작업 수행", NodeShape.PROCESS, 40f, 90f, 66f, 30f),
-            FlowNode("n3", "성공 여부?", NodeShape.DECISION, 40f, 140f, 66f, 30f),
-            FlowNode("n4", "완료", NodeShape.TERMINAL, 40f, 190f, 66f, 30f)
-        )
-        val defaultEdges = listOf(
-            FlowEdge("e1", "n1", "n2", PortPosition.BOTTOM, PortPosition.TOP),
-            FlowEdge("e2", "n2", "n3", PortPosition.BOTTOM, PortPosition.TOP),
-            FlowEdge("e3", "n3", "n4", PortPosition.BOTTOM, PortPosition.TOP, "Yes")
-        )
-        return Pair(defaultNodes, defaultEdges)
+        // 최초 실행 시 기본 제공 다이어그램 제거: 완전 빈 캔버스로 시작
+        return Pair(emptyList(), emptyList())
     }
 
     try {
@@ -986,7 +1173,7 @@ fun loadFlowchartFromPrefs(prefs: android.content.SharedPreferences): Pair<List<
 }
 
 /**
- * PC 매뉴얼 스튜디오로 노드 + 연결선 일체형 JSON 전송
+ * 사내 Wi-Fi 직접 LAN 전송
  */
 suspend fun sendDiagramToPc(
     ip: String,
@@ -1008,86 +1195,14 @@ suspend fun sendDiagramToPc(
             conn.readTimeout = 5000
             conn.doOutput = true
 
-            val json = JSONObject().apply {
-                put("pin", pin.trim())
-                put("type", "flowchart")
-                put("direction", direction)
-
-                val itemsArray = JSONArray()
-
-                // 1. 노드 아이템
-                nodes.forEach { n ->
-                    val itemObj = JSONObject().apply {
-                        put("type", "FlowchartNodeItem")
-                        put("text", n.text)
-                        put("x", n.x.toDouble() * 2.0)
-                        put("y", n.y.toDouble() * 2.0)
-                        put("w", n.width.toDouble() * 2.0)
-                        put("h", n.height.toDouble() * 2.0)
-                        put("shape_type", n.shape.name.lowercase())
-                        put("style", JSONObject().apply {
-                            put("bg_color", when (n.shape) {
-                                NodeShape.TERMINAL -> "#ECFDF5"
-                                NodeShape.DECISION -> "#FFFBEB"
-                                NodeShape.DATABASE -> "#FAF5FF"
-                                NodeShape.IO -> "#F0FDF4"
-                                NodeShape.DOCUMENT -> "#EEF2FF"
-                                else -> "#EFF6FF"
-                            })
-                            put("border_color", when (n.shape) {
-                                NodeShape.TERMINAL -> "#059669"
-                                NodeShape.DECISION -> "#D97706"
-                                NodeShape.DATABASE -> "#7C3AED"
-                                NodeShape.IO -> "#16A34A"
-                                NodeShape.DOCUMENT -> "#4F46E5"
-                                else -> "#2563EB"
-                            })
-                            put("border_width", 2)
-                            put("text_color", "#1E293B")
-                            put("font_size", 12)
-                            put("font_bold", true)
-                        })
-                    }
-                    itemsArray.put(itemObj)
-                }
-
-                // 2. 연결선 아이템 (ElbowArrowItem)
-                val nodeMap = nodes.associateBy { it.id }
-                edges.forEach { e ->
-                    val fromNode = nodeMap[e.fromNodeId]
-                    val toNode = nodeMap[e.toNodeId]
-                    if (fromNode != null && toNode != null) {
-                        val s = calculatePortOffset(fromNode, e.fromPort)
-                        val end = calculatePortOffset(toNode, e.toPort)
-
-                        val edgeObj = JSONObject().apply {
-                            put("type", "ElbowArrowItem")
-                            put("start_pos", JSONArray().put(s.x.toDouble() * 2.0).put(s.y.toDouble() * 2.0))
-                            put("end_pos", JSONArray().put(end.x.toDouble() * 2.0).put(end.y.toDouble() * 2.0))
-                            put("route_mode", if (direction == "TD") "HV" else "VH")
-                            put("label", e.label)
-                            put("style", JSONObject().apply {
-                                put("color", "#2563EB")
-                                put("width", 3)
-                                put("head_size", 12)
-                            })
-                        }
-                        itemsArray.put(edgeObj)
-                    }
-                }
-
-                put("data", JSONObject().apply {
-                    put("items", itemsArray)
-                })
-            }
+            val json = buildPayloadJson(pin, direction, nodes, edges)
 
             val writer = OutputStreamWriter(conn.outputStream)
             writer.write(json.toString())
             writer.flush()
             writer.close()
 
-            val responseCode = conn.responseCode
-            responseCode in 200..299
+            conn.responseCode in 200..299
         } catch (e: Exception) {
             e.printStackTrace()
             false
@@ -1096,13 +1211,125 @@ suspend fun sendDiagramToPc(
 }
 
 /**
- * 손그림 직접 촬영 사진 전송
+ * 🌐 원격/LTE 어디서나 클라우드 릴레이 전송
  */
-suspend fun sendPhotoToPc(ip: String, pin: String, bitmap: Bitmap): Boolean {
+suspend fun sendDiagramViaCloud(
+    cloudUrl: String,
+    pin: String,
+    nodes: List<FlowNode>,
+    edges: List<FlowEdge>,
+    direction: String
+): Boolean {
     return withContext(Dispatchers.IO) {
         try {
-            val cleanIp = ip.trim().removePrefix("http://").removeSuffix("/")
-            val targetUrl = "http://$cleanIp:19850/api/upload"
+            val cleanUrl = cloudUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/upload"
+            val url = URL(targetUrl)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            conn.setRequestProperty("X-PIN", pin.trim())
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.doOutput = true
+
+            val json = buildPayloadJson(pin, direction, nodes, edges)
+
+            val writer = OutputStreamWriter(conn.outputStream)
+            writer.write(json.toString())
+            writer.flush()
+            writer.close()
+
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+}
+
+fun buildPayloadJson(pin: String, direction: String, nodes: List<FlowNode>, edges: List<FlowEdge>): JSONObject {
+    return JSONObject().apply {
+        put("pin", pin.trim())
+        put("type", "flowchart")
+        put("direction", direction)
+
+        val itemsArray = JSONArray()
+
+        nodes.forEach { n ->
+            val itemObj = JSONObject().apply {
+                put("type", "FlowchartNodeItem")
+                put("text", n.text)
+                put("x", n.x.toDouble() * 2.0)
+                put("y", n.y.toDouble() * 2.0)
+                put("w", n.width.toDouble() * 2.0)
+                put("h", n.height.toDouble() * 2.0)
+                put("shape_type", n.shape.name.lowercase())
+                put("style", JSONObject().apply {
+                    put("bg_color", when (n.shape) {
+                        NodeShape.TERMINAL -> "#ECFDF5"
+                        NodeShape.DECISION -> "#FFFBEB"
+                        NodeShape.DATABASE -> "#FAF5FF"
+                        NodeShape.IO -> "#F0FDF4"
+                        NodeShape.DOCUMENT -> "#EEF2FF"
+                        else -> "#EFF6FF"
+                    })
+                    put("border_color", when (n.shape) {
+                        NodeShape.TERMINAL -> "#059669"
+                        NodeShape.DECISION -> "#D97706"
+                        NodeShape.DATABASE -> "#7C3AED"
+                        NodeShape.IO -> "#16A34A"
+                        NodeShape.DOCUMENT -> "#4F46E5"
+                        else -> "#2563EB"
+                    })
+                    put("border_width", 2)
+                    put("text_color", "#1E293B")
+                    put("font_size", 12)
+                    put("font_bold", true)
+                })
+            }
+            itemsArray.put(itemObj)
+        }
+
+        val nodeMap = nodes.associateBy { it.id }
+        edges.forEach { e ->
+            val fromNode = nodeMap[e.fromNodeId]
+            val toNode = nodeMap[e.toNodeId]
+            if (fromNode != null && toNode != null) {
+                val s = calculatePortOffset(fromNode, e.fromPort)
+                val end = calculatePortOffset(toNode, e.toPort)
+
+                val edgeObj = JSONObject().apply {
+                    put("type", "ElbowArrowItem")
+                    put("start_pos", JSONArray().put(s.x.toDouble() * 2.0).put(s.y.toDouble() * 2.0))
+                    put("end_pos", JSONArray().put(end.x.toDouble() * 2.0).put(end.y.toDouble() * 2.0))
+                    put("route_mode", if (direction == "TD") "HV" else "VH")
+                    put("label", e.label)
+                    put("style", JSONObject().apply {
+                        put("color", "#2563EB")
+                        put("width", 3)
+                        put("head_size", 12)
+                    })
+                }
+                itemsArray.put(edgeObj)
+            }
+        }
+
+        put("data", JSONObject().apply {
+            put("items", itemsArray)
+        })
+    }
+}
+
+suspend fun sendPhotoToPc(targetHost: String, pin: String, bitmap: Bitmap): Boolean {
+    return withContext(Dispatchers.IO) {
+        try {
+            val cleanHost = targetHost.trim().removeSuffix("/")
+            val targetUrl = if (cleanHost.startsWith("http://") || cleanHost.startsWith("https://")) {
+                "$cleanHost/api/upload"
+            } else {
+                "http://$cleanHost:19850/api/upload"
+            }
             val url = URL(targetUrl)
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
