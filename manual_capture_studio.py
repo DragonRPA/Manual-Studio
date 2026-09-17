@@ -10404,6 +10404,9 @@ class ManualStudioWindow(QMainWindow):
                 avail.x() + max(0, (avail.width() - target_w) // 2),
                 avail.y() + max(0, (avail.height() - target_h) // 2)
             )
+            # 저해상도 자동 리본 접힘: config에 명시 저장값이 없을 때만 자동 감지
+            if "ribbon_collapsed" not in self.config and avail.height() < 800:
+                self.config["ribbon_collapsed"] = True
         else:
             self.resize(1240, 780)
 
@@ -10518,8 +10521,41 @@ class ManualStudioWindow(QMainWindow):
         """)
 
         ribbon_vlayout = QVBoxLayout(ribbon_frame)
-        ribbon_vlayout.setContentsMargins(4, 4, 4, 4)
-        ribbon_vlayout.setSpacing(4)
+        ribbon_vlayout.setContentsMargins(4, 2, 4, 2)
+        ribbon_vlayout.setSpacing(2)
+
+        # 1-0. 리본 접기/펼치기 토글 바
+        toggle_bar = QWidget(ribbon_frame)
+        toggle_bar.setFixedHeight(20)
+        toggle_bar.setStyleSheet("background: transparent;")
+        toggle_bar_lay = QHBoxLayout(toggle_bar)
+        toggle_bar_lay.setContentsMargins(2, 0, 2, 0)
+        toggle_bar_lay.setSpacing(4)
+
+        self.btn_ribbon_toggle = QPushButton("▼ 도구 리본", toggle_bar)
+        self.btn_ribbon_toggle.setFixedHeight(18)
+        self.btn_ribbon_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #64748B;
+                border: none;
+                font-size: 10px;
+                font-weight: bold;
+                text-align: left;
+                padding: 0px 4px;
+            }
+            QPushButton:hover {
+                color: #1E293B;
+                background-color: #E2E8F0;
+                border-radius: 3px;
+            }
+        """)
+        self.btn_ribbon_toggle.setToolTip("도구 리본 접기/펼치기 (Ctrl+B)")
+        self.btn_ribbon_toggle.clicked.connect(self.toggle_ribbon_collapsed)
+        toggle_bar_lay.addWidget(self.btn_ribbon_toggle)
+        toggle_bar_lay.addStretch(1)
+
+        ribbon_vlayout.addWidget(toggle_bar)
 
         # 1-1. 리본 탭 위젯 (2개 탭: '도구', '서식·설정')
         self.ribbon_tabs = QTabWidget(self)
@@ -12970,6 +13006,30 @@ class ManualStudioWindow(QMainWindow):
         mode = self.config.get("ribbon_display_mode", "text")
         self.toggle_ribbon_display_mode(mode=mode)
 
+        # 리본 접힘 상태 복원
+        collapsed = self.config.get("ribbon_collapsed", False)
+        self._apply_ribbon_collapsed(collapsed)
+
+    def toggle_ribbon_collapsed(self):
+        """리본 탭 패널 접기/펼치기 토글 (Ctrl+B)"""
+        collapsed = not self.config.get("ribbon_collapsed", False)
+        self.config["ribbon_collapsed"] = collapsed
+        save_config(self.config)
+        self._apply_ribbon_collapsed(collapsed)
+
+    def _apply_ribbon_collapsed(self, collapsed: bool):
+        """리본 접힘 상태를 UI에 반영"""
+        if not hasattr(self, "ribbon_tabs"):
+            return
+        self.ribbon_tabs.setVisible(not collapsed)
+        if hasattr(self, "btn_ribbon_toggle"):
+            self.btn_ribbon_toggle.setText(
+                "▶ 도구 리본" if collapsed else "▼ 도구 리본"
+            )
+            self.btn_ribbon_toggle.setToolTip(
+                "도구 리본 펼치기 (Ctrl+B)" if collapsed else "도구 리본 접기 (Ctrl+B)"
+            )
+
     def on_target_width_changed(self, val):
         self.config["target_width"] = val
         save_config(self.config)
@@ -14369,6 +14429,10 @@ class ManualStudioWindow(QMainWindow):
                 return
             elif key == Qt.Key_R:
                 self.action_renumber_powerpoint_steps()
+                self.hide_keytips()
+                return
+            elif key == Qt.Key_B:
+                self.toggle_ribbon_collapsed()
                 self.hide_keytips()
                 return
             elif key in (Qt.Key_Delete, Qt.Key_Backspace) or (modifiers & Qt.ShiftModifier and key == Qt.Key_X):

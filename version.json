@@ -1,10 +1,10 @@
 {
-  "version": "1.9.1",
-  "version_code": 191,
-  "release_date": "2026-09-15",
-  "release_title": "Manual Studio v1.9.1 다중 객체 정렬/균등 배치, 화이트 테마 팝업, 엔터 승인 및 플로우차트 50% 컴팩트 축소",
-  "release_notes": "• 다중 객체 선택(Shift/Ctrl/러버밴드) 및 중심 축(X/Y) 정렬, 가로/세로 균등 재배치 지원\n• 우클릭 팝업 메뉴 및 객체 속성창 화이트 테마 전면 적용\n• 텍스트박스/스탬프/노드 입력창 엔터(Enter) 시 확인 즉시 트리거\n• PC 프로그램 및 모바일 APK 플로우차트 노드/폰트 크기 50% 컴팩트 축소",
-  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.9.1/ManualStudio.exe",
+  "version": "1.9.2",
+  "version_code": 192,
+  "release_date": "2026-09-17",
+  "release_title": "Manual Studio v1.9.2 도구 리본 접기/펼치기 (저해상도 자동 최적화)",
+  "release_notes": "• 도구 리본 접기/펼치기 토글 버튼 추가 (▼/▶ 도구 리본)\n• 단축키 Ctrl+B로 리본 탭 패널 즉시 접기/펼치기\n• 화면 높이 800px 미만 저해상도 환경에서 앱 시작 시 리본 자동 접힘\n• 접힘 상태 config.json 영속 저장 - 재시작 후 복원\n• 퀵스트립(색상·두께·상태 배지)은 리본 접힘과 무관하게 항상 표시",
+  "download_url": "https://github.com/DragonRPA/Manual-Studio/releases/download/v1.9.2/ManualStudio.exe",
   "release_page_url": "https://github.com/DragonRPA/Manual-Studio/releases",
   "min_required_version": "1.0.0",
   "force_update": false
