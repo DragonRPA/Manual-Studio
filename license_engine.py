@@ -33,6 +33,12 @@ class LicenseType:
 
 class LicenseEngine:
     MASTER_SECRET = b"DragonRPA-ManualStudio-MasterSecret-2026-v1.4"
+    
+    # ── RSA-2048 비대칭키 공개키 (SSOT) ──────────────────────────────────
+    # 개인키(Private Key)는 사장님 PC 및 판매 서버에만 보관되며, 클라이언트에는 오직 검증용 공개키만 탑재됩니다.
+    RSA_PUBLIC_N = 0x9fbbff932b99e40895681a1f5d95f695fc0824ce1ee0ef51a20499eb83bae1ad5b16124629b0d77b27b2e93d323c1d8adf5f57780c5575c9aed6f76642fa3d0fa5421a53a1a91e003f62a6455e81c1bc37e89ad4bfbab360b1a7f00baa3e1cee28cda2dac1bf1bd899850d0fa6341c9b3fa8a4d240cd1648896241303b452478ec72be3828da3299a453701a431c857235f9bbdaf4d70332b3be8e948359308d2c75d13559efc5e409852a3fd15b73270d6783bbb3a6304a17f2702346220b547fe2d843565e27f82622fefac0c8087b1df1be509c30d0f2cf1cd58a058abc1204cd6cabc27b464837a34d3fb6754e1a061cebcff09229d51a61b52ab9dc0b9b
+    RSA_PUBLIC_E = 65537
+
     REG_SUBKEY = r"Software\DragonRPA\ManualStudio\License"
     REG_VAL_KEY = "SerialKey"
     REG_VAL_DATA = "Payload"
@@ -72,9 +78,9 @@ class LicenseEngine:
         return f"DRPA-{h[0:4]}-{h[4:8]}-{h[8:12]}"
 
     @classmethod
-    def generate_license_key(cls, license_type: str, hwid: str, issued_to: str, expiry_date: str = "NONE", max_seats: int = 1) -> str:
+    def generate_license_key(cls, license_type: str, hwid: str, issued_to: str, expiry_date: str = "NONE", max_seats: int = 1, private_key_pem: bytes = None) -> str:
         """
-        사장님/키젠 전용: 위변조 불가능한 정식 라이선스 시리얼 키 생성
+        사장님/키젠/판매서버 전용: RSA-2048 비대칭키 디지털 서명 정식 라이선스 시리얼 키 생성
         """
         prefix = cls.PREFIX_MAP.get(license_type, "MS1P")
         clean_hwid = hwid.strip().upper() if license_type not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE) else "ENTERPRISE"
@@ -90,57 +96,126 @@ class LicenseEngine:
         }
 
         payload_json = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-        sig = hmac.new(cls.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+        payload_bytes = payload_json.encode("utf-8")
 
-        # 압축 패킷 인코딩 (Base64 URL-safe)
-        p_b64 = base64.urlsafe_b64encode(payload_json.encode("utf-8")).decode("ascii").rstrip("=")
-        # 시리얼 포맷: PREFIX-SIG8-PAYLOAD_B64
-        # e.g. MS1P-A1B2C3D4-eyJ...
-        serial_key = f"{prefix}-{sig[:8]}-{p_b64}"
-        return serial_key
+        # 1. 개인키 로드 시도 (인자 -> 파일 tools/secret_private_key.pem)
+        pem_bytes = private_key_pem
+        if not pem_bytes:
+            possible_key_paths = [
+                os.path.join(os.path.dirname(__file__), "tools", "secret_private_key.pem"),
+                os.path.join(os.path.dirname(__file__), "secret_private_key.pem"),
+            ]
+            for p in possible_key_paths:
+                if os.path.exists(p):
+                    try:
+                        with open(p, "rb") as kf:
+                            pem_bytes = kf.read()
+                        break
+                    except Exception:
+                        pass
+
+        p_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+
+        if pem_bytes:
+            try:
+                from cryptography.hazmat.primitives.asymmetric import padding
+                from cryptography.hazmat.primitives import hashes, serialization
+                private_key = serialization.load_pem_private_key(pem_bytes, password=None)
+                signature = private_key.sign(
+                    payload_bytes,
+                    padding.PKCS1v15(),
+                    hashes.SHA256()
+                )
+                sig_hex = signature.hex()
+                # RSA 시리얼 포맷: PREFIX-RSA-SIG_HEX-PAYLOAD_B64
+                return f"{prefix}-RSA-{sig_hex}-{p_b64}"
+            except Exception as e:
+                print(f"[WARN] RSA signing failed ({e}), falling back to HMAC")
+
+        # Fallback: 레거시 HMAC 방식
+        sig = hmac.new(cls.MASTER_SECRET, payload_bytes, hashlib.sha256).hexdigest().upper()
+        return f"{prefix}-{sig[:8]}-{p_b64}"
 
     @classmethod
     def verify_license_key(cls, serial_key: str, current_hwid: str = None) -> tuple:
         """
-        시리얼 키 검증
+        시리얼 키 검증 (RSA-2048 비대칭키 디지털 서명 + 레거시 HMAC 하위 호환)
         반환값: (is_valid: bool, license_info: dict, message: str)
         """
         if not serial_key or not isinstance(serial_key, str):
             return False, {}, "라이선스 키가 입력되지 않았습니다."
 
-        parts = serial_key.strip().split("-", 2)
-        if len(parts) != 3:
+        raw_key = serial_key.strip()
+        parts = raw_key.split("-", 3)
+        if len(parts) < 3:
             return False, {}, "올바르지 않은 라이선스 키 형식입니다."
 
-        prefix, sig_chunk, p_b64 = parts
+        prefix = parts[0]
         expected_type = cls.PREFIX_REV_MAP.get(prefix)
         if not expected_type:
             return False, {}, "인식할 수 없는 라이선스 유형 접두사입니다."
 
-        # 패딩 복원 후 디코딩
-        missing_padding = len(p_b64) % 4
-        if missing_padding:
-            p_b64 += "=" * (4 - missing_padding)
+        is_rsa = (len(parts) == 4 and parts[1] == "RSA")
+        
+        if is_rsa:
+            # ── 1. RSA-2048 비대칭키 검증 모드 ──────────────────────────
+            _, _, sig_hex, p_b64 = parts
 
-        try:
-            payload_json = base64.urlsafe_b64decode(p_b64.encode("ascii")).decode("utf-8")
-            payload = json.loads(payload_json)
-        except Exception:
-            return False, {}, "라이선스 데이터가 손상되었거나 위변조되었습니다."
+            # 패딩 복원
+            p_pad = len(p_b64) % 4
+            if p_pad: p_b64 += "=" * (4 - p_pad)
 
-        # 1. 서명 무결성 검증
-        expected_sig = hmac.new(cls.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
-        if not hmac.compare_digest(expected_sig[:8], sig_chunk):
-            return False, {}, "라이선스 디지털 서명 검증에 실패했습니다. (위변조된 키)"
+            try:
+                payload_bytes = base64.urlsafe_b64decode(p_b64.encode("ascii"))
+                payload = json.loads(payload_bytes.decode("utf-8"))
+                sig_bytes = bytes.fromhex(sig_hex)
+            except Exception:
+                return False, {}, "라이선스 데이터가 손상되었거나 위변조되었습니다."
 
-        # 2. HWID 노드락 검증
+            # 순수 파이썬 제로 디펜던시 RSA-2048 PKCS#1 v1.5 with SHA-256 수학적 검증
+            try:
+                sig_int = int.from_bytes(sig_bytes, "big")
+                decrypted_int = pow(sig_int, cls.RSA_PUBLIC_E, cls.RSA_PUBLIC_N)
+                decrypted_bytes = decrypted_int.to_bytes(256, "big")
+
+                sha256_prefix = bytes.fromhex("3031300d060960864801650304020105000420")
+                expected_hash = hashlib.sha256(payload_bytes).digest()
+                expected_payload = sha256_prefix + expected_hash
+
+                is_sig_valid = decrypted_bytes.startswith(bytes.fromhex("0001")) and decrypted_bytes.endswith(expected_payload)
+                if not is_sig_valid:
+                    return False, {}, "RSA 디지털 서명 검증에 실패했습니다. (위변조된 라이선스 키)"
+            except Exception as e:
+                return False, {}, f"디지털 서명 검증 오류: {e}"
+
+        else:
+            # ── 2. 레거시 HMAC-SHA256 검증 모드 (하위 호환) ──────────────
+            legacy_parts = raw_key.split("-", 2)
+            if len(legacy_parts) != 3:
+                return False, {}, "올바르지 않은 레거시 라이선스 키 형식입니다."
+            prefix, sig_chunk, p_b64 = legacy_parts
+
+            p_pad = len(p_b64) % 4
+            if p_pad: p_b64 += "=" * (4 - p_pad)
+
+            try:
+                payload_json = base64.urlsafe_b64decode(p_b64.encode("ascii")).decode("utf-8")
+                payload = json.loads(payload_json)
+            except Exception:
+                return False, {}, "라이선스 데이터가 손상되었거나 위변조되었습니다."
+
+            expected_sig = hmac.new(cls.MASTER_SECRET, payload_json.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+            if not hmac.compare_digest(expected_sig[:8], sig_chunk):
+                return False, {}, "라이선스 디지털 서명 검증에 실패했습니다. (위변조된 키)"
+
+        # ── 공통: HWID 노드락 검증 ────────────────────────────────────────
         target_hwid = payload.get("hwid", "")
         if payload.get("type") not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
             curr = current_hwid or cls.get_hwid()
             if target_hwid != curr:
                 return False, {}, f"다른 PC용으로 발급된 라이선스입니다. (발급 HWID: {target_hwid})"
 
-        # 3. 만료일 검증
+        # ── 공통: 만료일 검증 ────────────────────────────────────────────
         expiry_str = payload.get("expiry", "NONE")
         if expiry_str != "NONE":
             try:
@@ -151,6 +226,8 @@ class LicenseEngine:
                 return False, {}, "라이선스 만료일 형식이 잘못되었습니다."
 
         return True, payload, "정상 인증되었습니다."
+
+
 
     @classmethod
     def save_license(cls, serial_key: str) -> bool:

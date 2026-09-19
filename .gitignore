@@ -33,3 +33,8 @@ android_mobile/**/build/
 android_mobile/.gradle/
 android_mobile/.kotlin/
 android_mobile/local.properties
+
+# Private Keys & DRM Secrets
+*.pem
+tools/secret_private_key.pem
+tools/issued_licenses.json

@@ -150,11 +150,11 @@ Add to `claude_desktop_config.json` (or Cowork agent settings):
 
 ---
 
-## 5. Declarative Project Specification (`.dragon` / `.mcs.json`)
+## 5. Declarative Project Specification (`.drg` / `.mcs.json`)
 
-Manual Studio uses a multi-layered annotation schema supporting single-file JSON (`.mcs.json`) and self-contained ZIP archive packages (`.dragon`):
+Manual Studio uses a multi-layered annotation schema supporting single-file JSON (`.mcs.json`) and self-contained ZIP archive packages (`.drg`):
 
-### 1) Package Archive (`.dragon`)
+### 1) Package Archive (`.drg`)
 - Structure:
   - `manifest.json`: Multi-step metadata and annotation layers.
   - `slides/step_{i:03d}_raw.png`: Lossless raw capture bitmaps.
@@ -209,8 +209,8 @@ Manual Studio uses a multi-layered annotation schema supporting single-file JSON
   - `BtnExportHwp` / Shift+F10, F12: Hancom Hangul (HWP) document/cursor insertion.
   - `BtnSendSlides` / F11: Direct Google Slides browser injection.
   - `BtnNewProject` / Ctrl+N: Initialize new empty project.
-  - `BtnOpenProject` / Ctrl+O: Open `.dragon` / `.mcs.json` project.
-  - `BtnSaveProject` / Ctrl+S: Save `.dragon` / `.mcs.json` project.
+  - `BtnOpenProject` / Ctrl+O: Open `.drg` / `.mcs.json` project.
+  - `BtnSaveProject` / Ctrl+S: Save `.drg` / `.mcs.json` project.
   - `BtnSaveAsProject` / Ctrl+Shift+S: Save project with new filename.
   - `BtnMergeProject` / Ctrl+Shift+M: Merge external project slides into current timeline.
   - `BtnReleaseNotes`: Open Release Notes history dialog (30 releases viewable).

@@ -110,7 +110,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.9.2"
+APP_VERSION = "v1.9.7"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -5384,17 +5384,17 @@ class ProjectManager:
             else:
                 storyboard_steps = data
 
-            is_dragon = project_path.lower().endswith(".dragon")
-            if not is_dragon and not project_path.lower().endswith(".mcs.json") and not project_path.lower().endswith(".json"):
-                # 기본 확장자 .dragon 채택
-                project_path += ".dragon"
-                is_dragon = True
+            is_drg = project_path.lower().endswith(".drg") or project_path.lower().endswith(".dragon")
+            if not is_drg and not project_path.lower().endswith(".mcs.json") and not project_path.lower().endswith(".json"):
+                # 기본 확장자 .drg 채택
+                project_path += ".drg"
+                is_drg = True
 
             out_dir = os.path.dirname(os.path.abspath(project_path))
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)
 
-            if is_dragon:
+            if is_drg:
                 # 1. .dragon 단일 ZIP 압축 패키지 생성 (manifest.json + slides/step_{i:03d}.png)
                 temp_zip = project_path + ".tmp"
                 with zipfile.ZipFile(temp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -11244,7 +11244,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_autosave.clicked.connect(self.on_autosave_toggle_clicked)
 
         self.btn_merge_project = QPushButton(tr("btn_merge_project", "프로젝트 병합"), self)
-        self.btn_merge_project.setToolTip(tr("tip_merge_project", "다른 프로젝트(.dragon, .mcs.json)의 슬라이드들을 현재 타임라인 뒤에 추가 병합합니다."))
+        self.btn_merge_project.setToolTip(tr("tip_merge_project", "다른 프로젝트(.drg, .dragon, .mcs.json)의 슬라이드들을 현재 타임라인 뒤에 추가 병합합니다."))
         self.btn_merge_project.clicked.connect(self.action_merge_project)
 
         self.btn_open_file = QPushButton(tr("btn_open_file", "이미지 열기"), self)
@@ -13258,7 +13258,7 @@ class ManualStudioWindow(QMainWindow):
         self.show_toast(tr("status_ready", "준비 완료"))
 
     def action_open_project(self):
-        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.drg *.dragon *.mcs.json);;Dragon 통합 패키지 (*.drg);;구버전 Dragon 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             tr("btn_open_project", "프로젝트 열기"),
@@ -13312,7 +13312,7 @@ class ManualStudioWindow(QMainWindow):
     def action_merge_project(self):
         """진행 중인 프로젝트에 타인의 프로젝트를 병합 (순서 자동 연계)"""
         self._sync_canvas_to_current_step()
-        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.drg *.dragon *.mcs.json);;Dragon 통합 패키지 (*.drg);;구버전 Dragon 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             tr("btn_merge_project", "프로젝트 병합"),
@@ -13357,12 +13357,12 @@ class ManualStudioWindow(QMainWindow):
 
         existing = [
             f for f in os.listdir(dest_folder)
-            if f.startswith("Manual_") and (f.endswith(".dragon") or f.endswith(".mcs.json"))
+            if f.startswith("Manual_") and (f.endswith(".drg") or f.endswith(".dragon") or f.endswith(".mcs.json"))
         ]
-        default_name = f"Manual_Project_{len(existing) + 1:03d}.dragon"
+        default_name = f"Manual_Project_{len(existing) + 1:03d}.drg"
         default_path = os.path.join(dest_folder, default_name)
 
-        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.dragon *.mcs.json);;Dragon 압축 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
+        filter_str = tr("filter_all_projects", "매뉴얼 프로젝트 (*.drg *.dragon *.mcs.json);;Dragon 통합 패키지 (*.drg);;구버전 Dragon 패키지 (*.dragon);;JSON 프로젝트 (*.mcs.json *.json);;모든 파일 (*.*)")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("btn_save_project", "프로젝트 저장"),
@@ -15423,7 +15423,7 @@ class ManualStudioWindow(QMainWindow):
             self.autosave_timer.stop()
 
     def get_autosave_path(self) -> str:
-        return os.path.join(get_app_dir(), ".autosave.dragon")
+        return os.path.join(get_app_dir(), ".autosave.drg")
 
     def auto_save_current_work(self):
         if not self.config.get("auto_save_enabled", True):
