@@ -277,6 +277,63 @@ class LicenseEngine:
         return ""
 
     @classmethod
+    def get_license_metadata(cls, l_type: str, raw_expiry: str = "NONE", seats: int = 1) -> dict:
+        """라이선스 유형, 만료일, 좌석 수에 대한 표준 메타데이터 생성"""
+        org_types = {
+            LicenseType.ENTERPRISE: "기업체 / 공기업",
+            LicenseType.GOVERNMENT: "중앙부처 / 관공서 / 지자체",
+            LicenseType.EDUCATION: "학교 / 교육기관",
+            LicenseType.PERSONAL: "개인 개발자",
+        }
+        org_icons = {
+            LicenseType.ENTERPRISE: "🏢",
+            LicenseType.GOVERNMENT: "🏛️",
+            LicenseType.EDUCATION: "🎓",
+            LicenseType.PERSONAL: "👤",
+        }
+        type_names = {
+            LicenseType.PERSONAL: "개인용 라이선스 (Personal)",
+            LicenseType.ENTERPRISE: "기업용 라이선스 (Enterprise / 공기업 포함)",
+            LicenseType.EDUCATION: "교육용 라이선스 (Education)",
+            LicenseType.GOVERNMENT: "관공서용 라이선스 (Government / 행정·지자체)",
+            LicenseType.PERPETUAL: "정식 영구 라이선스 (Legacy)",
+            LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스 (Legacy)",
+            LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스 (Legacy)",
+            LicenseType.TRIAL_EXT_14D: "14일 평가 연장 라이선스"
+        }
+
+        org_type = org_types.get(l_type, "일반 등록 조직")
+        org_icon = org_icons.get(l_type, "🏷️")
+        badge_text = type_names.get(l_type, "정식 라이선스")
+
+        if not raw_expiry or raw_expiry in ("NONE", "무제한", "무제한 (None)"):
+            expiry_display = "영구 라이선스 (만료 없음 / 평생 사용)"
+            expiry_short = "영구"
+        else:
+            try:
+                exp_dt = datetime.strptime(raw_expiry, "%Y-%m-%d")
+                today = datetime.now()
+                diff = (exp_dt.date() - today.date()).days
+                if diff >= 0:
+                    expiry_display = f"{raw_expiry} 까지 (D-{diff})"
+                else:
+                    expiry_display = f"만료됨 ({raw_expiry})"
+                expiry_short = f"~{raw_expiry.replace('-', '.')}"
+            except Exception:
+                expiry_display = raw_expiry
+                expiry_short = raw_expiry
+
+        return {
+            "organization_type": org_type,
+            "organization_icon": org_icon,
+            "badge_text": badge_text,
+            "expiry_display": expiry_display,
+            "expiry_short": expiry_short,
+            "seats": seats if seats and seats > 0 else 1,
+            "masked_key": "●●●●-●●●●-●●●●-●●●● (보안 암호화 보호됨)"
+        }
+
+    @classmethod
     def check_license_status(cls) -> dict:
         """
         현재 프로그램 라이선스 상태 판정
@@ -286,6 +343,12 @@ class LicenseEngine:
             "license_type": str,
             "issued_to": str,
             "expiry": str,
+            "expiry_display": str,
+            "expiry_short": str,
+            "organization_type": str,
+            "organization_icon": str,
+            "seats": int,
+            "masked_key": str,
             "badge_text": str,
             "message": str
         }
@@ -300,6 +363,12 @@ class LicenseEngine:
                 "license_type": "TRIAL",
                 "issued_to": "Evaluation User",
                 "expiry": "2026-12-31",
+                "expiry_display": "2026-12-31 까지 (평가판)",
+                "expiry_short": "~2026.12.31",
+                "organization_type": "평가판 사용자",
+                "organization_icon": "⏳",
+                "seats": 1,
+                "masked_key": "미등록 (평가판 모드)",
                 "badge_text": "평가판 (Trial)",
                 "message": "미등록 평가판 모드로 동작 중입니다."
             }
@@ -307,22 +376,21 @@ class LicenseEngine:
         valid, payload, msg = cls.verify_license_key(key)
         if valid:
             l_type = payload.get("type", LicenseType.PERSONAL)
-            type_names = {
-                LicenseType.PERSONAL: "개인용 라이선스 (Personal)",
-                LicenseType.ENTERPRISE: "기업용 라이선스 (Enterprise / 공기업 포함)",
-                LicenseType.EDUCATION: "교육용 라이선스 (Education)",
-                LicenseType.GOVERNMENT: "관공서용 라이선스 (Government / 행정·지자체)",
-                LicenseType.PERPETUAL: "정식 영구 라이선스 (Legacy)",
-                LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스 (Legacy)",
-                LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스 (Legacy)",
-                LicenseType.TRIAL_EXT_14D: "14일 평가 연장 라이선스"
-            }
+            raw_exp = payload.get("expiry", "NONE")
+            seats = payload.get("seats", 1)
+            meta = cls.get_license_metadata(l_type, raw_exp, seats)
             return {
                 "is_licensed": True,
                 "license_type": l_type,
                 "issued_to": payload.get("issued_to", "Registered User"),
-                "expiry": payload.get("expiry", "무제한 (None)"),
-                "badge_text": type_names.get(l_type, "정식 라이선스"),
+                "expiry": raw_exp,
+                "expiry_display": meta["expiry_display"],
+                "expiry_short": meta["expiry_short"],
+                "organization_type": meta["organization_type"],
+                "organization_icon": meta["organization_icon"],
+                "seats": meta["seats"],
+                "masked_key": meta["masked_key"],
+                "badge_text": meta["badge_text"],
                 "message": msg
             }
         else:
@@ -331,6 +399,12 @@ class LicenseEngine:
                 "license_type": "EXPIRED_OR_INVALID",
                 "issued_to": "Evaluation User",
                 "expiry": "만료됨",
+                "expiry_display": "라이선스 만료 또는 인증 실패",
+                "expiry_short": "만료/오류",
+                "organization_type": "미인증",
+                "organization_icon": "⚠️",
+                "seats": 1,
+                "masked_key": "인증 실패",
                 "badge_text": "평가판 (만료/오류)",
                 "message": msg
             }
@@ -734,25 +808,44 @@ class HybridLicenseCheck:
     @classmethod
     def _ok(cls, mode: str, token: dict, message: str) -> dict:
         l_type = token.get("license_type", LicenseType.PERPETUAL)
+        raw_exp = token.get("expiry", "NONE")
+        seats = token.get("seats", 1)
+        meta = LicenseEngine.get_license_metadata(l_type, raw_exp, seats)
         return {
             "is_licensed": True,
             "mode": mode,
             "license_type": l_type,
             "issued_to": token.get("issued_to", "Registered User"),
-            "expiry": token.get("expiry", "NONE"),
-            "badge_text": cls._TYPE_NAMES.get(l_type, "정식 라이선스"),
+            "expiry": raw_exp,
+            "expiry_display": meta["expiry_display"],
+            "expiry_short": meta["expiry_short"],
+            "organization_type": meta["organization_type"],
+            "organization_icon": meta["organization_icon"],
+            "seats": meta["seats"],
+            "masked_key": meta["masked_key"],
+            "badge_text": meta["badge_text"],
             "message": message,
             "grace_days_left": 0,
         }
 
     @classmethod
     def _grace(cls, token: dict, grace_days: int) -> dict:
+        l_type = token.get("license_type", LicenseType.PERPETUAL)
+        raw_exp = token.get("expiry", "NONE")
+        seats = token.get("seats", 1)
+        meta = LicenseEngine.get_license_metadata(l_type, raw_exp, seats)
         return {
             "is_licensed": True,
             "mode": "grace",
-            "license_type": token.get("license_type", LicenseType.PERPETUAL),
+            "license_type": l_type,
             "issued_to": token.get("issued_to", "Registered User"),
-            "expiry": token.get("expiry", "NONE"),
+            "expiry": raw_exp,
+            "expiry_display": meta["expiry_display"],
+            "expiry_short": meta["expiry_short"],
+            "organization_type": meta["organization_type"],
+            "organization_icon": meta["organization_icon"],
+            "seats": meta["seats"],
+            "masked_key": meta["masked_key"],
             "badge_text": f"오프라인 유예 ({grace_days}일 남음)",
             "message": f"서버 연결 불가 — 오프라인 유예 {grace_days}일 남음. 인터넷 연결 시 자동 갱신됩니다.",
             "grace_days_left": grace_days,

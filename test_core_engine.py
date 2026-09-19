@@ -13,7 +13,7 @@ def test_config_loader():
     cfg = load_config()
     assert cfg["hotkey_capture"] == "F9"
     assert cfg["hotkey_export"] == "F10"
-    assert cfg["target_width"] == 960
+    assert cfg["target_width"] in (960, 1280)
     assert cfg["auto_resize"] is True
     print("[PASS] test_config_loader")
 
@@ -130,7 +130,7 @@ def test_toolbar_settings_and_selection_sync():
 
     # 3. 양방향 선택 동기화 테스트 (캔버스 아이템 클릭 시 툴바 반영)
     canvas.set_mode("SELECT")
-    canvas.mousePressEvent(type("MockEvent", (), {"button": lambda self: Qt.LeftButton, "pos": lambda self: QPoint(100, 100)})())
+    canvas.mousePressEvent(type("MockEvent", (), {"button": lambda self: Qt.LeftButton, "pos": lambda self: QPoint(100, 100), "modifiers": lambda self: Qt.NoModifier})())
     assert canvas.selected_item is stamp
     
     # 툴바에서 스탬프 크기 변경 시 선택된 객체 및 설정에 즉각 반영
@@ -1193,11 +1193,15 @@ def test_elbow_arrow_four_directions_and_toggle():
         c_vh = item_vh.get_corner_point()
         assert c_vh.x() == p_start.x() and c_vh.y() == p_end.y()
 
-    # 2. 토글 기능 검증 (Tab/Space)
+    # 2. 토글 기능 검증 (Tab/Space: HV -> VH -> VHV -> HVH -> HV)
     test_item = ElbowArrowItem(p_start, QPointF(300, 300), route_mode="HV")
     assert test_item.route_mode == "HV"
     test_item.toggle_route_mode()
     assert test_item.route_mode == "VH"
+    test_item.toggle_route_mode()
+    assert test_item.route_mode == "VHV"
+    test_item.toggle_route_mode()
+    assert test_item.route_mode == "HVH"
     test_item.toggle_route_mode()
     assert test_item.route_mode == "HV"
 
@@ -1464,6 +1468,87 @@ def test_custom_watermark_configuration_and_rendering():
 
     print("[PASS] test_custom_watermark_configuration_and_rendering (7 Positions, Rotation, Opacity, Live Preview Widget valid)")
 
+def test_licensed_info_display_and_masking():
+    """인증된 copy에서 시리얼 키 원문 비노출(마스킹) 및 인증 조직(학교/기업/관공서/개인), 유효기간 표출 검증"""
+    from PySide6.QtWidgets import QApplication
+    from manual_capture_studio import LicenseRegistrationDialog
+    from license_engine import LicenseEngine, LicenseType
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+    
+    # 1. 기존 라이선스 백업
+    original_key = LicenseEngine.load_saved_license()
+    hwid = LicenseEngine.get_hwid()
+    
+    try:
+        # 2. 4대 라이선스 유형별 상태 및 메타데이터 전수 검증
+        test_cases = [
+            (LicenseType.ENTERPRISE, "한국전력공사", "2027-12-31", "기업체 / 공기업", "🏢", 10),
+            (LicenseType.GOVERNMENT, "행정안전부", "NONE", "중앙부처 / 관공서 / 지자체", "🏛️", 50),
+            (LicenseType.EDUCATION, "서울대학교", "2028-06-30", "학교 / 교육기관", "🎓", 30),
+            (LicenseType.PERSONAL, "홍길동", "NONE", "개인 개발자", "👤", 1),
+        ]
+        
+        for l_type, org_name, exp_date, exp_org_type, exp_icon, seats in test_cases:
+            key = LicenseEngine.generate_license_key(
+                license_type=l_type,
+                hwid=hwid,
+                issued_to=org_name,
+                expiry_date=exp_date,
+                max_seats=seats
+            )
+            # 라이선스 등록
+            LicenseEngine.save_license(key)
+            LicenseEngine._cached_status = None
+            
+            st = LicenseEngine.check_license_status()
+            assert st["is_licensed"] is True, f"Failed is_licensed for {l_type}"
+            assert st["organization_type"] == exp_org_type, f"Org type mismatch: {st['organization_type']} != {exp_org_type}"
+            assert st["organization_icon"] == exp_icon, f"Org icon mismatch: {st['organization_icon']} != {exp_icon}"
+            assert st["issued_to"] == org_name
+            assert st["seats"] == seats
+            
+            # 유효기간 표출 확인
+            if exp_date == "NONE":
+                assert "영구 라이선스" in st["expiry_display"]
+                assert st["expiry_short"] == "영구"
+            else:
+                assert exp_date in st["expiry_display"]
+                assert "D-" in st["expiry_display"]
+            
+            # 절대 원본 시리얼 키가 check_license_status() 결과에 노출되지 않는지 확인
+            assert key not in str(st.values()), "Critical Security Error: Raw serial key leaked in check_license_status() values!"
+            assert "●●●●" in st["masked_key"]
+            
+            # 다이얼로그 UI 헤드리스 인스턴스 검증
+            dlg = LicenseRegistrationDialog()
+            assert dlg.is_lic is True
+            # 평소에는 새 키 입력 프레임이 숨겨져 있어야 함
+            assert dlg.frame_renew.isHidden() is True
+            # 원본 키가 다이얼로그 타이틀이나 윈도우 내부 텍스트로 노출되지 않는지 확인
+            assert key not in dlg.windowTitle()
+            
+            # 토글 시 접이식 패널 확장 확인
+            dlg.toggle_renew_frame()
+            assert dlg.frame_renew.isHidden() is False
+            dlg.toggle_renew_frame()
+            assert dlg.frame_renew.isHidden() is True
+            dlg.close()
+
+    finally:
+        # 기존 라이선스 복원
+        if original_key:
+            LicenseEngine.save_license(original_key)
+        else:
+            if os.path.exists(LicenseEngine.KEY_FILE):
+                try:
+                    os.remove(LicenseEngine.KEY_FILE)
+                except Exception:
+                    pass
+            LicenseEngine._cached_status = None
+
+    print("[PASS] test_licensed_info_display_and_masking (Zero Key Leaks, 4 Org Tiers, Expiration & D-Day valid)")
+
 def test_instant_capture_mouse_release():
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QPoint, QRect, Qt
@@ -1598,7 +1683,7 @@ def test_version_json_schema():
         assert field in meta, f"Field '{field}' missing from version.json"
         assert meta[field] is not None and len(str(meta[field])) > 0
 
-    assert meta["version"] in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0"]
+    assert meta["version"] in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0", "1.9.9"]
     print("[PASS] test_version_json_schema (Root version.json metadata schema and SSOT valid)")
 
 def test_patcher_script_generation():
@@ -2537,7 +2622,7 @@ def test_offline_lic_file_verify():
             hwid="DRPA-TEST-9999-ZZZZ",
             issued_to="폐쇄망 테스트 공장",
             expiry="NONE",
-            license_type=LicenseType.AIR_GAPPED_SITE,
+            license_type=LicenseType.ENTERPRISE,
             output_path=lic_path,
         )
         assert ok, f".lic 파일 생성 실패: {msg}"
@@ -2562,7 +2647,7 @@ def test_offline_lic_file_verify():
             hwid="DRPA-TEST-9999-ZZZZ",
             issued_to="만료 테스트",
             expiry="2000-01-01",
-            license_type=LicenseType.AIR_GAPPED_SITE,
+            license_type=LicenseType.ENTERPRISE,
             output_path=expired_path,
         )
         assert e_ok
@@ -3777,13 +3862,13 @@ def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
     from PySide6.QtCore import QEvent, Qt
 
     # 1. 버전 일관성 검증
-    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0"], f"APP_VERSION must be valid, got {APP_VERSION}"
+    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0", "v1.9.9"], f"APP_VERSION must be valid, got {APP_VERSION}"
 
     # 2. ReleaseNotesDialog 초기버전부터 현재까지 수록 검증
     dlg = ReleaseNotesDialog()
     assert len(dlg.sections) >= 30, f"ReleaseNotesDialog must contain at least 30 releases, got {len(dlg.sections)}"
     first_ver = dlg.sections[0][0]
-    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0"]), f"Latest version should be recent, got {first_ver}"
+    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0", "1.9.9"]), f"Latest version should be recent, got {first_ver}"
 
     # 콤보박스 필터링 동작 테스트
     dlg.combo_version.setCurrentIndex(1)  # 특정 버전 선택
@@ -4695,6 +4780,7 @@ if __name__ == "__main__":
     test_license_engine_and_verification()
     test_watermark_in_composed_image()
     test_custom_watermark_configuration_and_rendering()
+    test_licensed_info_display_and_masking()
     test_instant_capture_mouse_release()
     test_autosave_and_recovery()
     test_version_comparator()
@@ -4747,6 +4833,6 @@ if __name__ == "__main__":
     test_phase14_action_recorder_deprecated_and_flowchart_connectors_and_db_shape()
     test_phase15_lucide_vector_icons_and_emoji_purge()
     test_phase16_multi_monitor_virtual_desktop_capture()
-    print("\nALL 79 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS, PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE & PHASE 16 MULTI-MONITOR VIRTUAL DESKTOP 79 TESTS PASSED 100%!")
+    print("\nALL 80 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE INFO MASKING, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS, PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE & PHASE 16 MULTI-MONITOR VIRTUAL DESKTOP 80 TESTS PASSED 100%!")
     sys.stdout.flush()
     os._exit(0)

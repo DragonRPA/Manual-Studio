@@ -6889,7 +6889,7 @@ class StudioCanvasWidget(QWidget):
                             hit_item = it
                             break
 
-                modifiers = event.modifiers()
+                modifiers = event.modifiers() if hasattr(event, "modifiers") else Qt.NoModifier
                 is_multi_key = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
 
                 if is_multi_key:
@@ -15450,8 +15450,13 @@ class ManualStudioWindow(QMainWindow):
 
     def update_window_title(self):
         status = LicenseEngine.check_license_status()
-        badge = status.get("badge_text", "평가판")
-        lic_suffix = f"[{badge}]" if status.get("is_licensed") else f"[{tr('badge_trial', '평가판')} • ~2026.12.31]"
+        if status.get("is_licensed"):
+            badge = status.get("badge_text", "정식 인증")
+            issued_to = status.get("issued_to", "")
+            exp_short = status.get("expiry_short", "")
+            lic_suffix = f"[{badge} • {issued_to} • {exp_short}]"
+        else:
+            lic_suffix = f"[{tr('badge_trial', '평가판')} • ~2026.12.31]"
         proj = getattr(self, "current_project_path", None)
         project_name = f" - [{os.path.basename(proj)}]" if proj else ""
         self.setWindowTitle(f"Manual Studio {APP_VERSION} (DragonRPA Co.){project_name} {lic_suffix}")
@@ -15462,8 +15467,11 @@ class ManualStudioWindow(QMainWindow):
         status = LicenseEngine.check_license_status()
         if status.get("is_licensed"):
             issued_to = status.get("issued_to", "정식 사용자")
+            org_type = status.get("organization_type", "")
             badge = status.get("badge_text", "정식 인증")
-            self.lbl_bottom_dev.setText(f"(주)드래곤알피에이 (DragonRPA Co.) | [{badge}] {issued_to} | 77.victor.lee@gmail.com")
+            exp_short = status.get("expiry_short", "")
+            org_str = f"{issued_to} ({org_type})" if org_type else issued_to
+            self.lbl_bottom_dev.setText(f"(주)드래곤알피에이 (DragonRPA Co.) | [{badge}] {org_str} • 유효기간: {exp_short} | 77.victor.lee@gmail.com")
             self.lbl_bottom_dev.setStyleSheet("color: #059669; font-size: 10.5px; font-weight: bold;")
         else:
             self.lbl_bottom_dev.setText("(주)드래곤알피에이 (DragonRPA Co.) | [평가판] ~2026.12.31 | 77.victor.lee@gmail.com")
@@ -17118,7 +17126,6 @@ class LicenseRegistrationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("license_dialog_title", "라이선스 등록"))
-        self.setFixedSize(520, 370)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.init_ui()
 
@@ -17127,93 +17134,304 @@ class LicenseRegistrationDialog(QDialog):
             QDialog { background-color: #FFFFFF; }
             QLabel { font-family: 'Segoe UI', 'Malgun Gothic'; }
         """)
+
+        status = LicenseEngine.check_license_status()
+        self.is_lic = status.get("is_licensed", False)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
 
-        # 1. Header
-        header = QLabel(tr("license_dialog_title", "라이선스 등록 및 정식 인증"), self)
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0F172A;")
-        layout.addWidget(header)
+        if self.is_lic:
+            self.setWindowTitle(tr("license_info_title", "정식 라이선스 인증 정보"))
+            self.setFixedSize(540, 550)
 
-        # Status Badge
-        status = LicenseEngine.check_license_status()
-        is_lic = status.get("is_licensed", False)
-        badge_color = "#10B981" if is_lic else "#D97706"
-        badge_bg = "#ECFDF5" if is_lic else "#FFFBEB"
-        badge_border = "#A7F3D0" if is_lic else "#FDE68A"
-        b_txt = tr("about_badge_licensed", "정식 라이선스") if is_lic else tr("about_badge_trial", "평가판")
-        b_user = status.get("issued_to", "") or tr("license_user_default", "사용자")
-        badge_text = f"{tr('license_status_prefix', '상태')}: {b_txt} ({b_user})"
+            # 1. 헤더: 정식 인증 상태 배지
+            hdr_frame = QFrame(self)
+            hdr_frame.setObjectName("LicenseHdrFrame")
+            hdr_frame.setStyleSheet("""
+                QFrame#LicenseHdrFrame {
+                    background-color: #ECFDF5;
+                    border: 1px solid #A7F3D0;
+                    border-radius: 8px;
+                }
+                QFrame#LicenseHdrFrame QLabel {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            hdr_layout = QHBoxLayout(hdr_frame)
+            hdr_layout.setContentsMargins(14, 8, 14, 8)
+            hdr_layout.setSpacing(10)
 
-        self.lbl_status = QLabel(badge_text, self)
-        self.lbl_status.setStyleSheet(f"""
-            background-color: {badge_bg};
-            color: {badge_color};
-            border: 1px solid {badge_border};
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 12px;
-            font-weight: bold;
-        """)
-        layout.addWidget(self.lbl_status)
+            lbl_check_icon = QLabel("✓", hdr_frame)
+            lbl_check_icon.setStyleSheet("font-size: 16px; font-weight: bold; color: #059669;")
 
-        # 2. HWID Frame
-        hwid_frame = QFrame(self)
-        hwid_frame.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px;")
-        hw_layout = QVBoxLayout(hwid_frame)
-        hw_layout.setSpacing(6)
+            lbl_hdr_txt = QLabel(tr("license_status_verified", "정식 인증 완료"), hdr_frame)
+            lbl_hdr_txt.setStyleSheet("font-size: 13.5px; font-weight: bold; color: #065F46;")
 
-        lbl_hw_title = QLabel(tr("lbl_hwid", "내 PC 고유 식별자 (HWID):"), self)
-        lbl_hw_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #475569;")
-        hw_layout.addWidget(lbl_hw_title)
+            hdr_layout.addWidget(lbl_check_icon)
+            hdr_layout.addWidget(lbl_hdr_txt, 1)
+            layout.addWidget(hdr_frame)
 
-        hw_row = QHBoxLayout()
-        my_hwid = LicenseEngine.get_hwid()
-        self.edit_hwid = QLineEdit(my_hwid, self)
-        self.edit_hwid.setReadOnly(True)
-        self.edit_hwid.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 4px 8px; background-color: #FFFFFF;")
-        btn_copy = QPushButton(tr("btn_copy_hwid", "복사"), self)
-        btn_copy.setCursor(Qt.PointingHandCursor)
-        btn_copy.clicked.connect(self.copy_hwid)
-        hw_row.addWidget(self.edit_hwid)
-        hw_row.addWidget(btn_copy)
-        hw_layout.addLayout(hw_row)
-        layout.addWidget(hwid_frame)
+            # 2. 인증 상세 정보 카드 (Dossier Card)
+            card = QFrame(self)
+            card.setObjectName("LicenseCard")
+            card.setStyleSheet("""
+                QFrame#LicenseCard {
+                    background-color: #F8FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 8px;
+                }
+                QFrame#LicenseCard QLabel {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(16, 14, 16, 14)
+            card_layout.setSpacing(10)
 
-        # 3. Serial Key Input
-        lbl_key_title = QLabel(tr("lbl_license_key", "라이선스 시리얼 키 입력:"), self)
-        lbl_key_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #0F172A;")
-        layout.addWidget(lbl_key_title)
+            def add_info_row(title_text, val_text, is_bold=False, val_color="#0F172A"):
+                item_box = QVBoxLayout()
+                item_box.setSpacing(2)
+                lbl_t = QLabel(title_text, card)
+                lbl_t.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B; white-space: nowrap;")
+                lbl_v = QLabel(val_text, card)
+                b_weight = "bold" if is_bold else "500"
+                lbl_v.setStyleSheet(f"font-size: 12.5px; font-weight: {b_weight}; color: {val_color}; white-space: nowrap;")
+                lbl_v.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                item_box.addWidget(lbl_t)
+                item_box.addWidget(lbl_v)
+                card_layout.addLayout(item_box)
 
-        self.edit_key = QLineEdit(self)
-        self.edit_key.setPlaceholderText("MS1P-XXXXXXXX-eyJ...")
-        self.edit_key.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 6px 10px; border: 1px solid #CBD5E1; border-radius: 4px;")
-        layout.addWidget(self.edit_key)
+            issued_to = status.get("issued_to", "")
+            org_type = status.get("organization_type", "")
+            org_icon = status.get("organization_icon", "🏷️")
+            badge_text = status.get("badge_text", "")
+            exp_display = status.get("expiry_display", "")
+            seats = status.get("seats", 1)
+            my_hwid = LicenseEngine.get_hwid()
 
-        # 4. Action Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch(1)
+            # 1) 인증 조직 (발급처)
+            org_display_str = f"{org_icon} {issued_to} ({org_type})" if org_type else f"{org_icon} {issued_to}"
+            add_info_row(tr("license_org_title", "인증 조직 (발급처)"), org_display_str, is_bold=True, val_color="#0F172A")
 
-        self.btn_activate = QPushButton(tr("btn_activate", "인증하기"), self)
-        self.btn_activate.setCursor(Qt.PointingHandCursor)
-        self.btn_activate.setStyleSheet("""
-            QPushButton {
-                background-color: #2563EB; color: white; font-weight: bold;
-                padding: 7px 18px; border-radius: 5px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #1D4ED8; }
-        """)
-        self.btn_activate.clicked.connect(self.activate_license)
+            # 2) 라이선스 유형
+            add_info_row(tr("license_type_title", "라이선스 유형"), badge_text, is_bold=False, val_color="#1E293B")
 
-        self.btn_close = QPushButton(tr("btn_close", "닫기"), self)
-        self.btn_close.setCursor(Qt.PointingHandCursor)
-        self.btn_close.setStyleSheet("padding: 7px 16px; font-size: 12px;")
-        self.btn_close.clicked.connect(self.close)
+            # 3) 인증 유효기간
+            add_info_row(tr("license_expiry_title", "인증 유효기간"), exp_display, is_bold=True, val_color="#047857")
 
-        btn_layout.addWidget(self.btn_activate)
-        btn_layout.addWidget(self.btn_close)
-        layout.addLayout(btn_layout)
+            # 4) 허용 좌석 수
+            add_info_row(tr("license_seats_title", "허용 좌석 수"), f"{seats} Seats", is_bold=False, val_color="#334155")
+
+            # 5) 내 PC 고유 식별자 (HWID)
+            hw_box = QVBoxLayout()
+            hw_box.setSpacing(2)
+            lbl_hw_t = QLabel(tr("lbl_hwid", "내 PC 고유 식별자 (HWID):"), card)
+            lbl_hw_t.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B; white-space: nowrap;")
+            hw_box.addWidget(lbl_hw_t)
+
+            hw_row = QHBoxLayout()
+            self.edit_hwid = QLineEdit(my_hwid, card)
+            self.edit_hwid.setReadOnly(True)
+            self.edit_hwid.setStyleSheet("font-family: Consolas; font-size: 11.5px; padding: 4px 8px; background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px;")
+            btn_copy = QPushButton(tr("btn_copy_hwid", "복사"), card)
+            btn_copy.setCursor(Qt.PointingHandCursor)
+            btn_copy.setStyleSheet("font-size: 11px; padding: 4px 10px; border: 1px solid #CBD5E1; border-radius: 4px; background-color: #FFFFFF;")
+            btn_copy.clicked.connect(self.copy_hwid)
+            hw_row.addWidget(self.edit_hwid)
+            hw_row.addWidget(btn_copy)
+            hw_box.addLayout(hw_row)
+            card_layout.addLayout(hw_box)
+
+            # 6) 라이선스 시리얼 키 (보안 마스킹 처리 - 원문 미표출)
+            masked_key_val = status.get("masked_key", "●●●●-●●●●-●●●●-●●●● (보안 암호화 보호됨)")
+            add_info_row(tr("license_key_masked_label", "라이선스 키"), masked_key_val, is_bold=False, val_color="#64748B")
+
+            layout.addWidget(card)
+
+            # 3. 접이식 라이선스 키 갱신 / 변경 패널
+            self.btn_toggle_renew = QPushButton(f"{tr('license_btn_renew_toggle', '새 라이선스 키 등록 / 갱신')} ▾", self)
+            self.btn_toggle_renew.setCursor(Qt.PointingHandCursor)
+            self.btn_toggle_renew.setStyleSheet("""
+                QPushButton {
+                    border: none;
+                    background: transparent;
+                    color: #2563EB;
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    text-align: left;
+                    padding: 2px 4px;
+                }
+                QPushButton:hover { text-decoration: underline; }
+            """)
+            self.btn_toggle_renew.clicked.connect(self.toggle_renew_frame)
+            layout.addWidget(self.btn_toggle_renew)
+
+            # 접이식 프레임 (기본 숨김)
+            self.frame_renew = QFrame(self)
+            self.frame_renew.setObjectName("RenewFrame")
+            self.frame_renew.setStyleSheet("""
+                QFrame#RenewFrame {
+                    background-color: #F1F5F9;
+                    border: 1px dashed #CBD5E1;
+                    border-radius: 6px;
+                }
+                QFrame#RenewFrame QLabel {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            self.frame_renew.setVisible(False)
+            renew_layout = QVBoxLayout(self.frame_renew)
+            renew_layout.setContentsMargins(12, 10, 12, 10)
+            renew_layout.setSpacing(6)
+
+            lbl_renew_prompt = QLabel(tr("license_renew_prompt", "새로운 라이선스 시리얼 키 입력:"), self.frame_renew)
+            lbl_renew_prompt.setStyleSheet("font-size: 11px; font-weight: bold; color: #334155;")
+            renew_layout.addWidget(lbl_renew_prompt)
+
+            self.edit_key = QLineEdit(self.frame_renew)
+            self.edit_key.setPlaceholderText("MSENT-XXXXXXXX-eyJ...")
+            self.edit_key.setStyleSheet("font-family: Consolas; font-size: 11.5px; padding: 5px 8px; background-color: #FFFFFF; border: 1px solid #94A3B8; border-radius: 4px;")
+            renew_layout.addWidget(self.edit_key)
+
+            renew_btn_row = QHBoxLayout()
+            renew_btn_row.addStretch(1)
+            btn_do_renew = QPushButton(tr("license_btn_renew_action", "새 키로 인증"), self.frame_renew)
+            btn_do_renew.setCursor(Qt.PointingHandCursor)
+            btn_do_renew.setStyleSheet("""
+                QPushButton {
+                    background-color: #2563EB; color: white; font-weight: bold;
+                    padding: 5px 14px; border-radius: 4px; font-size: 11.5px;
+                }
+                QPushButton:hover { background-color: #1D4ED8; }
+            """)
+            btn_do_renew.clicked.connect(self.activate_license)
+            renew_btn_row.addWidget(btn_do_renew)
+            renew_layout.addLayout(renew_btn_row)
+
+            layout.addWidget(self.frame_renew)
+
+            # 4. 하단 닫기 버튼
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch(1)
+            self.btn_close = QPushButton(tr("btn_close", "닫기"), self)
+            self.btn_close.setCursor(Qt.PointingHandCursor)
+            self.btn_close.setStyleSheet("padding: 7px 20px; font-size: 12px; font-weight: bold;")
+            self.btn_close.clicked.connect(self.close)
+            btn_layout.addWidget(self.btn_close)
+            layout.addLayout(btn_layout)
+
+        else:
+            # 미인증 (평가판) 모드
+            self.setWindowTitle(tr("license_dialog_title", "라이선스 등록 및 정식 인증"))
+            self.setFixedSize(520, 390)
+
+            # 1. Header
+            header = QLabel(tr("license_dialog_title", "라이선스 등록 및 정식 인증"), self)
+            header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0F172A;")
+            layout.addWidget(header)
+
+            # Status Badge
+            badge_color = "#D97706"
+            badge_bg = "#FFFBEB"
+            badge_border = "#FDE68A"
+            b_txt = tr("license_status_trial", "평가판 (Trial)")
+            badge_text = f"{tr('license_status_prefix', '상태')}: {b_txt}"
+
+            self.lbl_status = QLabel(badge_text, self)
+            self.lbl_status.setStyleSheet(f"""
+                background-color: {badge_bg};
+                color: {badge_color};
+                border: 1px solid {badge_border};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            """)
+            layout.addWidget(self.lbl_status)
+
+            # 2. HWID Frame
+            hwid_frame = QFrame(self)
+            hwid_frame.setObjectName("HwidFrame")
+            hwid_frame.setStyleSheet("""
+                QFrame#HwidFrame {
+                    background-color: #F8FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 6px;
+                }
+                QFrame#HwidFrame QLabel {
+                    border: none;
+                    background: transparent;
+                }
+            """)
+            hw_layout = QVBoxLayout(hwid_frame)
+            hw_layout.setContentsMargins(10, 8, 10, 8)
+            hw_layout.setSpacing(6)
+
+            lbl_hw_title = QLabel(tr("lbl_hwid", "내 PC 고유 식별자 (HWID):"), self)
+            lbl_hw_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #475569;")
+            hw_layout.addWidget(lbl_hw_title)
+
+            hw_row = QHBoxLayout()
+            my_hwid = LicenseEngine.get_hwid()
+            self.edit_hwid = QLineEdit(my_hwid, self)
+            self.edit_hwid.setReadOnly(True)
+            self.edit_hwid.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 4px 8px; background-color: #FFFFFF;")
+            btn_copy = QPushButton(tr("btn_copy_hwid", "복사"), self)
+            btn_copy.setCursor(Qt.PointingHandCursor)
+            btn_copy.clicked.connect(self.copy_hwid)
+            hw_row.addWidget(self.edit_hwid)
+            hw_row.addWidget(btn_copy)
+            hw_layout.addLayout(hw_row)
+            layout.addWidget(hwid_frame)
+
+            # 3. Serial Key Input
+            lbl_key_title = QLabel(tr("lbl_license_key", "라이선스 시리얼 키 입력:"), self)
+            lbl_key_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #0F172A;")
+            layout.addWidget(lbl_key_title)
+
+            self.edit_key = QLineEdit(self)
+            self.edit_key.setPlaceholderText("MSENT-XXXXXXXX-eyJ...")
+            self.edit_key.setStyleSheet("font-family: Consolas; font-size: 12px; padding: 6px 10px; border: 1px solid #CBD5E1; border-radius: 4px;")
+            layout.addWidget(self.edit_key)
+
+            # 4. Action Buttons
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch(1)
+
+            self.btn_activate = QPushButton(tr("btn_activate", "인증하기"), self)
+            self.btn_activate.setCursor(Qt.PointingHandCursor)
+            self.btn_activate.setStyleSheet("""
+                QPushButton {
+                    background-color: #2563EB; color: white; font-weight: bold;
+                    padding: 7px 18px; border-radius: 5px; font-size: 12px;
+                }
+                QPushButton:hover { background-color: #1D4ED8; }
+            """)
+            self.btn_activate.clicked.connect(self.activate_license)
+
+            self.btn_close = QPushButton(tr("btn_close", "닫기"), self)
+            self.btn_close.setCursor(Qt.PointingHandCursor)
+            self.btn_close.setStyleSheet("padding: 7px 16px; font-size: 12px;")
+            self.btn_close.clicked.connect(self.close)
+
+            btn_layout.addWidget(self.btn_activate)
+            btn_layout.addWidget(self.btn_close)
+            layout.addLayout(btn_layout)
+
+    def toggle_renew_frame(self):
+        is_vis = self.frame_renew.isHidden()
+        self.frame_renew.setVisible(is_vis)
+        arrow = "▴" if is_vis else "▾"
+        self.btn_toggle_renew.setText(f"{tr('license_btn_renew_toggle', '새 라이선스 키 등록 / 갱신')} {arrow}")
+        if is_vis:
+            self.setFixedSize(540, 670)
+        else:
+            self.setFixedSize(540, 550)
 
     def copy_hwid(self):
         QApplication.clipboard().setText(self.edit_hwid.text().strip())
@@ -18214,8 +18432,15 @@ class AboutDialog(QDialog):
                     border-radius: 8px;
                 }
             """)
-            lic_tpl = tr("about_lic_card", "<b>[정식 라이선스 활성화]</b> 등록 대상: <b>{issued_to}</b> ({badge})<br/>워터마크 없는 고해상도 PPT 슬라이드 생성이 활성화되었습니다.")
-            lbl_tr_text.setText(lic_tpl.format(issued_to=issued_to, badge=badge_text))
+            org_type = status.get("organization_type", "")
+            exp_disp = status.get("expiry_display", "")
+            org_str = f"{issued_to} ({org_type})" if org_type else issued_to
+            lic_html = (
+                f"<b>[정식 라이선스 활성화]</b> 등록 조직: <b>{org_str}</b><br/>"
+                f"라이선스 유형: <b>{badge_text}</b> | 유효기간: <b>{exp_disp}</b><br/>"
+                f"워터마크 없는 고해상도 매뉴얼 생성이 활성화되었습니다."
+            )
+            lbl_tr_text.setText(lic_html)
             lbl_tr_text.setStyleSheet("font-size: 11.5px; color: #065F46; border: none; background: transparent;")
         else:
             card_trial.setStyleSheet("""
