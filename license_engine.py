@@ -19,16 +19,19 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 class LicenseType:
-    PERPETUAL = "PERPETUAL"           # 1카피 영구 (MS1P)
-    SUBSCRIPTION_1M = "SUB_1M"        # 1카피 1개월 (MS1M)
-    SUBSCRIPTION_1Y = "SUB_1Y"        # 1카피 1년 (MS1Y)
-    ENTERPRISE = "ENTERPRISE"         # 엔터프라이즈 볼륨 (MSENT)
-    AIR_GAPPED_SITE = "AIR_GAPPED"    # 오프라인 폐쇄망 사이트 (MSSITE)
+    PERSONAL = "PERSONAL"             # 개인용 1카피 (MSPS)
+    ENTERPRISE = "ENTERPRISE"         # 기업용 볼륨/사이트 - 공기업 포함 (MSENT)
+    EDUCATION = "EDUCATION"           # 교육용 (MSED)
+    GOVERNMENT = "GOVERNMENT"         # 관공서용 - 행정/지자체 (MSGOV)
+
+    # 레거시 및 하위 호환
+    PERPETUAL = "PERPETUAL"           # 레거시 1카피 영구 (MS1P)
+    SUBSCRIPTION_1M = "SUB_1M"        # 레거시 1카피 1개월 (MS1M)
+    SUBSCRIPTION_1Y = "SUB_1Y"        # 레거시 1카피 1년 (MS1Y)
     TRIAL_EXT_14D = "TRIAL_14D"       # 14일 평가 연장 (MST14)
 
     SUB_1M = SUBSCRIPTION_1M
     SUB_1Y = SUBSCRIPTION_1Y
-    AIR_GAPPED = AIR_GAPPED_SITE
     TRIAL_14D = TRIAL_EXT_14D
 
 class LicenseEngine:
@@ -45,11 +48,13 @@ class LicenseEngine:
     KEY_FILE = "license.key"
 
     PREFIX_MAP = {
+        LicenseType.PERSONAL: "MSPS",
+        LicenseType.ENTERPRISE: "MSENT",
+        LicenseType.EDUCATION: "MSED",
+        LicenseType.GOVERNMENT: "MSGOV",
         LicenseType.PERPETUAL: "MS1P",
         LicenseType.SUBSCRIPTION_1M: "MS1M",
         LicenseType.SUBSCRIPTION_1Y: "MS1Y",
-        LicenseType.ENTERPRISE: "MSENT",
-        LicenseType.AIR_GAPPED_SITE: "MSSITE",
         LicenseType.TRIAL_EXT_14D: "MST14"
     }
 
@@ -82,8 +87,11 @@ class LicenseEngine:
         """
         사장님/키젠/판매서버 전용: RSA-2048 비대칭키 디지털 서명 정식 라이선스 시리얼 키 생성
         """
-        prefix = cls.PREFIX_MAP.get(license_type, "MS1P")
-        clean_hwid = hwid.strip().upper() if license_type not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE) else "ENTERPRISE"
+        prefix = cls.PREFIX_MAP.get(license_type, "MSPS")
+        if license_type in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT):
+            clean_hwid = "ENTERPRISE" if license_type == LicenseType.ENTERPRISE else "GOVERNMENT"
+        else:
+            clean_hwid = hwid.strip().upper()
         clean_issued = issued_to.strip().replace(":", "_").replace("|", "_")
 
         payload = {
@@ -210,9 +218,9 @@ class LicenseEngine:
 
         # ── 공통: HWID 노드락 검증 ────────────────────────────────────────
         target_hwid = payload.get("hwid", "")
-        if payload.get("type") not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
+        if payload.get("type") not in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT):
             curr = current_hwid or cls.get_hwid()
-            if target_hwid != curr:
+            if target_hwid and target_hwid not in ("ALL", "ENTERPRISE", "GOVERNMENT") and target_hwid != curr:
                 return False, {}, f"다른 PC용으로 발급된 라이선스입니다. (발급 HWID: {target_hwid})"
 
         # ── 공통: 만료일 검증 ────────────────────────────────────────────
@@ -282,6 +290,9 @@ class LicenseEngine:
             "message": str
         }
         """
+        if cls._cached_status is not None:
+            return cls._cached_status
+
         key = cls.load_saved_license()
         if not key:
             return {
@@ -295,13 +306,15 @@ class LicenseEngine:
 
         valid, payload, msg = cls.verify_license_key(key)
         if valid:
-            l_type = payload.get("type", "PERPETUAL")
+            l_type = payload.get("type", LicenseType.PERSONAL)
             type_names = {
-                LicenseType.PERPETUAL: "정식 영구 라이선스",
-                LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스",
-                LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스",
-                LicenseType.ENTERPRISE: "엔터프라이즈 볼륨 라이선스",
-                LicenseType.AIR_GAPPED_SITE: "오프라인 사이트 라이선스",
+                LicenseType.PERSONAL: "개인용 라이선스 (Personal)",
+                LicenseType.ENTERPRISE: "기업용 라이선스 (Enterprise / 공기업 포함)",
+                LicenseType.EDUCATION: "교육용 라이선스 (Education)",
+                LicenseType.GOVERNMENT: "관공서용 라이선스 (Government / 행정·지자체)",
+                LicenseType.PERPETUAL: "정식 영구 라이선스 (Legacy)",
+                LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스 (Legacy)",
+                LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스 (Legacy)",
                 LicenseType.TRIAL_EXT_14D: "14일 평가 연장 라이선스"
             }
             return {
@@ -325,6 +338,15 @@ class LicenseEngine:
     @classmethod
     def is_licensed(cls) -> bool:
         return cls.check_license_status().get("is_licensed", False)
+
+    @classmethod
+    def can_use_custom_watermark(cls) -> bool:
+        """기업용(공기업 포함), 교육용, 관공서용 라이선스 대상 커스텀 워터마크 권한 판별"""
+        status = cls.check_license_status()
+        if not status.get("is_licensed"):
+            return False
+        l_type = status.get("license_type", "")
+        return l_type in (LicenseType.ENTERPRISE, LicenseType.EDUCATION, LicenseType.GOVERNMENT)
 
 
 # ================================================================================
@@ -567,9 +589,9 @@ class OnlineLicenseVerifier:
         if not hmac.compare_digest(stored_sig, expected_sig):
             return False, {}, f".lic 파일이 위변조되었습니다. ({found_path})"
 
-        # HWID 노드락 (ENTERPRISE / AIR_GAPPED 제외)
+        # HWID 노드락 (ENTERPRISE / GOVERNMENT 제외)
         lic_type = lic_data.get("type", "")
-        if lic_type not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
+        if lic_type not in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT):
             curr = LicenseEngine.get_hwid()
             if lic_data.get("hwid", "") != curr:
                 return False, {}, f".lic 파일이 다른 PC용으로 발급되었습니다. (발급 HWID: {lic_data.get('hwid')})"
@@ -595,18 +617,20 @@ class HybridLicenseCheck:
     - "cache"       : 로컬 캐시 토큰 유효 (0초 즉시 실행)
     - "online"      : 온라인 서버 인증 성공 (캐시 갱신)
     - "grace"       : 오프라인 유예 기간 이내 (경고 배너 표시 후 실행)
-    - "offline_lic" : 폐쇄망 .lic 파일 인증 성공
+    - "offline_lic" : 오프라인 .lic 파일 인증 성공
     - "trial"       : 미등록 평가판
     - "expired"     : 라이선스 만료 (즉시 차단, 유예 없음)
     - "blocked"     : 유예 초과 / 인증 완전 실패
     """
 
     _TYPE_NAMES = {
-        LicenseType.PERPETUAL: "정식 영구 라이선스",
-        LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스",
-        LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스",
-        LicenseType.ENTERPRISE: "엔터프라이즈 볼륨 라이선스",
-        LicenseType.AIR_GAPPED_SITE: "오프라인 사이트 라이선스",
+        LicenseType.PERSONAL: "개인용 라이선스 (Personal)",
+        LicenseType.ENTERPRISE: "기업용 라이선스 (Enterprise / 공기업 포함)",
+        LicenseType.EDUCATION: "교육용 라이선스 (Education)",
+        LicenseType.GOVERNMENT: "관공서용 라이선스 (Government / 행정·지자체)",
+        LicenseType.PERPETUAL: "정식 영구 라이선스 (Legacy)",
+        LicenseType.SUBSCRIPTION_1M: "1개월 구독 라이선스 (Legacy)",
+        LicenseType.SUBSCRIPTION_1Y: "1년 연간 라이선스 (Legacy)",
         LicenseType.TRIAL_EXT_14D: "14일 평가 연장 라이선스",
     }
 
@@ -671,16 +695,16 @@ class HybridLicenseCheck:
             if grace > 0:
                 return cls._grace(token, grace)
 
-        # ── 4단계: 폐쇄망 .lic 파일 ─────────────────────────────────────────
+        # ── 4단계: 오프라인 .lic 파일 ─────────────────────────────────────────
         lic_ok, lic_data, lic_msg = v.verify_offline_lic_file()
         if lic_ok:
             return {
                 "is_licensed": True,
                 "mode": "offline_lic",
-                "license_type": lic_data.get("type", LicenseType.AIR_GAPPED_SITE),
+                "license_type": lic_data.get("type", LicenseType.ENTERPRISE),
                 "issued_to": lic_data.get("issued_to", "Offline User"),
                 "expiry": lic_data.get("expiry", "NONE"),
-                "badge_text": "오프라인 사이트 라이선스",
+                "badge_text": "오프라인 라이선스",
                 "message": lic_msg,
                 "grace_days_left": 0,
             }
@@ -791,15 +815,15 @@ class LicenseFileGenerator:
         hwid: str,
         issued_to: str,
         expiry: str = "NONE",
-        license_type: str = LicenseType.AIR_GAPPED_SITE,
+        license_type: str = LicenseType.ENTERPRISE,
         max_seats: int = 1,
         output_path: str = None,
     ) -> tuple:
         """
-        폐쇄망 .lic 파일 생성.
+        오프라인 .lic 파일 생성.
 
         Args:
-            hwid         : 대상 PC HWID (DRPA-XXXX-XXXX-XXXX). ENTERPRISE/AIR_GAPPED는 "ENTERPRISE" 로 통일.
+            hwid         : 대상 PC HWID (DRPA-XXXX-XXXX-XXXX). ENTERPRISE/GOVERNMENT는 "ENTERPRISE" 또는 "GOVERNMENT" 로 통일.
             issued_to    : 발급 대상 회사명
             expiry       : 만료일 "YYYY-MM-DD" 또는 "NONE" (영구)
             license_type : LicenseType 상수
@@ -812,7 +836,7 @@ class LicenseFileGenerator:
         now_str = datetime.now().strftime("%Y-%m-%d")
         clean_hwid = (
             "ENTERPRISE"
-            if license_type in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE)
+            if license_type in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT)
             else hwid.strip().upper()
         )
 

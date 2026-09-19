@@ -155,5 +155,16 @@
       "example": "EMP-0000",
       "pattern": "(?<![A-Za-z0-9])EMP\\-\\d{4}(?!\\d)"
     }
-  ]
+  ],
+  "custom_watermark": {
+    "enabled": false,
+    "text": "(주)회사명 대외비",
+    "position": "center_diagonal",
+    "font_size": 36,
+    "font_family": "Malgun Gothic",
+    "font_bold": true,
+    "rotation": -30,
+    "opacity": 25,
+    "color": "#64748B"
+  }
 }

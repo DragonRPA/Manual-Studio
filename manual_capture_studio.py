@@ -85,7 +85,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
-    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget
+    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton
 )
 
 from PySide6.QtSvg import QSvgRenderer
@@ -110,7 +110,7 @@ from eula_manager import EulaManager
 from license_engine import LicenseEngine, LicenseType
 from updater_engine import UpdateCheckerThread, UpdateDialog, VersionComparator
 
-APP_VERSION = "v1.9.7"
+APP_VERSION = "v1.9.9"
 
 try:
     from dragon_rpa_ci_data import DRAGON_RPA_CI_BASE64
@@ -328,7 +328,18 @@ DEFAULT_CONFIG = {
         "address": True,
         "ip": False
     },
-    "custom_pii_rules": []
+    "custom_pii_rules": [],
+    "custom_watermark": {
+        "enabled": False,
+        "text": "(주)회사명 대외비",
+        "position": "center_diagonal",
+        "font_size": 36,
+        "font_family": "Malgun Gothic",
+        "font_bold": True,
+        "rotation": -30,
+        "opacity": 25,
+        "color": "#64748B"
+    }
 }
 
 CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
@@ -343,7 +354,7 @@ def load_config():
                 for sub_key in [
                     "stamp_style", "text_style", "highlight_box_style", "arrow_style",
                     "callout_style", "elbow_style", "blur_style", "hotkey_style", "wordart_style",
-                    "fixed_rect", "ppt_layout", "pii_categories"
+                    "fixed_rect", "ppt_layout", "pii_categories", "custom_watermark"
                 ]:
                     if sub_key in DEFAULT_CONFIG:
                         sub_dict = DEFAULT_CONFIG[sub_key].copy()
@@ -8041,6 +8052,8 @@ class StudioCanvasWidget(QWidget):
             # 평가판 / 미인증 시 워터마크 자동 삽입 (정식 인증 시 완전 제거)
             if not LicenseEngine.is_licensed():
                 self._render_watermark(painter, img.width(), img.height())
+            elif LicenseEngine.can_use_custom_watermark():
+                self._render_custom_watermark(painter, img.width(), img.height())
         finally:
             painter.end()
         return img
@@ -8087,6 +8100,98 @@ class StudioCanvasWidget(QWidget):
         c_tw = center_fm.horizontalAdvance(wm_text)
         c_th = center_fm.height()
         painter.drawText(int(-c_tw / 2), int(c_th / 4), wm_text)
+
+        painter.restore()
+
+    def _render_custom_watermark(self, painter: QPainter, width: int, height: int):
+        """기업용/교육용/관공서용 커스텀 워터마크 렌더링"""
+        wm_cfg = self.config.get("custom_watermark", {})
+        if not wm_cfg.get("enabled", False):
+            return
+        text = str(wm_cfg.get("text", "")).strip()
+        if not text:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        pos_mode = wm_cfg.get("position", "center_diagonal")
+        font_size = max(10, int(wm_cfg.get("font_size", 36)))
+        font_family = wm_cfg.get("font_family", "Malgun Gothic")
+        font_bold = bool(wm_cfg.get("font_bold", True))
+        rotation = int(wm_cfg.get("rotation", -30))
+        opacity_pct = max(5, min(100, int(wm_cfg.get("opacity", 25))))
+        color_hex = wm_cfg.get("color", "#64748B")
+
+        alpha = int(255 * (opacity_pct / 100.0))
+        qc = QColor(color_hex)
+        qc.setAlpha(alpha)
+
+        font = QFont(font_family, font_size)
+        font.setBold(font_bold)
+        painter.setFont(font)
+        painter.setPen(QPen(qc))
+
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+
+        if pos_mode == "tile":
+            step_x = max(200, tw + 120)
+            step_y = max(120, th + 90)
+            cols = int(width / step_x) + 3
+            rows = int(height / step_y) + 3
+            for r in range(-1, rows):
+                for c in range(-1, cols):
+                    painter.save()
+                    cx = c * step_x + (step_x / 2.0 if r % 2 == 1 else 0.0)
+                    cy = r * step_y
+                    painter.translate(cx, cy)
+                    painter.rotate(rotation)
+                    painter.drawText(int(-tw / 2), int(th / 4), text)
+                    painter.restore()
+
+        elif pos_mode in ("center_diagonal", "center_horizontal"):
+            painter.translate(width / 2.0, height / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+
+        elif pos_mode == "bottom_right":
+            pad = 24
+            bx = width - tw - pad
+            by = height - pad
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+
+        elif pos_mode == "bottom_left":
+            pad = 24
+            bx = pad
+            by = height - pad
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+
+        elif pos_mode == "top_right":
+            pad = 24
+            bx = width - tw - pad
+            by = pad + th
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+
+        elif pos_mode == "top_left":
+            pad = 24
+            bx = pad
+            by = pad + th
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+
+        else:
+            painter.translate(width / 2.0, height / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
 
         painter.restore()
 
@@ -11850,9 +11955,13 @@ class ManualStudioWindow(QMainWindow):
         # 8) [환경] 서식 그룹
         self.btn_settings = QPushButton(tr("btn_detail_settings", "상세 설정"), self)
         self.btn_settings.clicked.connect(self.open_settings_dialog)
+        self.btn_watermark_settings = QPushButton(tr("btn_watermark_settings", "워터마크 설정"), self)
+        self.btn_watermark_settings.clicked.connect(self.show_watermark_dialog)
         env_lay = QHBoxLayout()
         env_lay.setContentsMargins(0, 0, 0, 0)
+        env_lay.setSpacing(4)
         env_lay.addWidget(self.btn_settings)
+        env_lay.addWidget(self.btn_watermark_settings)
         format_layout.addWidget(self.create_ribbon_group(tr("grp_settings", "환경설정"), env_lay, "grp_settings"))
 
         # Hidden compatibility controls for removed duplicate/floating ribbon buttons
@@ -12358,6 +12467,8 @@ class ManualStudioWindow(QMainWindow):
         self.menu_settings = menubar.addMenu("설정(&S)")
         self.act_cfg = self.menu_settings.addAction("환경 설정...")
         self.act_cfg.triggered.connect(self.open_settings_dialog)
+        self.act_watermark = self.menu_settings.addAction("워터마크 설정(W)...")
+        self.act_watermark.triggered.connect(self.show_watermark_dialog)
         self.act_lic = self.menu_settings.addAction("라이선스 등록(L)...")
         self.act_lic.triggered.connect(self.show_license_dialog)
 
@@ -12443,7 +12554,7 @@ class ManualStudioWindow(QMainWindow):
             "mode_blur":     ("〰️", "블러 (M)",                lambda: self.switch_mode("blur")),
             "mode_eraser":   ("🧹", "지우개 (X)",               lambda: self.switch_mode("eraser")),
             "align_flow":    ("⚡", "자동정렬",                  self.action_auto_align_flowchart),
-            "renumber":      ("🔢", "번호 재정렬",               self.action_renumber_stamps),
+            "renumber":      ("🔢", "번호 재정렬",               self.action_renumber_powerpoint_steps),
             "mobile_link":   ("📱", "모바일 연결",              self.action_open_mobile_link),
             "ocr":           ("🔍", "텍스트 인식",              self._qat_ocr),
             "spotlight":     ("🔆", "스포트라이트",             lambda: self.switch_mode("spotlight")),
@@ -15014,6 +15125,8 @@ class ManualStudioWindow(QMainWindow):
         self.show_toast(f"{res.get('renumbered_count')}개 슬라이드 Step 번호 재정렬 완료")
         self._show_renumber_success_dialog(res)
 
+    action_renumber_stamps = action_renumber_powerpoint_steps
+
     def _show_renumber_success_dialog(self, res: dict):
         """Step 번호 재정렬 결과 상세 내역 다이얼로그"""
         dlg = QDialog(self)
@@ -15355,6 +15468,15 @@ class ManualStudioWindow(QMainWindow):
         else:
             self.lbl_bottom_dev.setText("(주)드래곤알피에이 (DragonRPA Co.) | [평가판] ~2026.12.31 | 77.victor.lee@gmail.com")
             self.lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500;")
+
+    def show_watermark_dialog(self):
+        dlg = WatermarkConfigDialog(self, self)
+        dlg.sig_watermark_changed.connect(self.on_watermark_changed)
+        dlg.exec()
+
+    def on_watermark_changed(self):
+        self.canvas.update()
+        self.show_toast(tr("msg_watermark_saved", "워터마크 설정이 저장되었습니다."))
 
     def show_license_dialog(self):
         dlg = LicenseRegistrationDialog(self)
@@ -15943,6 +16065,8 @@ class ManualStudioWindow(QMainWindow):
                     print(f"[Export Item Render Error]: {e}")
             if not LicenseEngine.is_licensed():
                 self.canvas._render_watermark(painter, temp_img.width(), temp_img.height())
+            elif LicenseEngine.can_use_custom_watermark():
+                self.canvas._render_custom_watermark(painter, temp_img.width(), temp_img.height())
         finally:
             painter.end()
 
@@ -17109,6 +17233,488 @@ class LicenseRegistrationDialog(QDialog):
             self.accept()
         else:
             QMessageBox.warning(self, tr("title_auth_failed", "인증 실패"), f"{tr('msg_license_failed', '라이선스 검증 실패:')}\n{msg}")
+
+
+# ==============================================================================
+# 7.6 워터마크 설정 다이얼로그 (WatermarkConfigDialog)
+# ==============================================================================
+class WatermarkPreviewWidget(QWidget):
+    """실시간 워터마크 렌더링 미리보기 캔버스 위젯"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(360, 340)
+        self.setStyleSheet("background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 6px;")
+        self.wm_settings = {}
+
+    def set_watermark_settings(self, cfg: dict):
+        self.wm_settings = dict(cfg)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. 가상 매뉴얼 캡처 화면 렌더링
+        painter.fillRect(0, 0, w, h, QColor("#F8FAFC"))
+
+        # 윈도우 프레임 헤더
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#E2E8F0"))
+        painter.drawRoundedRect(12, 12, w - 24, 28, 4, 4)
+
+        # 윈도우 컨트롤 버튼 점 3개
+        colors = ["#EF4444", "#F59E0B", "#10B981"]
+        for idx, col in enumerate(colors):
+            painter.setBrush(QColor(col))
+            painter.drawEllipse(22 + idx * 14, 21, 8, 8)
+
+        # 윈도우 본문 흰색 배경
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.setPen(QPen(QColor("#CBD5E1"), 1))
+        painter.drawRect(12, 40, w - 24, h - 52)
+
+        # 가상 콘텐츠 영역 (차트, 텍스트 라인)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#EEF2F6"))
+        painter.drawRoundedRect(24, 52, 120, 18, 3, 3)
+
+        painter.setBrush(QColor("#F1F5F9"))
+        painter.drawRoundedRect(24, 80, w - 48, 65, 4, 4)
+
+        painter.setPen(QPen(QColor("#CBD5E1"), 1))
+        for line_y in range(160, h - 30, 22):
+            painter.drawLine(24, line_y, w - 24, line_y)
+
+        # 2. 커스텀 워터마크 렌더링
+        if not self.wm_settings.get("enabled", False):
+            painter.end()
+            return
+
+        text = str(self.wm_settings.get("text", "")).strip()
+        if not text:
+            painter.end()
+            return
+
+        pos_mode = self.wm_settings.get("position", "center_diagonal")
+        base_size = max(10, int(self.wm_settings.get("font_size", 36)))
+        # 미리보기 비율 스케일
+        font_size = max(9, int(base_size * 0.72))
+        font_family = self.wm_settings.get("font_family", "Malgun Gothic")
+        font_bold = bool(self.wm_settings.get("font_bold", True))
+        rotation = int(self.wm_settings.get("rotation", -30))
+        opacity_pct = max(5, min(100, int(self.wm_settings.get("opacity", 25))))
+        color_hex = self.wm_settings.get("color", "#64748B")
+
+        alpha = int(255 * (opacity_pct / 100.0))
+        qc = QColor(color_hex)
+        qc.setAlpha(alpha)
+
+        font = QFont(font_family, font_size)
+        font.setBold(font_bold)
+        painter.setFont(font)
+        painter.setPen(QPen(qc))
+
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+
+        if pos_mode == "tile":
+            step_x = max(110, tw + 40)
+            step_y = max(70, th + 35)
+            cols = int(w / step_x) + 3
+            rows = int(h / step_y) + 3
+            for r in range(-1, rows):
+                for c in range(-1, cols):
+                    painter.save()
+                    cx = c * step_x + (step_x / 2.0 if r % 2 == 1 else 0.0)
+                    cy = r * step_y
+                    painter.translate(cx, cy)
+                    painter.rotate(rotation)
+                    painter.drawText(int(-tw / 2), int(th / 4), text)
+                    painter.restore()
+
+        elif pos_mode in ("center_diagonal", "center_horizontal"):
+            painter.save()
+            painter.translate(w / 2.0, h / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        elif pos_mode == "bottom_right":
+            pad = 20
+            bx = w - tw - pad
+            by = h - pad
+            painter.save()
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        elif pos_mode == "bottom_left":
+            pad = 20
+            bx = pad
+            by = h - pad
+            painter.save()
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        elif pos_mode == "top_right":
+            pad = 20
+            bx = w - tw - pad
+            by = pad + th + 24
+            painter.save()
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        elif pos_mode == "top_left":
+            pad = 20
+            bx = pad
+            by = pad + th + 24
+            painter.save()
+            painter.translate(bx + tw / 2.0, by - th / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        else:
+            painter.save()
+            painter.translate(w / 2.0, h / 2.0)
+            painter.rotate(rotation)
+            painter.drawText(int(-tw / 2), int(th / 4), text)
+            painter.restore()
+
+        painter.end()
+
+
+class WatermarkConfigDialog(QDialog):
+    sig_watermark_changed = pyqtSignal()
+
+    def __init__(self, main_win, parent=None):
+        super().__init__(parent or main_win)
+        self.main_win = main_win
+        self.setWindowTitle(tr("dlg_watermark_title", "워터마크 설정"))
+        self.resize(760, 540)
+        self.setMinimumSize(700, 500)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        ci_pix = get_dragon_rpa_ci_pixmap()
+        if not ci_pix.isNull():
+            self.setWindowIcon(QIcon(ci_pix))
+
+        self.cfg_data = dict(self.main_win.config.get("custom_watermark", {}))
+        self.init_ui()
+        self.update_preview()
+
+    def _make_stack_field(self, label_text: str, widget: QWidget) -> QWidget:
+        """전사 개발 표준 헌장 3.4 준수: 레이블-입력창 상하 세로 스택 구조"""
+        fw = QWidget(self)
+        vl = QVBoxLayout(fw)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(4)
+        lbl = QLabel(label_text, fw)
+        lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #334155; white-space: nowrap;")
+        vl.addWidget(lbl)
+        vl.addWidget(widget)
+        return fw
+
+    def init_ui(self):
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 16, 20, 16)
+        root_layout.setSpacing(12)
+
+        # 1. 헤더 및 라이선스 권한 상태 배지
+        top_header_box = QHBoxLayout()
+        lbl_title = QLabel(tr("dlg_watermark_header", "워터마크 설정 및 미리보기"), self)
+        lbl_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0F172A;")
+        top_header_box.addWidget(lbl_title)
+        top_header_box.addStretch(1)
+
+        can_use = LicenseEngine.can_use_custom_watermark()
+        status = LicenseEngine.check_license_status()
+        badge_text = status.get("badge_text", "정식 라이선스")
+        if can_use:
+            lbl_badge = QLabel(f"✓ {badge_text} • 워터마크 권한 승인됨", self)
+            lbl_badge.setStyleSheet("background-color: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold;")
+        else:
+            lbl_badge = QLabel(f"⚠️ {badge_text} • 기업용/교육용/관공서용 전용 기능", self)
+            lbl_badge.setStyleSheet("background-color: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold;")
+        top_header_box.addWidget(lbl_badge)
+        root_layout.addLayout(top_header_box)
+
+        # 구분선
+        sep = QFrame(self)
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setStyleSheet("color: #E2E8F0; background-color: #E2E8F0; margin-bottom: 4px;")
+        root_layout.addWidget(sep)
+
+        # 2. 본문 2컬럼 레이아웃 (좌측: 설정 폼 / 우측: 실시간 미리보기)
+        body_layout = QHBoxLayout()
+        body_layout.setSpacing(16)
+
+        # ── [좌측] 속성 설정 패널 ─────────────────────────────────────────
+        left_panel = QWidget(self)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+
+        # 활성화 체크박스
+        self.chk_enabled = QCheckBox(tr("chk_watermark_enabled", "워터마크 출력 사용"), left_panel)
+        self.chk_enabled.setStyleSheet("font-size: 12px; font-weight: bold; color: #1E293B;")
+        self.chk_enabled.setChecked(bool(self.cfg_data.get("enabled", False)))
+        self.chk_enabled.toggled.connect(self.update_preview)
+        left_layout.addWidget(self.chk_enabled)
+
+        # 워터마크 문구
+        self.edit_text = QLineEdit(left_panel)
+        self.edit_text.setText(str(self.cfg_data.get("text", "(주)회사명 대외비")))
+        self.edit_text.setPlaceholderText("워터마크 문구 입력 (예: 대외비, 기관명)")
+        self.edit_text.setStyleSheet("font-size: 12px; padding: 6px 8px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        self.edit_text.textChanged.connect(self.update_preview)
+        left_layout.addWidget(self._make_stack_field(tr("lbl_wm_text", "워터마크 문구"), self.edit_text))
+
+        # 출력 위치
+        self.combo_pos = QComboBox(left_panel)
+        self.combo_pos.setStyleSheet("font-size: 12px; padding: 5px 8px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        pos_options = [
+            ("중앙 대각선 (Center Diagonal)", "center_diagonal"),
+            ("중앙 수평 (Center Horizontal)", "center_horizontal"),
+            ("우측 하단 (Bottom Right)", "bottom_right"),
+            ("좌측 하단 (Bottom Left)", "bottom_left"),
+            ("우측 상단 (Top Right)", "top_right"),
+            ("좌측 상단 (Top Left)", "top_left"),
+            ("바둑판 타일 (Tiling Grid)", "tile"),
+        ]
+        for text, val in pos_options:
+            self.combo_pos.addItem(text, val)
+        cur_pos = self.cfg_data.get("position", "center_diagonal")
+        idx_pos = self.combo_pos.findData(cur_pos)
+        if idx_pos >= 0:
+            self.combo_pos.setCurrentIndex(idx_pos)
+        self.combo_pos.currentIndexChanged.connect(self._on_pos_changed)
+        left_layout.addWidget(self._make_stack_field(tr("lbl_wm_pos", "출력 위치"), self.combo_pos))
+
+        # 2열 그리드: 글꼴 크기 & 글꼴 굵기
+        font_row = QHBoxLayout()
+        font_row.setSpacing(10)
+
+        self.spin_size = QSpinBox(left_panel)
+        self.spin_size.setRange(12, 120)
+        self.spin_size.setSingleStep(2)
+        self.spin_size.setValue(int(self.cfg_data.get("font_size", 36)))
+        self.spin_size.setSuffix(" pt")
+        self.spin_size.setStyleSheet("padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        self.spin_size.valueChanged.connect(self.update_preview)
+        font_row.addWidget(self._make_stack_field(tr("lbl_wm_size", "글꼴 크기"), self.spin_size))
+
+        self.chk_bold = QCheckBox(tr("chk_wm_bold", "굵게 표시"), left_panel)
+        self.chk_bold.setStyleSheet("font-size: 11px; font-weight: bold; color: #475569; margin-top: 18px;")
+        self.chk_bold.setChecked(bool(self.cfg_data.get("font_bold", True)))
+        self.chk_bold.toggled.connect(self.update_preview)
+        font_row.addWidget(self.chk_bold)
+        left_layout.addLayout(font_row)
+
+        # 회전 각도 (슬라이더 + 스핀박스)
+        rot_container = QWidget(left_panel)
+        rot_lay = QHBoxLayout(rot_container)
+        rot_lay.setContentsMargins(0, 0, 0, 0)
+        rot_lay.setSpacing(8)
+
+        self.slider_rot = QSlider(Qt.Horizontal, rot_container)
+        self.slider_rot.setRange(-90, 90)
+        self.slider_rot.setValue(int(self.cfg_data.get("rotation", -30)))
+
+        self.spin_rot = QSpinBox(rot_container)
+        self.spin_rot.setRange(-90, 90)
+        self.spin_rot.setValue(int(self.cfg_data.get("rotation", -30)))
+        self.spin_rot.setSuffix(" °")
+        self.spin_rot.setFixedWidth(70)
+
+        self.slider_rot.valueChanged.connect(self.spin_rot.setValue)
+        self.spin_rot.valueChanged.connect(self.slider_rot.setValue)
+        self.spin_rot.valueChanged.connect(self.update_preview)
+
+        rot_lay.addWidget(self.slider_rot)
+        rot_lay.addWidget(self.spin_rot)
+        left_layout.addWidget(self._make_stack_field(tr("lbl_wm_rot", "회전 각도 (-90° ~ +90°)"), rot_container))
+
+        # 투명도 (슬라이더 + 스핀박스)
+        op_container = QWidget(left_panel)
+        op_lay = QHBoxLayout(op_container)
+        op_lay.setContentsMargins(0, 0, 0, 0)
+        op_lay.setSpacing(8)
+
+        self.slider_op = QSlider(Qt.Horizontal, op_container)
+        self.slider_op.setRange(5, 100)
+        self.slider_op.setValue(int(self.cfg_data.get("opacity", 25)))
+
+        self.spin_op = QSpinBox(op_container)
+        self.spin_op.setRange(5, 100)
+        self.spin_op.setValue(int(self.cfg_data.get("opacity", 25)))
+        self.spin_op.setSuffix(" %")
+        self.spin_op.setFixedWidth(70)
+
+        self.slider_op.valueChanged.connect(self.spin_op.setValue)
+        self.spin_op.valueChanged.connect(self.slider_op.setValue)
+        self.spin_op.valueChanged.connect(self.update_preview)
+
+        op_lay.addWidget(self.slider_op)
+        op_lay.addWidget(self.spin_op)
+        left_layout.addWidget(self._make_stack_field(tr("lbl_wm_opacity", "투명도 (5% ~ 100%)"), op_container))
+
+        # 글꼴 색상
+        self.current_color = self.cfg_data.get("color", "#64748B")
+        self.btn_color = QPushButton(left_panel)
+        self.btn_color.setFixedHeight(28)
+        self._update_color_btn_style()
+        self.btn_color.clicked.connect(self._choose_color)
+        left_layout.addWidget(self._make_stack_field(tr("lbl_wm_color", "글꼴 색상"), self.btn_color))
+
+        left_layout.addStretch(1)
+        body_layout.addWidget(left_panel, 1)
+
+        # ── [우측] 실시간 미리보기 패널 ─────────────────────────────────────
+        right_panel = QWidget(self)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+
+        lbl_pv_title = QLabel(tr("lbl_wm_preview", "실시간 출력 미리보기"), right_panel)
+        lbl_pv_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #334155;")
+        right_layout.addWidget(lbl_pv_title)
+
+        self.preview_widget = WatermarkPreviewWidget(right_panel)
+        right_layout.addWidget(self.preview_widget, 1)
+
+        body_layout.addWidget(right_panel, 1)
+        root_layout.addLayout(body_layout, 1)
+
+        # 3. 하단 액션 버튼 바
+        bottom_bar = QHBoxLayout()
+        btn_reset = QPushButton(tr("btn_reset_default", "기본값 복원"), self)
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setStyleSheet("padding: 7px 14px; font-size: 12px; color: #475569; border: 1px solid #CBD5E1; border-radius: 4px;")
+        btn_reset.clicked.connect(self.reset_to_default)
+        bottom_bar.addWidget(btn_reset)
+
+        bottom_bar.addStretch(1)
+
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setStyleSheet("padding: 7px 16px; font-size: 12px; border: 1px solid #CBD5E1; border-radius: 4px;")
+        btn_cancel.clicked.connect(self.reject)
+        bottom_bar.addWidget(btn_cancel)
+
+        btn_save = QPushButton(tr("btn_save_apply", "적용 및 저장"), self)
+        btn_save.setCursor(Qt.PointingHandCursor)
+        btn_save.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB; color: #FFFFFF; font-weight: bold;
+                padding: 7px 20px; font-size: 12px; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #1D4ED8; }
+        """)
+        btn_save.clicked.connect(self.save_settings)
+        bottom_bar.addWidget(btn_save)
+
+        root_layout.addLayout(bottom_bar)
+
+    def _update_color_btn_style(self):
+        self.btn_color.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.current_color};
+                color: #FFFFFF;
+                font-weight: bold;
+                border: 1px solid #94A3B8;
+                border-radius: 4px;
+                text-align: center;
+            }}
+        """)
+        self.btn_color.setText(self.current_color.upper())
+
+    def _choose_color(self):
+        col = QColorDialog.getColor(QColor(self.current_color), self, tr("dlg_choose_color", "워터마크 색상 선택"))
+        if col.isValid():
+            self.current_color = col.name()
+            self._update_color_btn_style()
+            self.update_preview()
+
+    def _on_pos_changed(self, idx):
+        pos_val = self.combo_pos.currentData()
+        if pos_val == "center_diagonal" and self.spin_rot.value() == 0:
+            self.spin_rot.setValue(-30)
+        elif pos_val in ("center_horizontal", "bottom_right", "bottom_left", "top_right", "top_left") and self.spin_rot.value() == -30:
+            self.spin_rot.setValue(0)
+        self.update_preview()
+
+    def collect_settings(self) -> dict:
+        return {
+            "enabled": self.chk_enabled.isChecked(),
+            "text": self.edit_text.text().strip(),
+            "position": self.combo_pos.currentData(),
+            "font_size": self.spin_size.value(),
+            "font_family": "Malgun Gothic",
+            "font_bold": self.chk_bold.isChecked(),
+            "rotation": self.spin_rot.value(),
+            "opacity": self.spin_op.value(),
+            "color": self.current_color
+        }
+
+    def update_preview(self):
+        settings = self.collect_settings()
+        self.preview_widget.set_watermark_settings(settings)
+
+    def reset_to_default(self):
+        default_wm = {
+            "enabled": False,
+            "text": "(주)회사명 대외비",
+            "position": "center_diagonal",
+            "font_size": 36,
+            "font_family": "Malgun Gothic",
+            "font_bold": True,
+            "rotation": -30,
+            "opacity": 25,
+            "color": "#64748B"
+        }
+        self.chk_enabled.setChecked(default_wm["enabled"])
+        self.edit_text.setText(default_wm["text"])
+        idx = self.combo_pos.findData(default_wm["position"])
+        if idx >= 0:
+            self.combo_pos.setCurrentIndex(idx)
+        self.spin_size.setValue(default_wm["font_size"])
+        self.chk_bold.setChecked(default_wm["font_bold"])
+        self.spin_rot.setValue(default_wm["rotation"])
+        self.spin_op.setValue(default_wm["opacity"])
+        self.current_color = default_wm["color"]
+        self._update_color_btn_style()
+        self.update_preview()
+
+    def save_settings(self):
+        can_use = LicenseEngine.can_use_custom_watermark()
+        if not can_use and self.chk_enabled.isChecked():
+            res = QMessageBox.question(
+                self,
+                tr("watermark_tier_notice", "라이선스 확인"),
+                tr("watermark_tier_prompt", "워터마크 지정 기능은 기업용(Enterprise / 공기업 포함), 교육용(Education), 관공서용(Government) 라이선스에서 적용됩니다.\n\n설정을 저장하시겠습니까?"),
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if res != QMessageBox.Yes:
+                return
+
+        new_cfg = self.collect_settings()
+        self.main_win.config["custom_watermark"] = new_cfg
+        save_config(self.main_win.config)
+        self.sig_watermark_changed.emit()
+        self.main_win.canvas.update()
+        self.accept()
 
 
 # ==============================================================================

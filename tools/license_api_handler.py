@@ -45,7 +45,7 @@ def issue_license_for_order(
     """
     판매 사이트/웹훅 연동 핵심 함수 (어디서나 호출 가능)
     
-    :param license_type: PERPETUAL, SUB_1M, SUB_1Y, ENTERPRISE, AIR_GAPPED, TRIAL_14D
+    :param license_type: ENTERPRISE, GOVERNMENT, EDUCATION, PERSONAL, SUB_1M, SUB_1Y, PERPETUAL, TRIAL_14D
     :param customer_name: 주문자명 또는 회사명
     :param hwid: 클라이언트 HWID (지정 없거나 엔터프라이즈면 ENTERPRISE)
     :param expiry_date: 만료일 (YYYY-MM-DD 또는 NONE)
@@ -56,20 +56,43 @@ def issue_license_for_order(
     now = datetime.now()
     clean_type = license_type.upper().strip()
 
-    # 만료일 자동 계산
+    # 만료일 및 유형 자동 매핑
     clean_expiry = expiry_date
-    if clean_expiry in ("NONE", "", None):
-        if clean_type in (LicenseType.SUBSCRIPTION_1M, "SUB_1M", "1M"):
-            clean_type = LicenseType.SUBSCRIPTION_1M
-            clean_expiry = (now + timedelta(days=30)).strftime("%Y-%m-%d")
-        elif clean_type in (LicenseType.SUBSCRIPTION_1Y, "SUB_1Y", "1Y"):
-            clean_type = LicenseType.SUBSCRIPTION_1Y
+    if clean_type in (LicenseType.ENTERPRISE, "ENT", "ENTERPRISE_VOLUME"):
+        clean_type = LicenseType.ENTERPRISE
+        if clean_expiry in ("NONE", "", None):
             clean_expiry = (now + timedelta(days=365)).strftime("%Y-%m-%d")
-        elif clean_type in (LicenseType.TRIAL_EXT_14D, "TRIAL_14D"):
-            clean_type = LicenseType.TRIAL_EXT_14D
+        if hwid in ("", None, "ENTERPRISE"):
+            hwid = "ENTERPRISE"
+    elif clean_type in (LicenseType.GOVERNMENT, "GOV", "PUBLIC"):
+        clean_type = LicenseType.GOVERNMENT
+        if clean_expiry in ("NONE", "", None):
+            clean_expiry = (now + timedelta(days=365)).strftime("%Y-%m-%d")
+        if hwid in ("", None, "GOVERNMENT"):
+            hwid = "GOVERNMENT"
+    elif clean_type in (LicenseType.EDUCATION, "EDU", "ACADEMIC"):
+        clean_type = LicenseType.EDUCATION
+        if clean_expiry in ("NONE", "", None):
+            clean_expiry = (now + timedelta(days=365)).strftime("%Y-%m-%d")
+    elif clean_type in (LicenseType.PERSONAL, "PERSONAL", "INDIVIDUAL"):
+        clean_type = LicenseType.PERSONAL
+        if clean_expiry in ("NONE", "", None):
+            clean_expiry = "NONE"
+    elif clean_type in (LicenseType.SUBSCRIPTION_1M, "SUB_1M", "1M"):
+        clean_type = LicenseType.SUBSCRIPTION_1M
+        if clean_expiry in ("NONE", "", None):
+            clean_expiry = (now + timedelta(days=30)).strftime("%Y-%m-%d")
+    elif clean_type in (LicenseType.SUBSCRIPTION_1Y, "SUB_1Y", "1Y"):
+        clean_type = LicenseType.SUBSCRIPTION_1Y
+        if clean_expiry in ("NONE", "", None):
+            clean_expiry = (now + timedelta(days=365)).strftime("%Y-%m-%d")
+    elif clean_type in (LicenseType.TRIAL_EXT_14D, "TRIAL_14D"):
+        clean_type = LicenseType.TRIAL_EXT_14D
+        if clean_expiry in ("NONE", "", None):
             clean_expiry = (now + timedelta(days=14)).strftime("%Y-%m-%d")
-        else:
-            clean_type = LicenseType.PERPETUAL
+    else:
+        clean_type = LicenseType.PERPETUAL
+        if clean_expiry in ("NONE", "", None):
             clean_expiry = "NONE"
 
     pem_bytes = load_private_key_bytes()

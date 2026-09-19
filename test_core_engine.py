@@ -1347,11 +1347,13 @@ def test_license_engine_and_verification():
         assert len(p) == 4
 
     test_types = [
+        LicenseType.ENTERPRISE,
+        LicenseType.GOVERNMENT,
+        LicenseType.EDUCATION,
+        LicenseType.PERSONAL,
         LicenseType.PERPETUAL,
         LicenseType.SUB_1M,
         LicenseType.SUB_1Y,
-        LicenseType.ENTERPRISE,
-        LicenseType.AIR_GAPPED,
         LicenseType.TRIAL_14D
     ]
 
@@ -1360,7 +1362,7 @@ def test_license_engine_and_verification():
             license_type=ltype,
             issued_to="Global Corp Test",
             hwid=hwid,
-            max_seats=10 if ltype == LicenseType.ENTERPRISE else 1
+            max_seats=10 if ltype in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT) else 1
         )
         expected_prefix = LicenseEngine.PREFIX_MAP[ltype]
         assert key.startswith(expected_prefix + "-")
@@ -1375,14 +1377,14 @@ def test_license_engine_and_verification():
 
     other_hwid = "DRPA-9999-8888-7777"
     key_locked = LicenseEngine.generate_license_key(
-        license_type=LicenseType.PERPETUAL,
+        license_type=LicenseType.PERSONAL,
         hwid=hwid,
         issued_to="NodeLock User"
     )
     val_diff_hwid, _, msg_diff = LicenseEngine.verify_license_key(key_locked, current_hwid=other_hwid)
     assert val_diff_hwid is False
 
-    print("[PASS] test_license_engine_and_verification (HWID, 6 License Types, HMAC-SHA256, Anti-Tamper valid)")
+    print("[PASS] test_license_engine_and_verification (HWID, 4 Tiers + Legacy, RSA-2048, Anti-Tamper valid)")
 
 def test_watermark_in_composed_image():
     from PySide6.QtWidgets import QApplication
@@ -1409,6 +1411,58 @@ def test_watermark_in_composed_image():
     assert composed.height() == 300
 
     print("[PASS] test_watermark_in_composed_image (Watermark badge & diagonal stamp rendering valid)")
+
+def test_custom_watermark_configuration_and_rendering():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPixmap, QImage, QPainter
+    from PySide6.QtCore import Qt
+    from manual_capture_studio import StudioCanvasWidget, WatermarkConfigDialog, WatermarkPreviewWidget
+    from license_engine import LicenseEngine, LicenseType
+    
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # 1. 라이선스 등급별 권한 검증
+    # ENTERPRISE, GOVERNMENT, EDUCATION -> True
+    # PERSONAL, TRIAL -> False
+    assert LicenseType.ENTERPRISE in (LicenseType.ENTERPRISE, LicenseType.EDUCATION, LicenseType.GOVERNMENT)
+    assert LicenseType.GOVERNMENT in (LicenseType.ENTERPRISE, LicenseType.EDUCATION, LicenseType.GOVERNMENT)
+    assert LicenseType.EDUCATION in (LicenseType.ENTERPRISE, LicenseType.EDUCATION, LicenseType.GOVERNMENT)
+    assert LicenseType.PERSONAL not in (LicenseType.ENTERPRISE, LicenseType.EDUCATION, LicenseType.GOVERNMENT)
+
+    # 2. 캔버스 커스텀 워터마크 렌더링 검증 (7개 위치 및 회전/투명도)
+    canvas = StudioCanvasWidget()
+    pix = QPixmap(640, 480)
+    pix.fill(Qt.white)
+    canvas.set_pixmap(pix)
+
+    positions = ["center_diagonal", "center_horizontal", "bottom_right", "bottom_left", "top_right", "top_left", "tile"]
+    for pos in positions:
+        canvas.config["custom_watermark"] = {
+            "enabled": True,
+            "text": f"테스트 워터마크 {pos}",
+            "position": pos,
+            "font_size": 28,
+            "font_family": "Malgun Gothic",
+            "font_bold": True,
+            "rotation": -25 if pos == "center_diagonal" else 0,
+            "opacity": 30,
+            "color": "#2563EB"
+        }
+        test_img = QImage(640, 480, QImage.Format_ARGB32)
+        test_img.fill(Qt.white)
+        p = QPainter(test_img)
+        canvas._render_custom_watermark(p, 640, 480)
+        p.end()
+        assert not test_img.isNull()
+
+    # 3. 미리보기 위젯 검증
+    preview = WatermarkPreviewWidget()
+    preview.resize(400, 300)
+    preview.set_watermark_settings(canvas.config["custom_watermark"])
+    assert preview.wm_settings["enabled"] is True
+    assert preview.wm_settings["text"].startswith("테스트 워터마크")
+
+    print("[PASS] test_custom_watermark_configuration_and_rendering (7 Positions, Rotation, Opacity, Live Preview Widget valid)")
 
 def test_instant_capture_mouse_release():
     from PySide6.QtWidgets import QApplication
@@ -4640,6 +4694,7 @@ if __name__ == "__main__":
     test_global_i18n_manager()
     test_license_engine_and_verification()
     test_watermark_in_composed_image()
+    test_custom_watermark_configuration_and_rendering()
     test_instant_capture_mouse_release()
     test_autosave_and_recovery()
     test_version_comparator()

@@ -44,7 +44,7 @@ def run_cli(args):
         expiry = (now + timedelta(days=14)).strftime("%Y-%m-%d")
 
     hwid = args.hwid
-    if not hwid and args.type not in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
+    if not hwid and args.type not in (LicenseType.ENTERPRISE, LicenseType.GOVERNMENT):
         hwid = LicenseEngine.get_hwid()
 
     key = LicenseEngine.generate_license_key(
@@ -127,11 +127,13 @@ def run_gui():
     lbl_type.setFixedWidth(130)
     combo_type = QComboBox()
     types_list = [
-        ("1카피 영구 (PERPETUAL)", LicenseType.PERPETUAL),
-        ("1카피 1개월 구독 (SUB_1M)", LicenseType.SUBSCRIPTION_1M),
-        ("1카피 1년 연간 구독 (SUB_1Y) [추천]", LicenseType.SUBSCRIPTION_1Y),
-        ("엔터프라이즈 볼륨 (ENTERPRISE)", LicenseType.ENTERPRISE),
-        ("오프라인 폐쇄망 사이트 (AIR_GAPPED)", LicenseType.AIR_GAPPED_SITE),
+        ("기업용 볼륨/사이트 (공기업 포함) - ENTERPRISE", LicenseType.ENTERPRISE),
+        ("관공서용 (행정·지자체) - GOVERNMENT", LicenseType.GOVERNMENT),
+        ("교육용 (학교/학원/교육기관) - EDUCATION", LicenseType.EDUCATION),
+        ("개인용 1카피 (1인 개발/프리랜서) - PERSONAL", LicenseType.PERSONAL),
+        ("1카피 1년 연간 구독 (SUB_1Y) [Legacy]", LicenseType.SUBSCRIPTION_1Y),
+        ("1카피 영구 (PERPETUAL) [Legacy]", LicenseType.PERPETUAL),
+        ("1카피 1개월 구독 (SUB_1M) [Legacy]", LicenseType.SUBSCRIPTION_1M),
         ("14일 평가 연장 키 (TRIAL_14D)", LicenseType.TRIAL_EXT_14D)
     ]
     for label, val in types_list:
@@ -191,36 +193,54 @@ def run_gui():
     def on_type_changed(idx):
         t = combo_type.currentData()
         cur_d = QDate.currentDate()
-        if t == LicenseType.PERPETUAL:
-            date_exp.setEnabled(False)
-            spin_seats.setValue(1)
-            spin_seats.setEnabled(False)
-            edit_hwid.setEnabled(True)
-        elif t == LicenseType.SUBSCRIPTION_1M:
-            date_exp.setEnabled(True)
-            date_exp.setDate(cur_d.addDays(30))
-            spin_seats.setValue(1)
-            spin_seats.setEnabled(False)
-            edit_hwid.setEnabled(True)
-        elif t == LicenseType.SUBSCRIPTION_1Y:
-            date_exp.setEnabled(True)
-            date_exp.setDate(cur_d.addYears(1))
-            spin_seats.setValue(1)
-            spin_seats.setEnabled(False)
-            edit_hwid.setEnabled(True)
-        elif t == LicenseType.TRIAL_EXT_14D:
-            date_exp.setEnabled(True)
-            date_exp.setDate(cur_d.addDays(14))
-            spin_seats.setValue(1)
-            spin_seats.setEnabled(False)
-            edit_hwid.setEnabled(True)
-        elif t in (LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE):
+        if t == LicenseType.ENTERPRISE:
             date_exp.setEnabled(True)
             date_exp.setDate(cur_d.addYears(1))
             spin_seats.setEnabled(True)
             spin_seats.setValue(50)
             edit_hwid.setText("ENTERPRISE")
             edit_hwid.setEnabled(False)
+        elif t == LicenseType.GOVERNMENT:
+            date_exp.setEnabled(True)
+            date_exp.setDate(cur_d.addYears(1))
+            spin_seats.setEnabled(True)
+            spin_seats.setValue(100)
+            edit_hwid.setText("GOVERNMENT")
+            edit_hwid.setEnabled(False)
+        elif t == LicenseType.EDUCATION:
+            date_exp.setEnabled(True)
+            date_exp.setDate(cur_d.addYears(1))
+            spin_seats.setEnabled(True)
+            spin_seats.setValue(30)
+            edit_hwid.setEnabled(True)
+            edit_hwid.setText(LicenseEngine.get_hwid())
+        elif t in (LicenseType.PERSONAL, LicenseType.PERPETUAL):
+            date_exp.setEnabled(False)
+            spin_seats.setValue(1)
+            spin_seats.setEnabled(False)
+            edit_hwid.setEnabled(True)
+            edit_hwid.setText(LicenseEngine.get_hwid())
+        elif t == LicenseType.SUBSCRIPTION_1M:
+            date_exp.setEnabled(True)
+            date_exp.setDate(cur_d.addDays(30))
+            spin_seats.setValue(1)
+            spin_seats.setEnabled(False)
+            edit_hwid.setEnabled(True)
+            edit_hwid.setText(LicenseEngine.get_hwid())
+        elif t == LicenseType.SUBSCRIPTION_1Y:
+            date_exp.setEnabled(True)
+            date_exp.setDate(cur_d.addYears(1))
+            spin_seats.setValue(1)
+            spin_seats.setEnabled(False)
+            edit_hwid.setEnabled(True)
+            edit_hwid.setText(LicenseEngine.get_hwid())
+        elif t == LicenseType.TRIAL_EXT_14D:
+            date_exp.setEnabled(True)
+            date_exp.setDate(cur_d.addDays(14))
+            spin_seats.setValue(1)
+            spin_seats.setEnabled(False)
+            edit_hwid.setEnabled(True)
+            edit_hwid.setText(LicenseEngine.get_hwid())
 
     combo_type.currentIndexChanged.connect(on_type_changed)
 
@@ -329,9 +349,10 @@ def run_gui():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DragonRPA Manual Studio Keygen")
     parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
-    parser.add_argument("--type", default=LicenseType.PERPETUAL, choices=[
-        LicenseType.PERPETUAL, LicenseType.SUBSCRIPTION_1M, LicenseType.SUBSCRIPTION_1Y,
-        LicenseType.ENTERPRISE, LicenseType.AIR_GAPPED_SITE, LicenseType.TRIAL_EXT_14D
+    parser.add_argument("--type", default=LicenseType.ENTERPRISE, choices=[
+        LicenseType.ENTERPRISE, LicenseType.GOVERNMENT, LicenseType.EDUCATION,
+        LicenseType.PERSONAL, LicenseType.PERPETUAL, LicenseType.SUBSCRIPTION_1M,
+        LicenseType.SUBSCRIPTION_1Y, LicenseType.TRIAL_EXT_14D
     ])
     parser.add_argument("--name", default="DragonRPA Customer", help="Customer/Company Name")
     parser.add_argument("--hwid", default="", help="Client PC HWID (DRPA-XXXX-XXXX-XXXX)")

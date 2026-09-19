@@ -53,6 +53,7 @@ EXE_CANDIDATES = [
     PROJECT_DIR / "dist_c" / "ManualStudio.exe",
     PROJECT_DIR / "dist" / "ManualStudio.exe",
 ]
+APK_PATH = PROJECT_DIR / "ManualStudioMobile.apk"
 
 DB_CONNECTION_STRING = "postgresql://neondb_owner:npg_Glpfg5n7jVKE@ep-tiny-frost-azxnod0v-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
@@ -67,7 +68,7 @@ def calculate_sha256(file_path: Path) -> str:
 
 def load_version_json() -> dict:
     if VERSION_JSON_PATH.exists():
-        with open(VERSION_JSON_PATH, "r", encoding="utf-8") as f:
+        with open(VERSION_JSON_PATH, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     return {
         "version": "1.9.2",
@@ -270,14 +271,19 @@ def main():
     elif args.bump:
         target_version = bump_version(current_ver, args.bump)
     else:
-        print(f"[VERSION] 현재 기억된 버전: v{current_ver}")
-        choice = input(f"배포할 버전을 입력하세요 (엔터 시 현재 버전 v{current_ver} 유지 / 'p' 입력 시 v{bump_version(current_ver, 'patch')} 증가): ").strip()
-        if choice.lower() == "p":
-            target_version = bump_version(current_ver, "patch")
-        elif choice:
-            target_version = choice.lstrip("vV")
-        else:
+        next_ver = bump_version(current_ver, "patch")
+        print(f"[VERSION] 현재 버전: v{current_ver} ➔ 다음 권장 버전: v{next_ver}")
+        print(f"  [1] 다음 버전으로 자동 증가 후 배포 (v{next_ver}) [기본값 - 그냥 엔터]")
+        print(f"  [2] 현재 버전 그대로 재배포 (v{current_ver})")
+        print(f"  [3] 직접 버전 입력 (예: 2.0.0)")
+        choice = input("선택 (엔터: 1번 자동 증가): ").strip()
+        if choice == "2":
             target_version = current_ver
+        elif choice == "3":
+            custom_v = input("배포할 버전 번호 입력: ").strip()
+            target_version = custom_v.lstrip("vV") if custom_v else next_ver
+        else:
+            target_version = next_ver
 
     print(f"\n[TARGET] 최종 확정 배포 버전: v{target_version}")
 
@@ -335,6 +341,25 @@ def main():
         content_type="application/json; charset=utf-8",
         cache_control="no-cache, must-revalidate",
     )
+
+    # 4-4. Upload Android APK (if present)
+    if APK_PATH.exists():
+        apk_mb = os.path.getsize(APK_PATH) / (1024 * 1024)
+        print(f"\n[APK] 안드로이드 모바일 패키지 감지: {APK_PATH.name} ({apk_mb:.2f} MB)")
+        upload_file_to_r2(
+            s3,
+            APK_PATH,
+            "releases/ManualStudioMobile.apk",
+            content_type="application/vnd.android.package-archive",
+            cache_control="no-cache, must-revalidate",
+        )
+        upload_file_to_r2(
+            s3,
+            APK_PATH,
+            f"releases/ManualStudioMobile_v{target_version}.apk",
+            content_type="application/vnd.android.package-archive",
+            cache_control="public, max-age=31536000",
+        )
 
     # 5. Update dragonrpa.co.kr Website DB
     latest_download_url = f"{R2_CONFIG['public_domain']}/releases/ManualStudio_latest.exe"
