@@ -8,7 +8,7 @@
   "save_directory": "captures",
   "include_cursor": false,
   "stamp_style": {
-    "size": 40,
+    "size": 32,
     "bg_color": "#E53935",
     "text_color": "#FFFFFF",
     "font_family": "Malgun Gothic",
@@ -20,7 +20,7 @@
   },
   "text_style": {
     "font_family": "Malgun Gothic",
-    "font_size": 13,
+    "font_size": 14,
     "font_bold": true,
     "text_color": "#FFFFFF",
     "bg_color": "#212121",
@@ -46,7 +46,7 @@
     "bg_color": "#212121",
     "bg_opacity": 230,
     "border_color": "#E53935",
-    "border_width": 2,
+    "border_width": 3,
     "border_radius": 6
   },
   "elbow_style": {
@@ -157,14 +157,14 @@
     }
   ],
   "custom_watermark": {
-    "enabled": false,
-    "text": "(주)회사명 대외비",
-    "position": "center_diagonal",
-    "font_size": 36,
+    "enabled": true,
+    "text": "테스트 워터마크 tile",
+    "position": "tile",
+    "font_size": 28,
     "font_family": "Malgun Gothic",
     "font_bold": true,
-    "rotation": -30,
-    "opacity": 25,
-    "color": "#64748B"
+    "rotation": 0,
+    "opacity": 30,
+    "color": "#2563EB"
   }
 }

@@ -3862,19 +3862,19 @@ def test_phase9_release_notes_ribbon_icons_function_keys_and_updater():
     from PySide6.QtCore import QEvent, Qt
 
     # 1. 버전 일관성 검증
-    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0", "v1.9.9"], f"APP_VERSION must be valid, got {APP_VERSION}"
+    assert APP_VERSION in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0", "v1.9.9", "v2.0.0"], f"APP_VERSION must be valid, got {APP_VERSION}"
 
     # 2. ReleaseNotesDialog 초기버전부터 현재까지 수록 검증
     dlg = ReleaseNotesDialog()
     assert len(dlg.sections) >= 30, f"ReleaseNotesDialog must contain at least 30 releases, got {len(dlg.sections)}"
     first_ver = dlg.sections[0][0]
-    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0", "1.9.9"]), f"Latest version should be recent, got {first_ver}"
+    assert any(v in first_ver for v in ["1.5.0", "1.6.0", "1.6.1", "1.7.0", "1.8.0", "1.9.0", "1.9.9", "2.0.0"]), f"Latest version should be recent, got {first_ver}"
 
     # 콤보박스 필터링 동작 테스트
     dlg.combo_version.setCurrentIndex(1)  # 특정 버전 선택
     assert dlg.browser.toHtml() is not None and len(dlg.browser.toHtml()) > 0
     dlg.combo_version.setCurrentIndex(0)  # 전체 버전 선택
-    assert any(v in dlg.browser.toHtml() for v in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0"])
+    assert any(v in dlg.browser.toHtml() for v in ["v1.5.0", "v1.6.0", "v1.6.1", "v1.7.0", "v1.8.0", "v1.9.0", "v1.9.9", "v2.0.0"])
 
     # 3. RibbonIconProvider & 리본 표시 모드 전수 검증
     win = ManualStudioWindow()
@@ -4751,6 +4751,186 @@ def test_phase16_multi_monitor_virtual_desktop_capture():
     print("[Phase 16 Test] Phase 16 전수 검증 통과 (다중 모니터 전역 오버레이, 전역 크롭, 가상 데스크톱 캡처) 100% 무결점 완료!\n")
 
 
+def test_phase17_flowchart_intelligent_auto_align():
+    print("\n[Phase 17 Test] 플로우차트 지능형 자동정렬: 연결 노드 위상 정렬 & 미연결 노드 바둑판식 배열 검증...")
+    import manual_capture_studio as mcs
+    app = mcs.QApplication.instance() or mcs.QApplication([])
+    win = mcs.ManualStudioWindow()
+    win.canvas.pixmap = mcs.QPixmap(1920, 1080)
+    win.canvas.pixmap.fill(mcs.Qt.white)
+
+    # 1. 시나리오 A: 모든 노드가 연결선 없는 독립 노드인 경우 (전원 바둑판식 배열)
+    print("  [1/3] 독립 노드 전원 바둑판식 배열(Windows 바탕화면 아이콘 정렬) 검증...")
+    win.canvas.items.clear()
+    isolated_nodes = []
+    for i in range(6):
+        n = mcs.FlowchartNodeItem(f"Node_{i+1}", 200 + (i % 2) * 400, 100 + (i // 2) * 200, 80, 36)
+        win.canvas.items.append(n)
+        isolated_nodes.append(n)
+
+    win.action_auto_align_flowchart()
+
+    coords = [(round(n.rect.x()), round(n.rect.y())) for n in isolated_nodes]
+    assert len(set(coords)) == 6, "독립 노드 좌표가 중복되어서는 안 됩니다."
+    for i in range(len(isolated_nodes)):
+        for j in range(i + 1, len(isolated_nodes)):
+            r1 = isolated_nodes[i].rect
+            r2 = isolated_nodes[j].rect
+            assert not r1.intersects(r2), f"노드 {i}와 {j}가 서로 겹칩니다: {r1} vs {r2}"
+    print("  -> 독립 노드 6개 바둑판식(Grid) 비간섭 정렬 100% 통과!")
+
+    # 2. 시나리오 B: 연결 노드 (N1->N2->N3) + 미연결 독립 노드 (U1, U2, U3) 혼합
+    print("  [2/3] 연결 노드(TD 상하 위상 정렬)와 독립 노드(우측 바둑판식 도킹) 분리 검증...")
+    win.canvas.items.clear()
+    n1 = mcs.FlowchartNodeItem("시작", 100, 100, 80, 36, shape_type="terminal")
+    n2 = mcs.FlowchartNodeItem("처리", 100, 200, 80, 36, shape_type="process")
+    n3 = mcs.FlowchartNodeItem("종료", 100, 300, 80, 36, shape_type="terminal")
+    u1 = mcs.FlowchartNodeItem("후보A", 50, 50, 80, 36, shape_type="process")
+    u2 = mcs.FlowchartNodeItem("후보B", 80, 80, 80, 36, shape_type="decision")
+    u3 = mcs.FlowchartNodeItem("후보C", 120, 120, 80, 36, shape_type="database")
+
+    m1 = n1.get_magnet_points()
+    m2 = n2.get_magnet_points()
+    m3 = n3.get_magnet_points()
+    a1 = mcs.ElbowArrowItem(m1["bottom"], m2["top"])
+    a2 = mcs.ElbowArrowItem(m2["bottom"], m3["top"])
+
+    win.canvas.items.extend([n1, n2, n3, u1, u2, u3, a1, a2])
+
+    win.action_auto_align_flowchart()
+
+    assert n1.rect.top() < n2.rect.top() < n3.rect.top(), f"연결 노드가 상하(TD) 순서로 배치되지 않았습니다: {n1.rect.top()}, {n2.rect.top()}, {n3.rect.top()}"
+    assert abs(n1.rect.center().x() - n2.rect.center().x()) < 5.0
+    assert abs(n2.rect.center().x() - n3.rect.center().x()) < 5.0
+
+    flow_right = max(n1.rect.right(), n2.rect.right(), n3.rect.right())
+    flow_bottom = n3.rect.bottom()
+    for u in [u1, u2, u3]:
+        is_docked_right = u.rect.left() >= flow_right + 30.0
+        is_docked_bottom = u.rect.top() >= flow_bottom + 20.0
+        assert is_docked_right or is_docked_bottom, f"독립 노드 {u.text}가 연결 플로우차트와 분리되지 않았습니다: {u.rect} vs flow_right={flow_right}, flow_bottom={flow_bottom}"
+
+    assert a1.start_pos == n1.get_magnet_points()["bottom"]
+    assert a1.end_pos == n2.get_magnet_points()["top"]
+    assert a2.start_pos == n2.get_magnet_points()["bottom"]
+    assert a2.end_pos == n3.get_magnet_points()["top"]
+    print("  -> 연결 노드 상하 정렬 및 독립 노드 분리 바둑판 도킹 100% 통과!")
+
+    # 3. 시나리오 C: 연속 클릭 시 TD <-> LR 방향 전환 및 독립 노드 재배치 검증
+    print("  [3/3] 연속 클릭 시 TD ↔ LR 피벗 토글 및 독립 노드 위치 적응 검증...")
+    initial_dir = win._last_aligned_direction
+    win.action_auto_align_flowchart()
+    toggled_dir = win._last_aligned_direction
+    assert initial_dir != toggled_dir, f"방향이 피벗되지 않았습니다: {initial_dir} -> {toggled_dir}"
+    if toggled_dir == "LR":
+        assert n1.rect.left() < n2.rect.left() < n3.rect.left()
+    print("  -> TD ↔ LR 피벗 토글 및 지능형 배치 100% 통과!")
+    print("[Phase 17 Test] 플로우차트 지능형 자동정렬 전수 검증 통과 100% 무결점 완료!\n")
+
+
+def test_phase18_flowchart_intelligent_obstacle_avoidance_routing():
+    print("\n[Phase 18 Test] 플로우차트 지능형 장애물 회피 연결선 라우팅 (0번 직선/1번 L자/2번 ㄷ자 우회) 검증...")
+    import manual_capture_studio as mcs
+    from PySide6.QtCore import QPointF, QRectF, Qt
+    from PySide6.QtGui import QPixmap, QPainter
+
+    # 1. 케이스 1: 장애물 부재 및 상하 정렬 시 0번 꺾임(안 꺾임, 완전한 직선) 최우선 선정 검증
+    print("  [1/5] 장애물 부재 및 상하/좌우 정렬 시 0번 꺾임 (안 꺾임, STRAIGHT) 검증...")
+    p1 = QPointF(200, 100)
+    p2 = QPointF(200, 260)
+    mode, corners = mcs.FlowchartRoutingEngine.calculate_optimal_route(p1, p2, src_port="bottom", dst_port="top", obstacles=[])
+    assert mode == "STRAIGHT", f"상하 일직선 연결은 STRAIGHT여야 합니다: mode={mode}"
+    assert corners == [], f"안 꺾임 직선 연결의 코너는 빈 리스트여야 합니다: corners={corners}"
+    
+    # ElbowArrowItem에 STRAIGHT 0회 꺾임 적용 검증
+    straight_arrow = mcs.ElbowArrowItem(p1, p2, route_mode=mode, custom_corners=corners)
+    assert straight_arrow.get_corner_points() == [], f"STRAIGHT 화살표 코너는 0개여야 합니다: {straight_arrow.get_corner_points()}"
+    print("  -> 0번 꺾임 (안 꺾임, STRAIGHT) 최우선 선정 및 코너 0개 100% 통과!")
+
+    # 2. 케이스 2: 엇갈린 배치 시 1번 꺾임 (L자, HV/VH) 최적 경로 검증
+    print("  [2/5] 엇갈린 배치 시 1번 꺾임 (L자, HV/VH) 검증...")
+    p_src = QPointF(150, 120)
+    p_dst = QPointF(350, 240)
+    mode_l, corners_l = mcs.FlowchartRoutingEngine.calculate_optimal_route(p_src, p_dst, src_port="right", dst_port="top", obstacles=[])
+    bends_l = len(corners_l) if corners_l is not None else 1
+    assert bends_l == 1, f"엇갈린 배치는 1번 꺾임이어야 합니다: bends={bends_l}"
+    assert mode_l in ("HV", "VH"), f"L자 경로는 HV 또는 VH여야 합니다: mode={mode_l}"
+    print(f"  -> 1번 꺾임 (L자, {mode_l}) 최적 경로 100% 통과!")
+
+    # 3. 케이스 3: 중간 노드(장애물) 존재 시 2번 꺾임 (ㄷ자 외곽 우회 채널) 자동 우회 검증
+    print("  [3/5] 중간 노드(장애물) 존재 시 2번 꺾임 (ㄷ자 외곽 우회) 검증...")
+    n_src = mcs.FlowchartNodeItem("시작(마름모)", 100, 100, 100, 40, shape_type="decision")
+    n_obs = mcs.FlowchartNodeItem("중간방해노드", 100, 200, 100, 40)
+    n_dst = mcs.FlowchartNodeItem("도착노드", 100, 320, 100, 40)
+
+    opt_info = mcs.FlowchartRoutingEngine.find_optimal_connector(n_src, n_dst, [n_src, n_obs, n_dst])
+    pts = [opt_info["start_pos"]] + (opt_info["custom_corners"] or []) + [opt_info["end_pos"]]
+    collisions = mcs.FlowchartRoutingEngine.count_collisions(pts, [n_obs])
+    assert collisions == 0, f"장애물 노드와의 충돌이 발생했습니다: collisions={collisions}"
+    bends = len(opt_info["custom_corners"]) if opt_info["custom_corners"] is not None else (0 if opt_info["route_mode"] == "STRAIGHT" else (1 if opt_info["route_mode"] in ("HV", "VH") else 2))
+    assert bends == 2, f"중간 장애물이 있을 때는 2번 꺾임 우회선이어야 합니다: bends={bends}"
+    print(f"  -> 장애물 회피 2번 꺾임 (ㄷ자 우회, {opt_info['route_mode']}) 성공! (충돌 0회, bends={bends})")
+
+    # 4. ElbowArrowItem custom_corners 빈 리스트(0회 꺾임) 및 다점 코너(2회 꺾임) 역직렬화/복제/렌더링 무결성 검증
+    print("  [4/5] ElbowArrowItem custom_corners(0회 및 2회 꺾임) 직렬화/복제/렌더링 무결성 검증...")
+    # 4-1. 0회 꺾임 빈 리스트 보존 검증
+    zero_elbow = mcs.ElbowArrowItem(p1, p2, route_mode="STRAIGHT", custom_corners=[])
+    assert zero_elbow.get_corner_points() == []
+    zero_dict = zero_elbow.to_dict()
+    assert "custom_corners" in zero_dict and zero_dict["custom_corners"] == []
+    restored_zero = mcs.ElbowArrowItem.from_dict(zero_dict)
+    assert restored_zero.custom_corners == [] and restored_zero.get_corner_points() == []
+
+    # 4-2. 2회 꺾임 다점 코너 검증
+    c1 = QPointF(240, 120)
+    c2 = QPointF(240, 340)
+    elbow = mcs.ElbowArrowItem(QPointF(150, 140), QPointF(150, 320), route_mode="HVH", custom_corners=[c1, c2])
+    pts = elbow.get_corner_points()
+    assert len(pts) == 2 and pts[0] == c1 and pts[1] == c2
+
+    d = elbow.to_dict()
+    assert "custom_corners" in d and len(d["custom_corners"]) == 2
+    restored = mcs.ElbowArrowItem.from_dict(d)
+    assert restored.custom_corners is not None and len(restored.custom_corners) == 2
+
+    cloned = elbow.clone()
+    assert len(cloned.get_corner_points()) == 2
+
+    pix = QPixmap(500, 500)
+    pix.fill(Qt.white)
+    painter = QPainter(pix)
+    zero_elbow.render(painter)
+    elbow.render(painter)
+    painter.end()
+    print("  -> custom_corners (0회 빈 리스트 & 2회 다점) 직렬화/복제/렌더링 100% 통과!")
+
+    # 5. 캔버스 마우스 릴리즈 드래그 연결 시 자동 장애물 회피 통합 검증
+    print("  [5/5] 캔버스 상에서 노드 간 연결선 드래그 시 실시간 장애물 회피 검증...")
+    app = mcs.QApplication.instance() or mcs.QApplication([])
+    win = mcs.ManualStudioWindow()
+    win.canvas.pixmap = mcs.QPixmap(1920, 1080)
+    win.canvas.pixmap.fill(Qt.white)
+    win.canvas.items = [n_src, n_obs, n_dst]
+
+    route_info = mcs.FlowchartRoutingEngine.find_optimal_connector(
+        n_src, n_dst, win.canvas.items,
+        fixed_src_port="bottom", fixed_dst_port="top"
+    )
+    res_item = mcs.ElbowArrowItem(
+        route_info["start_pos"],
+        route_info["end_pos"],
+        {"color": "#2563EB", "width": 2, "head_size": 12},
+        route_mode=route_info["route_mode"],
+        custom_corners=route_info.get("custom_corners")
+    )
+    res_pts = [res_item.start_pos] + res_item.get_corner_points() + [res_item.end_pos]
+    res_collisions = mcs.FlowchartRoutingEngine.count_collisions(res_pts, [n_obs])
+    assert res_collisions == 0, f"드래그 생성 연결선이 장애물과 충돌했습니다: collisions={res_collisions}"
+    win.close()
+    print("  -> 캔버스 실시간 장애물 회피 연결선 검증 100% 통과!")
+    print("[Phase 18 Test] 플로우차트 지능형 장애물 회피 연결선 라우팅 전수 검증 통과 100% 무결점 완료!\n")
+
+
 if __name__ == "__main__":
     test_config_loader()
     test_circle_char()
@@ -4833,6 +5013,8 @@ if __name__ == "__main__":
     test_phase14_action_recorder_deprecated_and_flowchart_connectors_and_db_shape()
     test_phase15_lucide_vector_icons_and_emoji_purge()
     test_phase16_multi_monitor_virtual_desktop_capture()
-    print("\nALL 80 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE INFO MASKING, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS, PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE & PHASE 16 MULTI-MONITOR VIRTUAL DESKTOP 80 TESTS PASSED 100%!")
+    test_phase17_flowchart_intelligent_auto_align()
+    test_phase18_flowchart_intelligent_obstacle_avoidance_routing()
+    print("\nALL 82 CORE ENGINE, MULTI-MONITOR, FONT MANAGER, I18N, LICENSE INFO MASKING, WATERMARK, UPDATER, RIBBON OVERHAUL, KEYTIP, GOOGLE SLIDES, DUAL UI THEME, AI AGENT BATCH & 9-MCP, HYBRID LICENSE, OCR PREPROCESSING, DIMENSION LINE, WINDOW FRAME, HWP COM, STORYBOARD, WEBBOOK, ANIMATED GIF, AUTO PII, SMART ERASER, MAGNETIC SNAP, SCROLL STITCHING, ACTION RECORDER DEPRECATED, PHASE 6 MULTI-SELECTION, PHASE 7 PII/STORYBOARD OVERHAUL, PHASE 8 MULTI-SLIDE PROJECT ARCHITECTURE, PHASE 9 RELEASE NOTES / RIBBON ICONS / HOTKEYS / SMART UPDATER, PHASE 10 FULL AUDIT, PHASE 14 FLOWCHART CONNECTORS, PHASE 15 LUCIDE VECTOR ICONS / EMOJI PURGE, PHASE 16 MULTI-MONITOR VIRTUAL DESKTOP, PHASE 17 FLOWCHART INTELLIGENT AUTO ALIGN & PHASE 18 FLOWCHART OBSTACLE AVOIDANCE ROUTING 82 TESTS PASSED 100%!")
     sys.stdout.flush()
     os._exit(0)

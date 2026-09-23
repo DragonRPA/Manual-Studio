@@ -1490,22 +1490,27 @@ class StepArrowItem:
 
 
 class ElbowArrowItem:
-    """꺾인(직각, L자, Z자) 우회 화살표 지시선 객체 (분기 라벨 지원)"""
-    def __init__(self, start_pos, end_pos, style=None, route_mode="HV", label=""):
+    """꺾인(직각, L자, Z자) 우회 화살표 지시선 객체 (직선, 분기 라벨 및 지능형 장애물 회피 코너 지원)"""
+    def __init__(self, start_pos, end_pos, style=None, route_mode="HV", label="", custom_corners=None):
         self.start_pos = QPointF(start_pos)
         self.end_pos = QPointF(end_pos)
         if style is None:
             self.style = {"color": "#E53935", "width": 3, "head_size": 14}
         else:
             self.style = style.copy() if hasattr(style, "copy") else dict(style)
-        self.route_mode = route_mode  # HV (수평 우선: 가로) 또는 VH (수직 우선: 세로)
+        self.route_mode = route_mode  # STRAIGHT (0회 꺾임 직선), HV (수평 우선), VH (수직 우선), VHV, HVH
         self.label = str(label) if label is not None else ""
+        self.custom_corners = [QPointF(c) for c in custom_corners] if custom_corners is not None else None
 
     def clone(self):
-        return ElbowArrowItem(QPointF(self.start_pos), QPointF(self.end_pos), self.style.copy(), self.route_mode, self.label)
+        it = ElbowArrowItem(QPointF(self.start_pos), QPointF(self.end_pos), self.style.copy(), self.route_mode, self.label)
+        if getattr(self, "custom_corners", None) is not None:
+            it.custom_corners = [QPointF(c) for c in self.custom_corners]
+        return it
 
     def toggle_route_mode(self):
-        """HV ↔ VH ↔ VHV ↔ HVH 실시간 순환 토글 (키보드 탭 등)"""
+        """HV ↔ VH ↔ VHV ↔ HVH 실시간 순환 토글 (키보드 탭 등, 수동 토글 시 기본 프리셋 복귀)"""
+        self.custom_corners = None
         modes = ["HV", "VH", "VHV", "HVH"]
         cur = getattr(self, "route_mode", "HV")
         try:
@@ -1516,7 +1521,7 @@ class ElbowArrowItem:
         return self.route_mode
 
     def to_dict(self):
-        return {
+        d = {
             "type": "ElbowArrowItem",
             "start_pos": [float(self.start_pos.x()), float(self.start_pos.y())],
             "end_pos": [float(self.end_pos.x()), float(self.end_pos.y())],
@@ -1524,26 +1529,37 @@ class ElbowArrowItem:
             "route_mode": self.route_mode,
             "label": self.label
         }
+        if getattr(self, "custom_corners", None) is not None:
+            d["custom_corners"] = [[float(c.x()), float(c.y())] for c in self.custom_corners]
+        return d
 
     @classmethod
     def from_dict(cls, data):
         p1 = data.get("start_pos", [0.0, 0.0])
         p2 = data.get("end_pos", [0.0, 0.0])
-        return cls(
+        item = cls(
             QPointF(float(p1[0]), float(p1[1])),
             QPointF(float(p2[0]), float(p2[1])),
             data.get("style", {}),
             data.get("route_mode", "HV"),
             data.get("label", "")
         )
+        if "custom_corners" in data and data["custom_corners"] is not None:
+            item.custom_corners = [QPointF(float(c[0]), float(c[1])) for c in data["custom_corners"]]
+        return item
 
     def get_corner_points(self):
-        """다구간 직각 꺾임 좌표 목록 반환 (1코너 L자 또는 2코너 Z/S자)"""
+        """다구간 직각 꺾임 좌표 목록 반환 (0코너 직선, 1코너 L자, 2코너 Z/ㄷ자 또는 지능형 장애물 회피 코너)"""
+        if getattr(self, "custom_corners", None) is not None:
+            return [QPointF(c) for c in self.custom_corners]
+
         p1 = self.start_pos
         p2 = self.end_pos
         mode = getattr(self, "route_mode", "HV")
 
-        if mode == "HV":
+        if mode == "STRAIGHT":
+            return []
+        elif mode == "HV":
             return [QPointF(p2.x(), p1.y())]
         elif mode == "VH":
             return [QPointF(p1.x(), p2.y())]
@@ -4011,6 +4027,40 @@ class MermaidFlowchartParser:
                     "label": label,
                     "arrow_type": arrow_str
                 })
+
+        # 3-4. 극한 상황(위상학적 데드락)을 탈출하기 위한 Global Wrap-Around (최대 5-bends)
+        # 모든 3번 꺾임 경로가 장애물에 막혀 어쩔 수 없이 노드를 파고들어야만 하는 상황이 발생할 때,
+        # 포트에서 24px 빠져나온 후 곧바로 전체 장애물 외곽(Global Bounding Box)으로 도피하여 크게 우회하는 0-hit 절대 경로를 추가합니다.
+        p1_out = QPointF(p1)
+        if src_port == "left": p1_out.setX(p1.x() - margin - 10.0)
+        elif src_port == "right": p1_out.setX(p1.x() + margin + 10.0)
+        elif src_port == "top": p1_out.setY(p1.y() - margin - 10.0)
+        elif src_port == "bottom": p1_out.setY(p1.y() + margin + 10.0)
+
+        p2_out = QPointF(p2)
+        if dst_port == "left": p2_out.setX(p2.x() - margin - 10.0)
+        elif dst_port == "right": p2_out.setX(p2.x() + margin + 10.0)
+        elif dst_port == "top": p2_out.setY(p2.y() - margin - 10.0)
+        elif dst_port == "bottom": p2_out.setY(p2.y() + margin + 10.0)
+
+        global_x = [g_min_x - safe_margin, g_max_x + safe_margin]
+        global_y = [g_min_y - safe_margin, g_max_y + safe_margin]
+
+        for gy in global_y:
+            for gx in global_x:
+                # Type 1: p1_out -> Vertical -> Horizontal -> Vertical -> p2_out
+                candidates.append({
+                    "mode": "WRAP_VHVH",
+                    "corners": [p1_out, QPointF(p1_out.x(), gy), QPointF(gx, gy), QPointF(gx, p2_out.y()), p2_out],
+                    "bends": 5
+                })
+                # Type 2: p1_out -> Horizontal -> Vertical -> Horizontal -> p2_out
+                candidates.append({
+                    "mode": "WRAP_HVHV",
+                    "corners": [p1_out, QPointF(gx, p1_out.y()), QPointF(gx, gy), QPointF(p2_out.x(), gy), p2_out],
+                    "bends": 5
+                })
+
             else:
                 MermaidFlowchartParser._parse_node_str(line, nodes)
 
@@ -4096,23 +4146,41 @@ class MermaidLayoutEngine:
                 adj[u].append(v)
                 in_deg[v] = in_deg.get(v, 0) + 1
 
-        ranks = {}
         roots = [nid for nid, deg in in_deg.items() if deg == 0]
         if not roots and nodes:
             roots = [next(iter(nodes.keys()))]
 
-        queue = [(r, 0) for r in roots]
+        visiting = set()
         visited = set()
-        while queue:
-            curr, rk = queue.pop(0)
-            if curr in ranks:
-                ranks[curr] = max(ranks[curr], rk)
-            else:
-                ranks[curr] = rk
-            if curr not in visited:
-                visited.add(curr)
-                for nxt in adj.get(curr, []):
-                    queue.append((nxt, rk + 1))
+        back_edges = set()
+
+        def dfs_cycles(u):
+            visiting.add(u)
+            for v in adj.get(u, []):
+                if v in visiting:
+                    back_edges.add((u, v))
+                elif v not in visited:
+                    dfs_cycles(v)
+            visiting.remove(u)
+            visited.add(u)
+
+        for r in roots:
+            if r not in visited:
+                dfs_cycles(r)
+
+        ranks = {nid: 0 for nid in nodes}
+        for _ in range(len(nodes)):
+            changed = False
+            for e in edges:
+                u, v = e["from"], e["to"]
+                if (u, v) in back_edges:
+                    continue
+                if u in ranks and v in ranks:
+                    if ranks[u] + 1 > ranks[v]:
+                        ranks[v] = ranks[u] + 1
+                        changed = True
+            if not changed:
+                break
 
         for nid in nodes:
             if nid not in ranks:
@@ -4187,6 +4255,8 @@ class MermaidLayoutEngine:
                 created_node_items[nid] = node_item
 
         arrow_items = []
+        port_usage_map = {}
+        routed_segments = []
         for e in edges:
             u, v = e["from"], e["to"]
             label = e.get("label", "")
@@ -4195,33 +4265,28 @@ class MermaidLayoutEngine:
             item_u = created_node_items[u]
             item_v = created_node_items[v]
 
-            m_u = item_u.get_magnet_points()
-            m_v = item_v.get_magnet_points()
+            obstacles = [n for n in created_node_items.values() if n is not item_u and n is not item_v]
+            route_info = FlowchartRoutingEngine.find_optimal_connector(
+                item_u, item_v, created_node_items.values(), port_usage_map=port_usage_map, routed_segments=routed_segments
+            )
+            
+            sp = route_info["src_port"]
+            dp = route_info["dst_port"]
+            
+            if item_u not in port_usage_map: port_usage_map[item_u] = {"in": set(), "out": set()}
+            port_usage_map[item_u]["out"].add(sp)
+            if item_v not in port_usage_map: port_usage_map[item_v] = {"in": set(), "out": set()}
+            port_usage_map[item_v]["in"].add(dp)
 
-            if direction == "TD":
-                rk_u = ranks.get(u, 0)
-                rk_v = ranks.get(v, 0)
-                if rk_v > rk_u:
-                    if abs(item_u.rect.center().x() - item_v.rect.center().x()) < 5:
-                        p_start = m_u["bottom"]
-                        p_end = m_v["top"]
-                        route = "VH"
-                    else:
-                        p_start = m_u["bottom"] if item_u.shape_type != "decision" else m_u["right"]
-                        p_end = m_v["top"]
-                        route = "HV"
-                elif rk_v == rk_u:
-                    p_start = m_u["right"]
-                    p_end = m_v["left"]
-                    route = "HV"
-                else:
-                    p_start = m_u["left"]
-                    p_end = m_v["left"]
-                    route = "VH"
-            else:  # LR
-                p_start = m_u["right"]
-                p_end = m_v["left"]
-                route = "HV"
+            p_start = route_info["start_pos"]
+            p_end = route_info["end_pos"]
+            route = route_info["route_mode"]
+            custom_corners = route_info.get("custom_corners")
+
+            pts = [p_start] + (custom_corners if custom_corners else []) + [p_end]
+            if len(pts) > 1:
+                for i in range(len(pts) - 1):
+                    routed_segments.append((pts[i], pts[i+1]))
 
             arrow_style = {
                 "color": "#2563EB" if not label else "#D97706",
@@ -4233,11 +4298,470 @@ class MermaidLayoutEngine:
                 end_pos=p_end,
                 style=arrow_style,
                 route_mode=route,
-                label=label
+                label=label,
+                custom_corners=custom_corners
             )
             arrow_items.append(arrow_obj)
 
         return list(created_node_items.values()), arrow_items
+
+
+class FlowchartRoutingEngine:
+    """플로우차트 지능형 장애물 회피 연결선 라우팅 엔진.
+    - 1번 꺾임(HV, VH) 또는 2번 꺾임(VHV, HVH, 장애물 우회 채널) 지원
+    - 연결선 벡터가 지나가는 경로 상에 존재하는 다른 다이어그램(노드)과의 교차/충돌 여부 감지
+    - 다른 다이어그램의 배치를 훼손하지 않으면서 최단 거리 및 최소 꺾임의 최적 경로 자동 산출
+    """
+    @staticmethod
+    def segment_intersects_rect(p1, p2, rect, margin=6.0):
+        """선분 p1->p2가 확장된 사각형 rect(여백 포함)와 교차하는지 검사"""
+        rx1 = rect.left() - margin
+        ry1 = rect.top() - margin
+        rx2 = rect.right() + margin
+        ry2 = rect.bottom() + margin
+
+        x1, y1 = p1.x(), p1.y()
+        x2, y2 = p2.x(), p2.y()
+
+        # 모든 선분 (Liang-Barsky 알고리즘)
+        dx = x2 - x1
+        dy = y2 - y1
+        p = [-dx, dx, -dy, dy]
+        q = [x1 - rx1, rx2 - x1, y1 - ry1, ry2 - y1]
+        u1 = 0.0
+        u2 = 1.0
+        for i in range(4):
+            if abs(p[i]) < 1e-9:
+                if q[i] < 0:
+                    return False
+            else:
+                t = q[i] / p[i]
+                if p[i] < 0:
+                    if t > u1:
+                        u1 = t
+                elif t < u2:
+                    u2 = t
+        return u1 <= u2
+
+    @staticmethod
+    def segments_intersect(p1, p2, p3, p4):
+        """두 선분 (p1-p2)와 (p3-p4)가 교차하는지 검사 (CCW 알고리즘)"""
+        def ccw(A, B, C):
+            return (C.y() - A.y()) * (B.x() - A.x()) > (B.y() - A.y()) * (C.x() - A.x())
+        return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
+
+    @staticmethod
+    def count_collisions(points, obstacles, src_node=None, dst_node=None, margin=6.0, routed_segments=None):
+        """경로의 모든 선분과 장애물(및 출발/도착 노드) 간의 충돌 횟수, 그리고 기배치된 선들과의 교차 횟수 계산 반환: (node_hits, line_crossings)"""
+        node_hits = 0
+        line_crossings = 0
+        all_nodes = list(obstacles) if obstacles else []
+        if src_node is not None: all_nodes.append(src_node)
+        if dst_node is not None: all_nodes.append(dst_node)
+        
+        num_segments = len(points) - 1
+        for i in range(num_segments):
+            p1 = points[i]
+            p2 = points[i + 1]
+            for obs in all_nodes:
+                if not hasattr(obs, "rect"):
+                    continue
+                # 포트에서 바로 나가는/들어오는 선분은 해당 노드와의 충돌 검사에서 제외 (오탐지 방지)
+                if i == 0 and obs is src_node:
+                    continue
+                if i == num_segments - 1 and obs is dst_node:
+                    continue
+                    
+                if FlowchartRoutingEngine.segment_intersects_rect(p1, p2, obs.rect, margin):
+                    node_hits += 1
+                    
+            if routed_segments:
+                for seg in routed_segments:
+                    # 완벽히 직교 교차하거나 겹치는 경우
+                    if FlowchartRoutingEngine.segments_intersect(p1, p2, seg[0], seg[1]):
+                        # 단, 시작점/도착점이 같아서 교차로 판정되는 경우는 제외 (연결된 선)
+                        # 여기서는 노드가 다르므로 선분 교차가 맞음
+                        line_crossings += 1
+                        
+        return node_hits, line_crossings
+
+    @staticmethod
+    def calculate_optimal_route(start_pos, end_pos, src_port=None, dst_port=None, obstacles=None, margin=14.0, lane_offset=0.0, src_node=None, dst_node=None, routed_segments=None):
+        """주어진 시작점과 끝점 간에 꺾임을 허용하여 장애물을 회피하는 최적 경로 반환."""
+        if obstacles is None:
+            obstacles = []
+            
+        margin += lane_offset
+
+        p1 = QPointF(start_pos)
+        p2 = QPointF(end_pos)
+        candidates = []
+
+        # ── 1. 0번 꺾임 (안 꺾임 / 완전한 직선, STRAIGHT) 후보
+        # 수직 또는 수평 축이 일치/근접하거나 포트가 마주보는 경우
+        is_vert_aligned = abs(p1.x() - p2.x()) <= 16.0
+        is_horiz_aligned = abs(p1.y() - p2.y()) <= 16.0
+        is_facing_vert = (src_port in (None, "bottom") and dst_port in (None, "top") and p2.y() > p1.y()) or \
+                         (src_port in (None, "top") and dst_port in (None, "bottom") and p2.y() < p1.y())
+        is_facing_horiz = (src_port in (None, "right") and dst_port in (None, "left") and p2.x() > p1.x()) or \
+                          (src_port in (None, "left") and dst_port in (None, "right") and p2.x() < p1.x())
+
+        if (is_vert_aligned and is_facing_vert) or (is_horiz_aligned and is_facing_horiz):
+            candidates.append({
+                "mode": "STRAIGHT",
+                "corners": [],
+                "bends": 0
+            })
+
+        # ── 2. 1번 꺾임 (L자, L-BEND) 후보 (HV, VH)
+        candidates.append({
+            "mode": "HV",
+            "corners": [QPointF(p2.x(), p1.y())],
+            "bends": 1
+        })
+        candidates.append({
+            "mode": "VH",
+            "corners": [QPointF(p1.x(), p2.y())],
+            "bends": 1
+        })
+
+        # ── 3. 2번 꺾임 (ㄷ자 U-Bend 및 Z-Bend) 후보
+        # 3-1. 표준 중심선 경유 (VHV, HVH)
+        mid_y_std = (p1.y() + p2.y()) / 2.0
+        candidates.append({
+            "mode": "VHV",
+            "corners": [QPointF(p1.x(), mid_y_std), QPointF(p2.x(), mid_y_std)],
+            "bends": 2
+        })
+
+        mid_x_std = (p1.x() + p2.x()) / 2.0
+        candidates.append({
+            "mode": "HVH",
+            "corners": [QPointF(mid_x_std, p1.y()), QPointF(mid_x_std, p2.y())],
+            "bends": 2
+        })
+
+        # 3-2. 개별 및 종합 장애물 외곽 우회 채널 (ㄷ자 우회선)
+        all_obs_rects = [obs.rect for obs in obstacles if hasattr(obs, "rect")]
+        if src_node is not None and hasattr(src_node, "rect"): all_obs_rects.append(src_node.rect)
+        if dst_node is not None and hasattr(dst_node, "rect"): all_obs_rects.append(dst_node.rect)
+        for obs in obstacles:
+            if not hasattr(obs, "rect"):
+                continue
+            r = obs.rect
+            mid_x_left = r.left() - margin
+            candidates.append({
+                "mode": "HVH",
+                "corners": [QPointF(mid_x_left, p1.y()), QPointF(mid_x_left, p2.y())],
+                "bends": 2
+            })
+            mid_x_right = r.right() + margin
+            candidates.append({
+                "mode": "HVH",
+                "corners": [QPointF(mid_x_right, p1.y()), QPointF(mid_x_right, p2.y())],
+                "bends": 2
+            })
+            mid_y_top = r.top() - margin
+            candidates.append({
+                "mode": "VHV",
+                "corners": [QPointF(p1.x(), mid_y_top), QPointF(p2.x(), mid_y_top)],
+                "bends": 2
+            })
+            mid_y_bottom = r.bottom() + margin
+            candidates.append({
+                "mode": "VHV",
+                "corners": [QPointF(p1.x(), mid_y_bottom), QPointF(p2.x(), mid_y_bottom)],
+                "bends": 2
+            })
+
+        if all_obs_rects:
+            g_right = max(r.right() for r in all_obs_rects) + margin
+            candidates.append({
+                "mode": "HVH",
+                "corners": [QPointF(g_right, p1.y()), QPointF(g_right, p2.y())],
+                "bends": 2
+            })
+            g_left = min(r.left() for r in all_obs_rects) - margin
+            candidates.append({
+                "mode": "HVH",
+                "corners": [QPointF(g_left, p1.y()), QPointF(g_left, p2.y())],
+                "bends": 2
+            })
+
+        # 3-3. 포트 방향을 완벽히 존중하기 위한 확장 2번 꺾임 및 3번 꺾임 (HVHV, VHVH) 추가
+        # 로컬 고정 확장 채널 (사용자 요청에 따라 기본 여백은 24px 유지)
+        channels = []
+        for ext in [margin + 10.0, margin + 25.0, 40.0]:
+            channels.append({
+                "p1_t": p1.y() - ext, "p1_b": p1.y() + ext, "p1_l": p1.x() - ext, "p1_r": p1.x() + ext,
+                "p2_t": p2.y() - ext, "p2_b": p2.y() + ext, "p2_l": p2.x() - ext, "p2_r": p2.x() + ext
+            })
+            
+        # 글로벌 안전 우회 채널 (모든 장애물을 완벽히 감싸고 도는 절대 경로)
+        g_max_x, g_min_x = max(p1.x(), p2.x()), min(p1.x(), p2.x())
+        g_max_y, g_min_y = max(p1.y(), p2.y()), min(p1.y(), p2.y())
+        
+        all_nodes_for_bounds = list(obstacles) if obstacles else []
+        if src_node is not None: all_nodes_for_bounds.append(src_node)
+        if dst_node is not None: all_nodes_for_bounds.append(dst_node)
+        
+        for obs in all_nodes_for_bounds:
+            if hasattr(obs, 'rect'):
+                g_max_x, g_min_x = max(g_max_x, obs.rect.right()), min(g_min_x, obs.rect.left())
+                g_max_y, g_min_y = max(g_max_y, obs.rect.bottom()), min(g_min_y, obs.rect.top())
+        obs_count = len(obstacles) if obstacles else 0
+        dynamic_gap = max(24.0, obs_count * 24.0)
+        safe_margin = margin + dynamic_gap
+        channels.append({
+            "p1_t": g_min_y - safe_margin, "p1_b": g_max_y + safe_margin, "p1_l": g_min_x - safe_margin, "p1_r": g_max_x + safe_margin,
+            "p2_t": g_min_y - safe_margin, "p2_b": g_max_y + safe_margin, "p2_l": g_min_x - safe_margin, "p2_r": g_max_x + safe_margin
+        })
+
+        # X/Y 방향의 모든 가능한 확장(Ext) 좌표를 독립적으로 수집
+        # 중간값(mid)이 노드 윤곽선에 너무 바짝 붙는 것(Grazing)을 방지하기 위해 충분한 거리가 확보될 때만 추가
+        all_x_exts = set()
+        if abs(p1.x() - p2.x()) >= 80.0:
+            all_x_exts.add(mid_x_std)
+            
+        all_y_exts = set()
+        if abs(p1.y() - p2.y()) >= 80.0:
+            all_y_exts.add(mid_y_std)
+            
+        for ch in channels:
+            all_x_exts.update([ch["p1_l"], ch["p1_r"], ch["p2_l"], ch["p2_r"]])
+            all_y_exts.update([ch["p1_t"], ch["p1_b"], ch["p2_t"], ch["p2_b"]])
+
+        # 윤곽선 바짝 붙음(Grazing) 원천 차단 필터
+        # 미세하게 어긋난 노드들의 좌표 조합(예: p2.x + 24가 p1.x + 5가 되는 현상)으로 인해
+        # 의도치 않게 윤곽선에 23px 이내로 바짝 붙게 되는 모든 꼼수(Sneaky) 좌표를 후보에서 영구 제명합니다.
+        safe_x_exts = set()
+        for x in all_x_exts:
+            safe = True
+            if src_port in ("left", "right") and abs(x - p1.x()) < 23.0: safe = False
+            if dst_port in ("left", "right") and abs(x - p2.x()) < 23.0: safe = False
+            if safe: safe_x_exts.add(x)
+            
+        safe_y_exts = set()
+        for y in all_y_exts:
+            safe = True
+            if src_port in ("top", "bottom") and abs(y - p1.y()) < 23.0: safe = False
+            if dst_port in ("top", "bottom") and abs(y - p2.y()) < 23.0: safe = False
+            if safe: safe_y_exts.add(y)
+            
+        # 단, 필터링 후 가용 좌표가 없으면(이론상 희박함) 원본을 유지
+        if safe_x_exts: all_x_exts = safe_x_exts
+        if safe_y_exts: all_y_exts = safe_y_exts
+
+        # 2번 꺾임 (VHV, HVH) - 모든 단일 축 확장 적용
+        for y_ext in all_y_exts:
+            candidates.append({"mode": "VHV", "corners": [QPointF(p1.x(), y_ext), QPointF(p2.x(), y_ext)], "bends": 2})
+        for x_ext in all_x_exts:
+            candidates.append({"mode": "HVH", "corners": [QPointF(x_ext, p1.y()), QPointF(x_ext, p2.y())], "bends": 2})
+
+        # 3번 꺾임 (HVHV, VHVH) - X축 확장과 Y축 확장을 독립적으로 교차 조합 (Decoupled Combinatorics)
+        # 이를 통해 한 축은 글로벌 우회를 쓰더라도 다른 축은 타이트한 로컬 우회를 쓸 수 있어 불필요한 과도한 여백 발생을 방지함
+        for x_ext in all_x_exts:
+            for y_ext in all_y_exts:
+                candidates.append({
+                    "mode": "HVHV", 
+                    "corners": [QPointF(x_ext, p1.y()), QPointF(x_ext, y_ext), QPointF(p2.x(), y_ext)], 
+                    "bends": 3
+                })
+                candidates.append({
+                    "mode": "VHVH", 
+                    "corners": [QPointF(p1.x(), y_ext), QPointF(x_ext, y_ext), QPointF(x_ext, p2.y())], 
+                    "bends": 3
+                })
+
+        best_cand = None
+        min_cost = float('inf')
+
+        for cand in candidates:
+            corners = cand["corners"]
+            pts = [p1] + corners + [p2]
+            bends = cand["bends"]
+
+            # 충돌 횟수 계산 (여백 포함)
+            node_hits, line_crossings = FlowchartRoutingEngine.count_collisions(pts, obstacles, src_node=src_node, dst_node=dst_node, margin=margin * 0.5, routed_segments=routed_segments)
+
+            # 포트 방향성 페널티 (시작 포트와 반대 방향으로 꺾여 나가는 경우)
+            dir_penalty = 0.0
+            first_target = corners[0] if corners else p2
+            
+            # 사용자의 엄격한 테두리 겹침(Grazing) 판정 요구 수용:
+            # 1번 꺾임 등에서 포트 방향으로 빠져나가지 않고 바로 테두리를 타고 이동하는 경우를 '관통(hit)'으로 간주
+            is_grazing = False
+            
+            if src_port == "bottom" and first_target.y() < p1.y() + 1.0:
+                dir_penalty += 5.0
+                if abs(first_target.y() - p1.y()) < 2.0: is_grazing = True
+            elif src_port == "top" and first_target.y() > p1.y() - 1.0:
+                dir_penalty += 5.0
+                if abs(first_target.y() - p1.y()) < 2.0: is_grazing = True
+            elif src_port == "left" and first_target.x() > p1.x() - 1.0:
+                dir_penalty += 5.0
+                if abs(first_target.x() - p1.x()) < 2.0: is_grazing = True
+            elif src_port == "right" and first_target.x() < p1.x() + 1.0:
+                dir_penalty += 5.0
+                if abs(first_target.x() - p1.x()) < 2.0: is_grazing = True
+
+            last_source = corners[-1] if corners else p1
+            if dst_port == "top" and last_source.y() > p2.y() - 1.0:
+                dir_penalty += 5.0
+                if abs(last_source.y() - p2.y()) < 2.0: is_grazing = True
+            elif dst_port == "bottom" and last_source.y() < p2.y() + 1.0:
+                dir_penalty += 5.0
+                if abs(last_source.y() - p2.y()) < 2.0: is_grazing = True
+            elif dst_port == "left" and last_source.x() > p2.x() - 1.0:
+                dir_penalty += 5.0
+                if abs(last_source.x() - p2.x()) < 2.0: is_grazing = True
+            elif dst_port == "right" and last_source.x() < p2.x() + 1.0:
+                dir_penalty += 5.0
+                if abs(last_source.x() - p2.x()) < 2.0: is_grazing = True
+                
+            if is_grazing:
+                node_hits += 2 # 테두리 겹침은 명백한 관통(충돌)으로 간주하여 막대한 비용 부여
+
+            path_len = sum(math.hypot(pts[i+1].x() - pts[i].x(), pts[i+1].y() - pts[i].y()) for i in range(len(pts) - 1))
+
+            cost = (node_hits * 1000000.0) + (line_crossings * 500.0) + (dir_penalty * 50000.0) + (bends * 400.0) + (path_len * 0.05)
+
+            if cost < min_cost:
+                min_cost = cost
+                best_cand = cand
+
+        if best_cand is None:
+            return "HV", None
+
+        corners = best_cand["corners"]
+        mode = best_cand["mode"]
+
+        # 0번 꺾임 (안 꺾임 직선)
+        if best_cand["bends"] == 0:
+            return "STRAIGHT", []
+
+        # 1번 꺾임 표준 L자 여부
+        if best_cand["bends"] == 1:
+            if mode == "HV" and abs(corners[0].x() - p2.x()) < 0.5 and abs(corners[0].y() - p1.y()) < 0.5:
+                return "HV", None
+            elif mode == "VH" and abs(corners[0].x() - p1.x()) < 0.5 and abs(corners[0].y() - p2.y()) < 0.5:
+                return "VH", None
+            return mode, corners
+
+        # 2번 꺾임 표준 중심선 여부
+        if mode == "VHV" and len(corners) == 2 and abs(corners[0].y() - mid_y_std) < 0.5:
+            return "VHV", None
+        elif mode == "HVH" and len(corners) == 2 and abs(corners[0].x() - mid_x_std) < 0.5:
+            return "HVH", None
+
+        return mode, corners
+
+    @staticmethod
+    def find_optimal_connector(src_node, dst_node, all_items, fixed_src_port=None, fixed_dst_port=None):
+        """두 노드 간에 0번(직선), 1번(L자), 2번(ㄷ자 우회) 꺾임을 고려한 최적 마그넷 포트 및 연결선 경로 도출"""
+        obstacles = [it for it in all_items if isinstance(it, FlowchartNodeItem) and it not in (src_node, dst_node)]
+        src_magnets = src_node.get_magnet_points()
+        dst_magnets = dst_node.get_magnet_points()
+
+        dx = dst_node.rect.center().x() - src_node.rect.center().x()
+        dy = dst_node.rect.center().y() - src_node.rect.center().y()
+
+        if fixed_src_port:
+            src_ports = [fixed_src_port]
+        else:
+            if abs(dx) <= 18.0 and dy > 0:
+                src_ports = ["bottom", "right", "left", "top"]
+            elif abs(dx) <= 18.0 and dy < 0:
+                src_ports = ["top", "right", "left", "bottom"]
+            elif abs(dy) <= 18.0 and dx > 0:
+                src_ports = ["right", "bottom", "top", "left"]
+            elif abs(dy) <= 18.0 and dx < 0:
+                src_ports = ["left", "bottom", "top", "right"]
+            elif abs(dy) >= abs(dx):
+                src_ports = ["bottom", "top", "right", "left"] if dy >= 0 else ["top", "bottom", "right", "left"]
+            else:
+                src_ports = ["right", "left", "bottom", "top"] if dx >= 0 else ["left", "right", "bottom", "top"]
+
+        if fixed_dst_port:
+            dst_ports = [fixed_dst_port]
+        else:
+            if abs(dx) <= 18.0 and dy > 0:
+                dst_ports = ["top", "left", "right", "bottom"]
+            elif abs(dx) <= 18.0 and dy < 0:
+                dst_ports = ["bottom", "left", "right", "top"]
+            elif abs(dy) <= 18.0 and dx > 0:
+                dst_ports = ["left", "top", "bottom", "right"]
+            elif abs(dy) <= 18.0 and dx < 0:
+                dst_ports = ["right", "top", "bottom", "left"]
+            elif abs(dy) >= abs(dx):
+                dst_ports = ["top", "bottom", "left", "right"] if dy >= 0 else ["bottom", "top", "left", "right"]
+            else:
+                dst_ports = ["left", "right", "top", "bottom"] if dx >= 0 else ["right", "left", "top", "bottom"]
+
+        best_result = None
+        min_total_cost = float('inf')
+
+        # 충돌 회피를 위한 각 엣지별 고유한 차선 오프셋(Lane Offset) 생성
+        # (노드 간의 동일 경로 중복 겹침 방지를 위해 마진을 동적으로 확장)
+        lane_offset = (hash((id(src_node), id(dst_node))) % 5) * 8.0
+
+        for sp in src_ports:
+            for dp in dst_ports:
+                p1 = src_magnets[sp]
+                p2 = dst_magnets[dp]
+                mode, corners = FlowchartRoutingEngine.calculate_optimal_route(
+                    p1, p2, src_port=sp, dst_port=dp, obstacles=obstacles, lane_offset=lane_offset, src_node=src_node, dst_node=dst_node
+                )
+
+                pts = [p1] + (corners if corners is not None else []) + [p2]
+                hits = FlowchartRoutingEngine.count_collisions(pts, obstacles, src_node=src_node, dst_node=dst_node, margin=7.0)
+                bends = len(corners) if corners is not None else (0 if mode == "STRAIGHT" else (1 if mode in ("HV", "VH") else 2))
+                path_len = sum(math.hypot(pts[i+1].x() - pts[i].x(), pts[i+1].y() - pts[i].y()) for i in range(len(pts) - 1))
+
+                # 포트 정합도 보너스 (자연스러운 직진 대면 시 보너스)
+                port_bonus = 0.0
+                if (sp == "bottom" and dp == "top") or (sp == "right" and dp == "left"):
+                    port_bonus = -60.0
+
+                dir_penalty = 0.0
+                first_target = pts[1] if len(pts) > 1 else p2
+                if sp == "bottom" and first_target.y() < p1.y() + 1.0: dir_penalty += 5.0
+                elif sp == "top" and first_target.y() > p1.y() - 1.0: dir_penalty += 5.0
+                elif sp == "left" and first_target.x() > p1.x() - 1.0: dir_penalty += 5.0
+                elif sp == "right" and first_target.x() < p1.x() + 1.0: dir_penalty += 5.0
+
+                last_source = pts[-2] if len(pts) > 1 else p1
+                if dp == "top" and last_source.y() > p2.y() - 1.0: dir_penalty += 5.0
+                elif dp == "bottom" and last_source.y() < p2.y() + 1.0: dir_penalty += 5.0
+                elif dp == "left" and last_source.x() > p2.x() - 1.0: dir_penalty += 5.0
+                elif dp == "right" and last_source.x() < p2.x() + 1.0: dir_penalty += 5.0
+
+                cost = (hits * 1000000.0) + occupancy_penalty + (dir_penalty * 50000.0) + (bends * 400.0) + (path_len * 0.05) + port_bonus
+
+                if cost < min_total_cost:
+                    min_total_cost = cost
+                    best_result = {
+                        "start_pos": p1,
+                        "end_pos": p2,
+                        "src_port": sp,
+                        "dst_port": dp,
+                        "route_mode": mode,
+                        "custom_corners": corners
+                    }
+
+        if best_result is None:
+            sp = src_ports[0]
+            dp = dst_ports[0]
+            best_result = {
+                "start_pos": src_magnets[sp],
+                "end_pos": dst_magnets[dp],
+                "src_port": sp,
+                "dst_port": dp,
+                "route_mode": "HV",
+                "custom_corners": None
+            }
+
+        return best_result
 
 
 class FlowchartStudioDialog(QDialog):
@@ -6314,26 +6838,90 @@ class StudioCanvasWidget(QWidget):
             self.setFixedSize(self.default_canvas_size)
         self.update()
 
-    def _update_attached_connectors(self, node, dx, dy, old_x, old_y):
+    def _update_attached_connectors(self, node, dx, dy, old_x, old_y, orig_x=None, orig_y=None):
         """플로우차트 노드 이동 시 연결된 모든 화살표/직각 연결선의 끝점을 노드와 함께 동적 이동"""
         w = node.rect.width()
         h = node.rect.height()
-        old_magnets = [
-            QPointF(old_x + w / 2.0, old_y),
-            QPointF(old_x + w / 2.0, old_y + h),
-            QPointF(old_x, old_y + h / 2.0),
-            QPointF(old_x + w, old_y + h / 2.0)
-        ]
+        
+        is_dragging = getattr(self, "dragging_item", False) and hasattr(self, "arrow_drag_orig_coords")
+        
+        if is_dragging and orig_x is not None and orig_y is not None:
+            orig_magnets = [
+                QPointF(orig_x + w / 2.0, orig_y),
+                QPointF(orig_x + w / 2.0, orig_y + h),
+                QPointF(orig_x, orig_y + h / 2.0),
+                QPointF(orig_x + w, orig_y + h / 2.0)
+            ]
+            for it in self.items:
+                if isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem)) and it in self.arrow_drag_orig_coords:
+                    orig_start, orig_end = self.arrow_drag_orig_coords[it]
+                    for om in orig_magnets:
+                        if math.hypot(orig_start.x() - om.x(), orig_start.y() - om.y()) <= 12.0:
+                            it.start_pos = QPointF(it.start_pos.x() + dx, it.start_pos.y() + dy)
+                            break
+                    for om in orig_magnets:
+                        if math.hypot(orig_end.x() - om.x(), orig_end.y() - om.y()) <= 12.0:
+                            it.end_pos = QPointF(it.end_pos.x() + dx, it.end_pos.y() + dy)
+                            break
+        else:
+            old_magnets = [
+                QPointF(old_x + w / 2.0, old_y),
+                QPointF(old_x + w / 2.0, old_y + h),
+                QPointF(old_x, old_y + h / 2.0),
+                QPointF(old_x + w, old_y + h / 2.0)
+            ]
+            for it in self.items:
+                if isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem)):
+                    for om in old_magnets:
+                        if math.hypot(it.start_pos.x() - om.x(), it.start_pos.y() - om.y()) <= 12.0:
+                            it.start_pos = QPointF(it.start_pos.x() + dx, it.start_pos.y() + dy)
+                            break
+                    for om in old_magnets:
+                        if math.hypot(it.end_pos.x() - om.x(), it.end_pos.y() - om.y()) <= 12.0:
+                            it.end_pos = QPointF(it.end_pos.x() + dx, it.end_pos.y() + dy)
+                            break
+
+    def recalculate_all_elbow_arrows(self, target_nodes=None):
+        """모든 직각 연결선(ElbowArrowItem)의 라우팅(장애물 회피)을 전면 재계산 (이동 중인 장애물 실시간 회피용)"""
+        routed_segments = []
         for it in self.items:
-            if isinstance(it, (ArrowItem, ElbowArrowItem)):
-                for om in old_magnets:
-                    if math.hypot(it.start_pos.x() - om.x(), it.start_pos.y() - om.y()) <= 10.0:
-                        it.start_pos = QPointF(it.start_pos.x() + dx, it.start_pos.y() + dy)
-                        break
-                for om in old_magnets:
-                    if math.hypot(it.end_pos.x() - om.x(), it.end_pos.y() - om.y()) <= 10.0:
-                        it.end_pos = QPointF(it.end_pos.x() + dx, it.end_pos.y() + dy)
-                        break
+            if isinstance(it, ElbowArrowItem):
+                src_n = None
+                dst_n = None
+                src_port = None
+                dst_port = None
+                for n in self.items:
+                    if isinstance(n, FlowchartNodeItem):
+                        if src_n is None:
+                            sk, sp = n.get_closest_magnet_point(it.start_pos, 16.0)
+                            if sp:
+                                src_n = n
+                                src_port = sk
+                        if dst_n is None:
+                            dk, dp = n.get_closest_magnet_point(it.end_pos, 16.0)
+                            if dp:
+                                dst_n = n
+                                dst_port = dk
+                
+                if target_nodes is not None and src_n not in target_nodes and dst_n not in target_nodes:
+                    continue
+                obstacles = [n for n in self.items if isinstance(n, FlowchartNodeItem) and n not in (src_n, dst_n)]
+                
+                lane_offset = 0.0
+                if src_n and dst_n:
+                    lane_offset = (hash((id(src_n), id(dst_n))) % 5) * 8.0
+
+                best_mode, best_corners = FlowchartRoutingEngine.calculate_optimal_route(
+                    it.start_pos, it.end_pos, src_port=src_port, dst_port=dst_port, obstacles=obstacles,
+                    lane_offset=lane_offset, src_node=src_n, dst_node=dst_n, routed_segments=routed_segments
+                )
+                it.route_mode = best_mode
+                it.custom_corners = best_corners
+
+                pts = [it.start_pos] + (best_corners if best_corners else []) + [it.end_pos]
+                if len(pts) > 1:
+                    for i in range(len(pts) - 1):
+                        routed_segments.append((pts[i], pts[i+1]))
 
     def set_config(self, cfg):
         self.config = cfg
@@ -6737,15 +7325,11 @@ class StudioCanvasWidget(QWidget):
         if event.button() == Qt.LeftButton:
             # 0. 마그넷 꼭지점 클릭 시 즉시 연결선(직각 또는 직선) 드래그 생성 모드 발동
             active_m_pt = getattr(self, "_active_magnet_pt", None)
-            if active_m_pt is not None and self.current_mode in ("SELECT", "ELBOW", "ARROW", "FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW"):
-                if self.current_mode in ("ARROW", "FLOW_CONNECT_LINE"):
-                    self.drawing_arrow = True
-                    self.arrow_start = QPointF(active_m_pt)
-                    self.arrow_end = QPointF(active_m_pt)
-                else:
-                    self.drawing_elbow = True
-                    self.elbow_start = QPointF(active_m_pt)
-                    self.elbow_end = QPointF(active_m_pt)
+            if active_m_pt is not None and self.current_mode in ("ELBOW", "ARROW", "FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW"):
+                # 자석 포트에서 시작하는 모든 연결선은 지능형 장애물 회피(ElbowArrowItem) 라우팅을 강제 적용합니다.
+                self.drawing_elbow = True
+                self.elbow_start = QPointF(active_m_pt)
+                self.elbow_end = QPointF(active_m_pt)
                 self.update()
                 return
 
@@ -6900,6 +7484,12 @@ class StudioCanvasWidget(QWidget):
                         else:
                             self.selected_items.append(hit_item)
                             self.selected_item = hit_item
+                    else:
+                        # Shift + 빈 캔버스 드래그 시: 기존 선택을 보존하며 다중 추가 러버밴드 시작
+                        self.rubber_band_active = True
+                        self.rubber_band_start = pt
+                        self.rubber_band_end = pt
+                        self.rubber_band_base_selection = list(self.selected_items)
                 else:
                     if hit_item:
                         if hit_item in self.selected_items and len(self.selected_items) > 1:
@@ -6937,6 +7527,12 @@ class StudioCanvasWidget(QWidget):
                             self.drag_items_orig_coords[it] = QPointF(it.pos)
                         elif hasattr(it, "rect"):
                             self.drag_items_orig_coords[it] = QRectF(it.rect)
+
+                    self.arrow_drag_orig_coords = {}
+                    for it in self.items:
+                        if isinstance(it, (ArrowItem, ElbowArrowItem, StepArrowItem)):
+                            self.arrow_drag_orig_coords[it] = (QPointF(it.start_pos), QPointF(it.end_pos))
+
                 self.update()
 
         elif event.button() == Qt.RightButton:
@@ -7072,8 +7668,18 @@ class StudioCanvasWidget(QWidget):
                 br = self.get_item_bounding_rect(it)
                 if rb_rect.intersects(br):
                     hit_list.append(it)
-            self.selected_items = hit_list
-            self.selected_item = hit_list[-1] if hit_list else None
+            modifiers = event.modifiers() if hasattr(event, "modifiers") else Qt.NoModifier
+            is_multi_key = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
+            if is_multi_key:
+                base = getattr(self, "rubber_band_base_selection", [])
+                final_sel = list(base)
+                for h in hit_list:
+                    if h not in final_sel:
+                        final_sel.append(h)
+                self.selected_items = final_sel
+            else:
+                self.selected_items = hit_list
+            self.selected_item = self.selected_items[-1] if self.selected_items else None
             self.sig_item_selected.emit(self.selected_item)
             self.update()
             return
@@ -7091,7 +7697,15 @@ class StudioCanvasWidget(QWidget):
                     old_y = it.rect.y()
                     it.rect.moveTo(int(orig.x() + dx), int(orig.y() + dy))
                     if isinstance(it, FlowchartNodeItem):
-                        self._update_attached_connectors(it, int(orig.x() + dx) - old_x, int(orig.y() + dy) - old_y, old_x, old_y)
+                        self._update_attached_connectors(
+                            it, 
+                            int(orig.x() + dx) - old_x, 
+                            int(orig.y() + dy) - old_y, 
+                            old_x, 
+                            old_y, 
+                            orig.x(), 
+                            orig.y()
+                        )
                 elif isinstance(it, MagnifierZoomItem):
                     lens_orig, src_orig = orig
                     it.lens_rect.moveTo(int(lens_orig.x() + dx), int(lens_orig.y() + dy))
@@ -7108,6 +7722,8 @@ class StudioCanvasWidget(QWidget):
                     it.pos = QPointF(orig.x() + dx, orig.y() + dy)
                 elif hasattr(it, "rect"):
                     it.rect.moveTo(orig.x() + dx, orig.y() + dy)
+            dragged_nodes = [it for it in self.selected_items if isinstance(it, FlowchartNodeItem)]
+            self.recalculate_all_elbow_arrows(target_nodes=dragged_nodes if dragged_nodes else [])
             self.update()
             self.sig_content_changed.emit()
             return
@@ -7178,14 +7794,15 @@ class StudioCanvasWidget(QWidget):
             hovered_node = None
             hovered_key = None
             hovered_pt = None
-            for it in reversed(self.items):
-                if isinstance(it, FlowchartNodeItem):
-                    k, p = it.get_closest_magnet_point(pt, 22.0)
-                    if p:
-                        hovered_node = it
-                        hovered_key = k
-                        hovered_pt = p
-                        break
+            if self.current_mode != "SELECT":
+                for it in reversed(self.items):
+                    if isinstance(it, FlowchartNodeItem):
+                        k, p = it.get_closest_magnet_point(pt, 22.0)
+                        if p:
+                            hovered_node = it
+                            hovered_key = k
+                            hovered_pt = p
+                            break
 
             for it in self.items:
                 if isinstance(it, FlowchartNodeItem):
@@ -7277,30 +7894,47 @@ class StudioCanvasWidget(QWidget):
                         "width": self.current_arrow_width,
                         "head_size": self.current_arrow_head_size
                     }
-                    route_m = getattr(self, "current_elbow_route_mode", "HV")
-                    # 스마트 마그넷 포트 축 기반 최적 경로 자동 판별
-                    src_port, dst_port = None, None
+                    # 지능형 마그넷 포트 및 장애물 회피 라우팅 발동
+                    src_node, src_port = None, None
+                    dst_node, dst_port = None, None
                     for it in self.items:
                         if isinstance(it, FlowchartNodeItem):
-                            if src_port is None:
-                                k, p = it.get_closest_magnet_point(self.elbow_start, 18.0)
+                            if src_node is None:
+                                k, p = it.get_closest_magnet_point(self.elbow_start, 22.0)
                                 if p:
-                                    src_port = k
-                            if dst_port is None:
-                                k, p = it.get_closest_magnet_point(self.elbow_end, 18.0)
+                                    src_node, src_port = it, k
+                            if dst_node is None:
+                                k, p = it.get_closest_magnet_point(self.elbow_end, 22.0)
                                 if p:
-                                    dst_port = k
-                    if src_port and dst_port:
-                        if src_port in ("top", "bottom") and dst_port in ("left", "right"):
-                            route_m = "VH"
-                        elif src_port in ("left", "right") and dst_port in ("top", "bottom"):
-                            route_m = "HV"
-                        elif src_port in ("top", "bottom") and dst_port in ("top", "bottom"):
-                            route_m = "VHV"
-                        elif src_port in ("left", "right") and dst_port in ("left", "right"):
-                            route_m = "HVH"
+                                    dst_node, dst_port = it, k
 
-                    self.items.append(ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, route_m))
+                    if src_node and dst_node and src_node != dst_node:
+                        route_info = FlowchartRoutingEngine.find_optimal_connector(
+                            src_node, dst_node, self.items,
+                            fixed_src_port=src_port, fixed_dst_port=dst_port
+                        )
+                        elbow_item = ElbowArrowItem(
+                            route_info["start_pos"],
+                            route_info["end_pos"],
+                            arr_style,
+                            route_mode=route_info["route_mode"],
+                            custom_corners=route_info.get("custom_corners")
+                        )
+                    else:
+                        obstacles = [it for it in self.items if isinstance(it, FlowchartNodeItem) and it not in (src_node, dst_node)]
+                        best_mode, best_corners = FlowchartRoutingEngine.calculate_optimal_route(
+                            self.elbow_start, self.elbow_end,
+                            src_port=src_port, dst_port=dst_port,
+                            obstacles=obstacles
+                        )
+                        elbow_item = ElbowArrowItem(
+                            self.elbow_start, self.elbow_end,
+                            arr_style,
+                            route_mode=best_mode,
+                            custom_corners=best_corners
+                        )
+
+                    self.items.append(elbow_item)
                     self.update()
                     self.sig_content_changed.emit()
                 # Sticky Mode: 도구 선택 유지
@@ -7835,7 +8469,44 @@ class StudioCanvasWidget(QWidget):
                     "width": self.current_arrow_width,
                     "head_size": self.current_arrow_head_size
                 }
-                temp_elbow = ElbowArrowItem(self.elbow_start, self.elbow_end, arr_style, getattr(self, "current_elbow_route_mode", "HV"))
+                src_node, src_port = None, None
+                dst_node, dst_port = None, None
+                for it in self.items:
+                    if isinstance(it, FlowchartNodeItem):
+                        if src_node is None:
+                            k, p = it.get_closest_magnet_point(self.elbow_start, 22.0)
+                            if p:
+                                src_node, src_port = it, k
+                        if dst_node is None:
+                            k, p = it.get_closest_magnet_point(self.elbow_end, 22.0)
+                            if p:
+                                dst_node, dst_port = it, k
+
+                if src_node and dst_node and src_node != dst_node:
+                    route_info = FlowchartRoutingEngine.find_optimal_connector(
+                        src_node, dst_node, self.items,
+                        fixed_src_port=src_port, fixed_dst_port=dst_port
+                    )
+                    temp_elbow = ElbowArrowItem(
+                        route_info["start_pos"], route_info["end_pos"],
+                        arr_style,
+                        route_mode=route_info["route_mode"],
+                        custom_corners=route_info.get("custom_corners")
+                    )
+                else:
+                    obstacles = [it for it in self.items if isinstance(it, FlowchartNodeItem) and it not in (src_node, dst_node)]
+                    best_mode, best_corners = FlowchartRoutingEngine.calculate_optimal_route(
+                        self.elbow_start, self.elbow_end,
+                        src_port=src_port, dst_port=dst_port,
+                        obstacles=obstacles
+                    )
+                    temp_elbow = ElbowArrowItem(
+                        self.elbow_start, self.elbow_end,
+                        arr_style,
+                        route_mode=best_mode,
+                        custom_corners=best_corners
+                    )
+
                 temp_elbow.render(painter)
                 painter.restore()
 
@@ -11290,8 +11961,10 @@ class ManualStudioWindow(QMainWindow):
             QMenu::item:selected { background-color: #2563EB; color: #FFFFFF; }
             QMenu::separator { height: 1px; background-color: #E2E8F0; margin: 4px 6px; }
         """)
-        act_m_auto = align_menu.addAction("플로우차트 자동정렬 (TD ↔ LR)")
-        act_m_auto.triggered.connect(self.action_auto_align_flowchart)
+        act_m_auto_td = align_menu.addAction("플로우차트 상하 자동정렬 (Top-Down)")
+        act_m_auto_td.triggered.connect(lambda: self.action_auto_align_flowchart("TD"))
+        act_m_auto_lr = align_menu.addAction("플로우차트 좌우 자동정렬 (Left-Right)")
+        act_m_auto_lr.triggered.connect(lambda: self.action_auto_align_flowchart("LR"))
         align_menu.addSeparator()
         act_m_cx = align_menu.addAction("선택 객체 중심 축 X 정렬 (세로 중심)")
         act_m_cx.triggered.connect(lambda: self.canvas.align_selected_items_center_x())
@@ -16483,8 +17156,11 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.sig_content_changed.emit()
         self.show_toast(f"플로우차트 노드 {len(nodes)}개 및 연결선 {len(arrows)}개가 캔버스에 추가되었습니다.")
 
-    def action_auto_align_flowchart(self):
+    def action_auto_align_flowchart(self, force_dir=None):
         """캔버스의 플로우차트 노드 및 연결선을 화살표 위상 정렬(Topological BFS) 및 그리드 토폴로지 기반으로 자동정렬"""
+        if isinstance(force_dir, bool):
+            force_dir = None
+            
         nodes = [it for it in self.canvas.items if isinstance(it, FlowchartNodeItem)]
         if not nodes:
             self.show_toast(tr("toast_no_flow_nodes", "캔버스에 정렬할 플로우차트 노드가 없습니다."))
@@ -16521,47 +17197,141 @@ class ManualStudioWindow(QMainWindow):
                         "dst_port": dk
                     })
 
-        # 2. 정렬 방향 결정 (기하 형상 분석 및 동일 상태 연속 클릭 시 TD ↔ LR 피벗 토글)
-        min_x = min(n.rect.left() for n in nodes)
-        max_x = max(n.rect.right() for n in nodes)
-        min_y = min(n.rect.top() for n in nodes)
-        max_y = max(n.rect.bottom() for n in nodes)
-        span_x = max_x - min_x
-        span_y = max_y - min_y
+        # 2. 연결 노드와 미연결(독립) 노드 분리
+        connected_node_set = set()
+        for e in edges:
+            connected_node_set.add(e["src_node"])
+            connected_node_set.add(e["dst_node"])
 
-        current_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
-        last_fingerprint = getattr(self, "_last_aligned_fingerprint", None)
-        last_dir = getattr(self, "_last_aligned_direction", None)
-
-        if last_fingerprint is not None and last_fingerprint == current_fingerprint and last_dir:
-            direction = "LR" if last_dir == "TD" else "TD"
-        else:
-            direction = "LR" if span_x > span_y * 1.25 else "TD"
+        connected_nodes = [n for n in nodes if n in connected_node_set]
+        unconnected_nodes = [n for n in nodes if n not in connected_node_set]
 
         canvas_w = self.canvas.pixmap.width() if self.canvas.pixmap else 1920
         canvas_h = self.canvas.pixmap.height() if self.canvas.pixmap else 1080
 
-        # 3. 그래프 위상 분석 (Topological Level / Layering)
-        in_degree = {n: 0 for n in nodes}
-        out_edges = {n: [] for n in nodes}
+        # ------------------------------------------------------------------
+        # 시나리오 A: 모든 노드가 연결선 없는 독립 노드인 경우 -> 전원 바둑판식(Grid) 배열
+        # ------------------------------------------------------------------
+        if not connected_nodes:
+            unc_sorted = sorted(nodes, key=lambda n: (round(n.rect.top() / 40.0), n.rect.left()))
+            n_count = len(unc_sorted)
+            grid_cols = min(6, max(2, int(math.ceil(math.sqrt(n_count * 1.5)))))
+            max_w = max(n.rect.width() for n in unc_sorted)
+            max_h = max(n.rect.height() for n in unc_sorted)
+            cell_w = max_w + 28.0
+            cell_h = max_h + 24.0
+
+            grid_rows = int(math.ceil(n_count / grid_cols))
+            total_grid_w = grid_cols * cell_w - 28.0
+            total_grid_h = grid_rows * cell_h - 24.0
+
+            orig_cx = sum(n.rect.center().x() for n in unc_sorted) / n_count
+            orig_cy = sum(n.rect.center().y() for n in unc_sorted) / n_count
+
+            start_x = max(60.0, min(canvas_w - total_grid_w - 60.0, orig_cx - total_grid_w / 2.0))
+            start_y = max(60.0, min(canvas_h - total_grid_h - 60.0, orig_cy - total_grid_h / 2.0))
+
+            for i, n in enumerate(unc_sorted):
+                r = i // grid_cols
+                c = i % grid_cols
+                w = n.rect.width()
+                h = n.rect.height()
+                nx = start_x + c * cell_w + (max_w - w) / 2.0
+                ny = start_y + r * cell_h + (max_h - h) / 2.0
+                n.rect = QRectF(nx, ny, w, h)
+
+            self._last_aligned_direction = "GRID"
+            self._last_aligned_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
+            self.canvas.update()
+            self.canvas.sig_content_changed.emit()
+            self.show_toast(f"플로우차트 자동정렬: 독립 노드 {n_count}개 바둑판식 배열 완료")
+            return
+
+        # ------------------------------------------------------------------
+        # 시나리오 B: 연결 노드 존재 -> 연결 노드 위상 정렬 + 미연결 노드 바둑판식 배치
+        # ------------------------------------------------------------------
+        # 2-1. 정렬 방향 결정 
+        if force_dir in ("TD", "LR"):
+            direction = force_dir
+        else:
+            direction = "TD"
+
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QSpinBox, QCheckBox, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("플로우차트 자동정렬 설정")
+        layout = QVBoxLayout(dlg)
+        
+        lbl = QLabel(f"연결선(여백) 길이 설정 ({direction} 배열):")
+        layout.addWidget(lbl)
+        
+        spin = QSpinBox()
+        spin.setRange(10, 500)
+        spin.setValue(60 if direction == "LR" else 50)
+        layout.addWidget(spin)
+        
+        chk = QCheckBox("화면 크기에 맞춰 여백 팽창 (Fit to Page)")
+        layout.addWidget(chk)
+        
+        def on_chk(state):
+            spin.setEnabled(not state)
+            
+        chk.toggled.connect(on_chk)
+        
+        bbox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        layout.addWidget(bbox)
+        
+        if dlg.exec() != QDialog.Accepted:
+            return
+            
+        fit_to_page = chk.isChecked()
+        user_margin = float(spin.value())
+
+        # 2-2. 위상 레벨링 (연결 노드 대상)
+        in_degree = {n: 0 for n in connected_nodes}
+        out_edges = {n: [] for n in connected_nodes}
         for e in edges:
             in_degree[e["dst_node"]] += 1
             out_edges[e["src_node"]].append(e)
 
-        roots = [n for n in nodes if in_degree[n] == 0]
+        roots = [n for n in connected_nodes if in_degree[n] == 0]
         if not roots:
-            roots = [min(nodes, key=lambda n: n.rect.top() if direction == "TD" else n.rect.left())]
+            roots = [min(connected_nodes, key=lambda n: n.rect.top() if direction == "TD" else n.rect.left())]
 
-        layers = {}
-        queue = [(r, 0) for r in roots]
-        while queue:
-            curr, lvl = queue.pop(0)
-            layers[curr] = max(layers.get(curr, 0), lvl)
-            for e in out_edges[curr]:
-                nxt = e["dst_node"]
-                queue.append((nxt, lvl + 1))
+        visiting = set()
+        visited = set()
+        back_edges = set()
 
-        for n in nodes:
+        def dfs_cycles(u):
+            visiting.add(u)
+            for e in out_edges.get(u, []):
+                v = e["dst_node"]
+                if v in visiting:
+                    back_edges.add((u, v))
+                elif v not in visited:
+                    dfs_cycles(v)
+            visiting.remove(u)
+            visited.add(u)
+
+        for r in roots:
+            if r not in visited:
+                dfs_cycles(r)
+
+        layers = {n: 0 for n in connected_nodes}
+        for _ in range(len(connected_nodes)):
+            changed = False
+            for e in edges:
+                u, v = e["src_node"], e["dst_node"]
+                if (u, v) in back_edges:
+                    continue
+                if layers[u] + 1 > layers[v]:
+                    layers[v] = layers[u] + 1
+                    changed = True
+            if not changed:
+                break
+
+        for n in connected_nodes:
             if n not in layers:
                 layers[n] = (max(layers.values()) + 1) if layers else 0
 
@@ -16569,7 +17339,7 @@ class ManualStudioWindow(QMainWindow):
         for n, l in layers.items():
             by_layer.setdefault(l, []).append(n)
 
-        # 4. 열(Column for TD) 또는 행(Row for LR) 할당
+        # 2-3. 열/행 할당
         cols = {}
         for l, n_list in by_layer.items():
             if len(n_list) == 1:
@@ -16583,30 +17353,66 @@ class ManualStudioWindow(QMainWindow):
                 for i, n in enumerate(n_list_sorted):
                     cols[n] = i - mid_idx
 
-        # 5. 좌표 배치 계산 (사용자 원래 드로잉 영역 중심 보존 및 균일 간격 정렬)
-        orig_min_x = min(n.rect.left() for n in nodes)
-        orig_max_x = max(n.rect.right() for n in nodes)
-        orig_min_y = min(n.rect.top() for n in nodes)
-        orig_max_y = max(n.rect.bottom() for n in nodes)
-        orig_cx = (orig_min_x + orig_max_x) / 2.0
-        orig_cy = (orig_min_y + orig_max_y) / 2.0
-
         num_layers = max(layers.values()) + 1
+        layer_max_w = {l: max(n.rect.width() for n in by_layer.get(l, [connected_nodes[0]])) for l in range(num_layers)}
+        layer_max_h = {l: max(n.rect.height() for n in by_layer.get(l, [connected_nodes[0]])) for l in range(num_layers)}
 
-        layer_max_w = {l: max(n.rect.width() for n in by_layer.get(l, [nodes[0]])) for l in range(num_layers)}
-        layer_max_h = {l: max(n.rect.height() for n in by_layer.get(l, [nodes[0]])) for l in range(num_layers)}
+        conn_orig_cx = (conn_min_x + conn_max_x) / 2.0
+        conn_orig_cy = (conn_min_y + conn_max_y) / 2.0
 
+        # 미연결 노드 바둑판 규격 계산
+        unc_w = 0
+        unc_h = 0
+        u_cols = 1
+        u_cell_w = 0
+        u_cell_h = 0
+        u_max_w = 0
+        u_max_h = 0
+        if unconnected_nodes:
+            u_max_w = max(n.rect.width() for n in unconnected_nodes)
+            u_max_h = max(n.rect.height() for n in unconnected_nodes)
+            u_cell_w = u_max_w + 24.0
+            u_cell_h = u_max_h + 20.0
+            u_cols = min(3, max(1, int(math.ceil(math.sqrt(len(unconnected_nodes))))))
+            u_rows = int(math.ceil(len(unconnected_nodes) / u_cols))
+            unc_w = u_cols * u_cell_w - 24.0
+            unc_h = u_rows * u_cell_h - 20.0
+
+        # 2-4. 좌표 배치 계산 (연결 노드 정렬 + 독립 노드 바둑판식 도킹)
         if direction == "TD":
-            # 최소 수직 여백 = 노드 높이 × 1.5 (화살표 + 레이블 공간 보장)
-            avg_node_h = sum(layer_max_h.values()) / max(1, num_layers)
-            min_v_margin = avg_node_h * 1.5
-            vertical_margin = max(min_v_margin, min(90.0, (canvas_h - sum(layer_max_h.values()) - 100.0) / max(1, num_layers - 1)))
-            # 최소 수평 간격 = 최대 노드폭 + 30px 여유
-            col_gap = max(layer_max_w.values()) + 30.0
-            total_h = sum(layer_max_h[l] for l in range(num_layers)) + (num_layers - 1) * vertical_margin
+            if fit_to_page:
+                avg_node_h = sum(layer_max_h.values()) / max(1, num_layers)
+                min_v_margin = avg_node_h * 1.5
+                vertical_margin = max(min_v_margin, min(90.0, (canvas_h - sum(layer_max_h.values()) - 100.0) / max(1, num_layers - 1)))
+            else:
+                vertical_margin = user_margin
+            col_gap = max(layer_max_w.values()) + 80.0
+            total_flow_h = sum(layer_max_h[l] for l in range(num_layers)) + (num_layers - 1) * vertical_margin
 
-            start_y = max(40.0, min(canvas_h - total_h - 40.0, orig_cy - total_h / 2.0))
-            center_x = max(max(layer_max_w.values()) / 2.0 + 40.0, min(canvas_w - max(layer_max_w.values()) / 2.0 - 40.0, orig_cx))
+            min_col = min(cols[n] for n in connected_nodes)
+            max_col = max(cols[n] for n in connected_nodes)
+            total_flow_w = max(max(layer_max_w.values()), (max_col - min_col) * col_gap + max(layer_max_w.values()))
+
+            # 우측 여백에 바둑판식 도킹 가능 여부 확인 (여유 부족 시 하단 도킹)
+            place_unc_right = bool(unconnected_nodes and (total_flow_w + unc_w + 80.0 <= canvas_w - 80.0))
+
+            if place_unc_right:
+                combined_w = total_flow_w + unc_w + 60.0
+                start_flow_x = max(50.0, min(canvas_w - combined_w - 50.0, conn_orig_cx - combined_w / 2.0))
+                center_x = start_flow_x - min_col * col_gap + max(layer_max_w.values()) / 2.0
+                flow_right = start_flow_x + total_flow_w
+                unc_start_x = flow_right + 60.0
+                unc_start_y = max(50.0, min(canvas_h - unc_h - 50.0, conn_min_y))
+            else:
+                center_x = max(total_flow_w / 2.0 + 40.0, min(canvas_w - total_flow_w / 2.0 - 40.0, conn_orig_cx))
+                unc_start_x = max(50.0, center_x - unc_w / 2.0)
+                unc_start_y = 0
+
+            start_y = max(40.0, min(canvas_h - total_flow_h - 40.0, conn_orig_cy - total_flow_h / 2.0))
+            if not place_unc_right and unconnected_nodes:
+                if start_y + total_flow_h + unc_h + 50.0 > canvas_h - 40.0:
+                    start_y = max(40.0, canvas_h - total_flow_h - unc_h - 90.0)
+                unc_start_y = start_y + total_flow_h + 40.0
 
             layer_y = {}
             cur_y = start_y
@@ -16614,7 +17420,7 @@ class ManualStudioWindow(QMainWindow):
                 layer_y[l] = cur_y
                 cur_y += layer_max_h[l] + vertical_margin
 
-            for n in nodes:
+            for n in connected_nodes:
                 l = layers[n]
                 c = cols[n]
                 w = n.rect.width()
@@ -16624,16 +17430,34 @@ class ManualStudioWindow(QMainWindow):
                 n.rect = QRectF(nx, ny, w, h)
 
         else:  # direction == "LR"
-            # 최소 수평 여백 = 노드 폭 × 1.8 (화살표 + 레이블 공간 보장)
-            avg_node_w = sum(layer_max_w.values()) / max(1, num_layers)
-            min_h_margin = avg_node_w * 1.8
-            horizontal_margin = max(min_h_margin, min(160.0, (canvas_w - sum(layer_max_w.values()) - 100.0) / max(1, num_layers - 1)))
-            # 최소 수직 간격 = 최대 노드높이 + 24px 여유
-            row_gap = max(layer_max_h.values()) + 24.0
-            total_w = sum(layer_max_w[l] for l in range(num_layers)) + (num_layers - 1) * horizontal_margin
+            if fit_to_page:
+                avg_node_w = sum(layer_max_w.values()) / max(1, num_layers)
+                min_h_margin = avg_node_w * 1.8
+                horizontal_margin = max(min_h_margin, min(160.0, (canvas_w - sum(layer_max_w.values()) - 100.0) / max(1, num_layers - 1)))
+            else:
+                horizontal_margin = user_margin
+            row_gap = max(layer_max_h.values()) + 80.0
+            total_flow_w = sum(layer_max_w[l] for l in range(num_layers)) + (num_layers - 1) * horizontal_margin
 
-            start_x = max(40.0, min(canvas_w - total_w - 40.0, orig_cx - total_w / 2.0))
-            center_y = max(max(layer_max_h.values()) / 2.0 + 40.0, min(canvas_h - max(layer_max_h.values()) / 2.0 - 40.0, orig_cy))
+            min_row = min(cols[n] for n in connected_nodes)
+            max_row = max(cols[n] for n in connected_nodes)
+            total_flow_h = max(max(layer_max_h.values()), (max_row - min_row) * row_gap + max(layer_max_h.values()))
+
+            place_unc_bottom = bool(unconnected_nodes and (total_flow_h + unc_h + 70.0 <= canvas_h - 60.0))
+
+            if place_unc_bottom:
+                combined_h = total_flow_h + unc_h + 50.0
+                start_flow_y = max(50.0, min(canvas_h - combined_h - 50.0, conn_orig_cy - combined_h / 2.0))
+                center_y = start_flow_y - min_row * row_gap + max(layer_max_h.values()) / 2.0
+                flow_bottom = start_flow_y + total_flow_h
+                unc_start_y = flow_bottom + 50.0
+                start_x = max(40.0, min(canvas_w - total_flow_w - 40.0, conn_orig_cx - total_flow_w / 2.0))
+                unc_start_x = max(50.0, start_x)
+            else:
+                center_y = max(total_flow_h / 2.0 + 40.0, min(canvas_h - total_flow_h / 2.0 - 40.0, conn_orig_cy))
+                start_x = max(40.0, min(canvas_w - total_flow_w - (unc_w + 60.0 if unconnected_nodes else 0) - 40.0, conn_orig_cx - total_flow_w / 2.0))
+                unc_start_x = start_x + total_flow_w + 50.0
+                unc_start_y = max(50.0, center_y - unc_h / 2.0)
 
             layer_x = {}
             cur_x = start_x
@@ -16641,13 +17465,27 @@ class ManualStudioWindow(QMainWindow):
                 layer_x[l] = cur_x
                 cur_x += layer_max_w[l] + horizontal_margin
 
-            for n in nodes:
+            for n in connected_nodes:
                 l = layers[n]
                 r = cols[n]
                 w = n.rect.width()
                 h = n.rect.height()
                 nx = layer_x[l] + (layer_max_w[l] - w) / 2.0
                 ny = center_y + r * row_gap - h / 2.0
+                n.rect = QRectF(nx, ny, w, h)
+
+        # 미연결(독립) 노드 바둑판식 배열 배치
+        if unconnected_nodes:
+            unc_sorted = sorted(unconnected_nodes, key=lambda n: (round(n.rect.top() / 40.0), n.rect.left()))
+            for i, n in enumerate(unc_sorted):
+                r = i // u_cols
+                c = i % u_cols
+                w = n.rect.width()
+                h = n.rect.height()
+                nx = unc_start_x + c * u_cell_w + (u_max_w - w) / 2.0
+                ny = unc_start_y + r * u_cell_h + (u_max_h - h) / 2.0
+                nx = max(30.0, min(canvas_w - w - 30.0, nx))
+                ny = max(30.0, min(canvas_h - h - 30.0, ny))
                 n.rect = QRectF(nx, ny, w, h)
 
         # 6. 연결선(화살표 및 직각 연결선) 100% 자동 재부착 및 직하향/수평 포트 보정
@@ -16658,135 +17496,96 @@ class ManualStudioWindow(QMainWindow):
             u_m = u.get_magnet_points()
             v_m = v.get_magnet_points()
 
+            obstacles = [n for n in nodes if n is not u and n is not v]
+
             if direction == "TD":
                 row_u, col_u = layers[u], cols[u]
                 row_v, col_v = layers[v], cols[v]
 
                 if col_u == col_v and row_u < row_v:
-                    # 1. 수직 직하향 직렬 흐름 (↓)
-                    it.start_pos = u_m["bottom"]
-                    it.end_pos = v_m["top"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "VH"
+                    sp, dp, base_m = "bottom", "top", "VH"
                 elif row_u == row_v and col_u < col_v:
-                    # 2. 동일 행 좌->우 수평 이동
-                    it.start_pos = u_m["right"]
-                    it.end_pos = v_m["left"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "HV"
+                    sp, dp, base_m = "right", "left", "HV"
                 elif row_u == row_v and col_u > col_v:
-                    # 3. 동일 행 우->좌 수평 이동
-                    it.start_pos = u_m["left"]
-                    it.end_pos = v_m["right"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "HV"
+                    sp, dp, base_m = "left", "right", "HV"
                 elif row_u < row_v:
-                    # 4. 하향 분기 또는 복귀
                     if col_u == 0 and col_v > 0:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "top", "HV"
                     elif col_u == 0 and col_v < 0:
-                        it.start_pos = u_m["left"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "left", "top", "HV"
                     elif col_v == 0 and col_u > 0:
-                        it.start_pos = u_m["bottom"]
-                        it.end_pos = v_m["right"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "VH"
+                        sp, dp, base_m = "bottom", "right", "VH"
                     elif col_v == 0 and col_u < 0:
-                        it.start_pos = u_m["bottom"]
-                        it.end_pos = v_m["left"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "VH"
+                        sp, dp, base_m = "bottom", "left", "VH"
                     elif col_u < col_v:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "top", "HV"
                     else:
-                        it.start_pos = u_m["left"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "left", "top", "HV"
                 else:
-                    # 5. 상향 루프백
-                    it.start_pos = u_m["left"] if col_u <= col_v else u_m["right"]
-                    it.end_pos = v_m["left"] if col_u <= col_v else v_m["right"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "VHV"
+                    sp = "left" if col_u <= col_v else "right"
+                    dp = "left" if col_u <= col_v else "right"
+                    base_m = "VHV"
 
             else:  # direction == "LR"
                 col_u, row_u = layers[u], cols[u]
                 col_v, row_v = layers[v], cols[v]
 
                 if row_u == row_v and col_u < col_v:
-                    # 1. 수평 직렬 좌->우 흐름 (───>)
-                    it.start_pos = u_m["right"]
-                    it.end_pos = v_m["left"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "HV"
+                    sp, dp, base_m = "right", "left", "HV"
                 elif col_u == col_v and row_u < row_v:
-                    # 2. 동일 열 상->하 수직 이동
-                    it.start_pos = u_m["bottom"]
-                    it.end_pos = v_m["top"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "VH"
+                    sp, dp, base_m = "bottom", "top", "VH"
                 elif col_u == col_v and row_u > row_v:
-                    # 3. 동일 열 하->상 수직 이동
-                    it.start_pos = u_m["top"]
-                    it.end_pos = v_m["bottom"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "VH"
+                    sp, dp, base_m = "top", "bottom", "VH"
                 elif col_u < col_v:
-                    # 4. 우측 분기 또는 복귀
                     if row_u == 0 and row_v < 0:
-                        it.start_pos = u_m["top"]
-                        it.end_pos = v_m["left"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "VH"
+                        sp, dp, base_m = "top", "left", "VH"
                     elif row_u == 0 and row_v > 0:
-                        it.start_pos = u_m["bottom"]
-                        it.end_pos = v_m["left"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "VH"
+                        sp, dp, base_m = "bottom", "left", "VH"
                     elif row_v == 0 and row_u < 0:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "top", "HV"
                     elif row_v == 0 and row_u > 0:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["bottom"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "bottom", "HV"
                     elif row_u < row_v:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["top"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "top", "HV"
                     else:
-                        it.start_pos = u_m["right"]
-                        it.end_pos = v_m["bottom"]
-                        if isinstance(it, ElbowArrowItem):
-                            it.route_mode = "HV"
+                        sp, dp, base_m = "right", "bottom", "HV"
                 else:
-                    # 5. 좌향 루프백
-                    it.start_pos = u_m["top"]
-                    it.end_pos = v_m["top"]
-                    if isinstance(it, ElbowArrowItem):
-                        it.route_mode = "VHV"
+                    sp = "top"
+                    dp = "top"
+                    base_m = "VHV"
+
+            it.start_pos = u_m[sp]
+            it.end_pos = v_m[dp]
+
+            # 직선 화살표(ArrowItem)로 그려진 연결선도 지능형 꺾은선(ElbowArrowItem)으로 자동 업그레이드
+            if isinstance(it, ArrowItem) and not isinstance(it, StepArrowItem):
+                new_it = ElbowArrowItem(
+                    it.start_pos, it.end_pos,
+                    it.style.copy(),
+                    route_mode=base_m
+                )
+                try:
+                    idx = self.canvas.items.index(it)
+                    self.canvas.items[idx] = new_it
+                    it = new_it
+                    e["item"] = new_it
+                except ValueError:
+                    pass
+
+            if isinstance(it, ElbowArrowItem):
+                it.route_mode = opt_mode
+                it.custom_corners = opt_corners
 
         self._last_aligned_direction = direction
         self._last_aligned_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
 
         self.canvas.update()
         self.canvas.sig_content_changed.emit()
-        dir_name = "상하 (TD - 수직 직렬/좌우 분기)" if direction == "TD" else "좌우 (LR - 수평 직렬/상하 분기)"
-        self.show_toast(f"플로우차트 자동정렬 완료: {dir_name}")
+        dir_name = "상하 (TD)" if direction == "TD" else "좌우 (LR)"
+        if unconnected_nodes:
+            self.show_toast(f"플로우차트 자동정렬: 연결 {len(connected_nodes)}개 {dir_name} 배치, 독립 {len(unconnected_nodes)}개 바둑판식 정렬")
+        else:
+            self.show_toast(f"플로우차트 자동정렬: 연결 {len(connected_nodes)}개 {dir_name} 배치 완료")
 
     def action_open_mobile_link(self):
         """스마트폰/태블릿 P2P 연동 다이얼로그 호출"""
