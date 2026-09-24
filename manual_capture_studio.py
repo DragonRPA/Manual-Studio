@@ -92,7 +92,7 @@ from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
     QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices,
     QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence, QDrag,
-    QPdfWriter, QPageSize, QPageLayout
+    QPdfWriter, QPageSize, QPageLayout, QShortcut
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -514,6 +514,17 @@ class ThemeManager:
             QPushButton:pressed {
                 background-color: #E2E8F0;
             }
+            QPushButton:checked {
+                background-color: #DBEAFE !important;
+                border: 2px solid #2563EB !important;
+                color: #1D4ED8 !important;
+                font-weight: bold !important;
+            }
+            QPushButton:checked:hover {
+                background-color: #BFDBFE !important;
+                border: 2px solid #1E40AF !important;
+                color: #1E3A8A !important;
+            }
             QComboBox {
                 font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
                 font-size: 11px;
@@ -589,6 +600,17 @@ class ThemeManager:
             }
             QPushButton:pressed {
                 background-color: #E5E5EA;
+            }
+            QPushButton:checked {
+                background-color: #E0EDFF !important;
+                border: 2px solid #007AFF !important;
+                color: #007AFF !important;
+                font-weight: bold !important;
+            }
+            QPushButton:checked:hover {
+                background-color: #C7E0FF !important;
+                border: 2px solid #0056B3 !important;
+                color: #004085 !important;
             }
             QComboBox {
                 font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
@@ -11868,8 +11890,13 @@ class VerticalToolBarWidget(QFrame):
                 border-color: #475569;
             }
             QToolButton:checked {
-                background-color: #2563EB;
-                border: 1px solid #60A5FA;
+                background-color: #1E3A8A !important;
+                border: 2px solid #38BDF8 !important;
+                border-radius: 4px;
+            }
+            QToolButton:checked:hover {
+                background-color: #1D4ED8 !important;
+                border: 2px solid #7DD3FC !important;
             }
         """)
         
@@ -11915,8 +11942,12 @@ class VerticalToolBarWidget(QFrame):
         self.btn_layout.addWidget(line)
 
     def set_active_mode(self, mode):
+        mode_upper = str(mode).upper() if mode else "SELECT"
         for k, btn in self.mode_buttons.items():
-            btn.setChecked(k == mode)
+            if k == "OCR":
+                btn.setChecked(mode_upper in ("OCR", "OCR_LABEL"))
+            else:
+                btn.setChecked(k == mode_upper)
 
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
@@ -12059,10 +12090,15 @@ class ManualStudioWindow(QMainWindow):
                 color: #0F172A;
             }
             QPushButton:checked {
-                background-color: #2563EB;
-                color: #FFFFFF;
-                border-color: #1D4ED8;
-                font-weight: bold;
+                background-color: #DBEAFE !important;
+                border: 2px solid #2563EB !important;
+                color: #1D4ED8 !important;
+                font-weight: bold !important;
+            }
+            QPushButton:checked:hover {
+                background-color: #BFDBFE !important;
+                border: 2px solid #1E40AF !important;
+                color: #1E3A8A !important;
             }
             QLabel {
                 font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
@@ -12160,6 +12196,39 @@ class ManualStudioWindow(QMainWindow):
         # TAB 1: 도구 (Tools)
         # -------------------------------------------------------------
         tab_tools = QWidget()
+        tab_tools.setObjectName("RibbonTabTools")
+        tab_tools.setStyleSheet("""
+            QPushButton {
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 3px 7px;
+                border: 1px solid #CBD5E1;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                color: #1E293B;
+                white-space: nowrap;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                border-color: #94A3B8;
+                color: #0F172A;
+            }
+            QPushButton:pressed {
+                background-color: #E2E8F0;
+            }
+            QPushButton:checked {
+                background-color: #DBEAFE !important;
+                border: 2px solid #2563EB !important;
+                color: #1D4ED8 !important;
+                font-weight: bold !important;
+            }
+            QPushButton:checked:hover {
+                background-color: #BFDBFE !important;
+                border: 2px solid #1E40AF !important;
+                color: #1E3A8A !important;
+            }
+        """)
         tools_layout = QHBoxLayout(tab_tools)
         tools_layout.setContentsMargins(4, 2, 4, 2)
         tools_layout.setSpacing(4)
@@ -13003,7 +13072,7 @@ class ManualStudioWindow(QMainWindow):
                 color: #0F172A;
             }
         """)
-        self.btn_ribbon_mode_toggle.setToolTip("리본 메뉴 표시 방식 토글 (텍스트 ⇄ 아이콘, 단축키: Ctrl+M)")
+        self.btn_ribbon_mode_toggle.setToolTip("리본 메뉴 표시 방식 토글 (텍스트 ⇄ 아이콘)")
         self.btn_ribbon_mode_toggle.clicked.connect(lambda: self.toggle_ribbon_display_mode())
         self.ribbon_tabs.setCornerWidget(self.btn_ribbon_mode_toggle, Qt.TopRightCorner)
 
@@ -13342,7 +13411,7 @@ class ManualStudioWindow(QMainWindow):
         
         if hasattr(self, 'vertical_toolbar'):
             vt = self.vertical_toolbar
-            vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환", lambda: self.set_ui_style_mode("ribbon"))
+            vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환 (Ctrl+M)", lambda: self.set_ui_style_mode("ribbon"))
             vt.add_separator()
             # 캡처 도구
             vt.add_action_tool("capture_fixed", "고정 캡처 (F9)", self.handle_hotkey_capture)
@@ -13373,10 +13442,12 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("autosave", "한컴 한글 전송 (F12)", self.action_export_all_hwp)
             vt.add_action_tool("save_rect", "환경 설정...", self.open_settings_dialog)
             vt.btn_layout.addStretch(1)
+            vt.set_active_mode("SELECT")
         self.update_status_bar()
         self.sync_ui_from_config()
         self.init_monitor_combos()
         self.retranslate_ui()
+        self.switch_mode("SELECT")
 
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -13495,14 +13566,20 @@ class ManualStudioWindow(QMainWindow):
 
         # 1.5 보기(V) 메뉴 (UI 스타일, 패널 제어 및 리본 편집)
         self.menu_view = menubar.addMenu("보기(&V)")
-        self.act_style_ribbon = self.menu_view.addAction("리본 메뉴 스타일")
+        self.act_style_ribbon = self.menu_view.addAction("리본 메뉴 스타일로 보기\tCtrl+M")
         self.act_style_ribbon.setCheckable(True)
-        self.act_style_ribbon.triggered.connect(lambda: self.set_ui_style_mode("ribbon"))
+        self.act_style_ribbon.triggered.connect(lambda chk: self.set_ui_style_mode("ribbon" if chk else "vertical"))
 
-        self.act_style_vertical = self.menu_view.addAction("세로 툴바 스타일 (캔버스 최대화)")
+        self.act_style_vertical = self.menu_view.addAction("툴바 스타일로 보기\tCtrl+M")
         self.act_style_vertical.setCheckable(True)
-        self.act_style_vertical.setShortcut(QKeySequence("Ctrl+M"))
-        self.act_style_vertical.triggered.connect(lambda: self.set_ui_style_mode("vertical"))
+        self.act_style_vertical.triggered.connect(lambda chk: self.set_ui_style_mode("vertical" if chk else "ribbon"))
+
+        cur_style = self.config.get("ui_style_mode", "ribbon")
+        self.act_style_ribbon.setChecked(cur_style == "ribbon")
+        self.act_style_vertical.setChecked(cur_style != "ribbon")
+
+        self.shortcut_ui_style_toggle = QShortcut(QKeySequence("Ctrl+M"), self)
+        self.shortcut_ui_style_toggle.activated.connect(self.toggle_ui_style_mode)
 
         self.menu_view.addSeparator()
         self.act_view_ribbon_customize = self.menu_view.addAction("리본 메뉴 그룹 편집...")
@@ -14380,10 +14457,13 @@ class ManualStudioWindow(QMainWindow):
         save_config(self.config)
 
         is_ribbon = (mode == "ribbon")
-        if hasattr(self, "ribbon_frame"):
+        if hasattr(self, "ribbon_frame") and self.ribbon_frame:
             self.ribbon_frame.setVisible(is_ribbon)
-        if hasattr(self, "vertical_toolbar"):
+        if hasattr(self, "vertical_toolbar") and self.vertical_toolbar:
             self.vertical_toolbar.setVisible(not is_ribbon)
+            if not is_ribbon:
+                cur_mode = getattr(self.canvas, "current_mode", "SELECT") if hasattr(self, "canvas") else "SELECT"
+                self.vertical_toolbar.set_active_mode(cur_mode)
 
         if hasattr(self, "act_style_ribbon"):
             self.act_style_ribbon.setChecked(is_ribbon)
@@ -14393,10 +14473,15 @@ class ManualStudioWindow(QMainWindow):
         if hasattr(self, "btn_ribbon_toggle"):
             self.btn_ribbon_toggle.setText("세로 툴바 스타일로 전환 ➔" if is_ribbon else "리본 메뉴 스타일로 전환 ➔")
 
+        if is_ribbon and hasattr(self, "canvas"):
+            self.switch_mode(getattr(self.canvas, "current_mode", "SELECT"))
+
     def toggle_ui_style_mode(self):
         cur = self.config.get("ui_style_mode", "ribbon")
         new_mode = "vertical" if cur == "ribbon" else "ribbon"
         self.set_ui_style_mode(new_mode)
+        style_name = "리본 메뉴 스타일" if new_mode == "ribbon" else "툴바 스타일"
+        self.show_toast(f"화면 스타일: {style_name} (Ctrl+M)")
 
     def init_keytips(self):
         self._keytip_labels = []
@@ -14790,6 +14875,7 @@ class ManualStudioWindow(QMainWindow):
         self.hotkey_thread.start()
 
     def switch_mode(self, mode):
+        mode = str(mode).upper() if mode else "SELECT"
         self.canvas.set_mode(mode)
         self.btn_mode_select.setChecked(mode == "SELECT")
         if hasattr(self, "vertical_toolbar"):
@@ -14828,12 +14914,7 @@ class ManualStudioWindow(QMainWindow):
             self.btn_flow_database.setChecked(mode == "FLOW_DATABASE")
             self.btn_flow_document.setChecked(mode == "FLOW_DOCUMENT")
         if hasattr(self, "btn_flow_line") and self.btn_flow_line:
-            if getattr(self, "btn_flow_elbow", None) is self.btn_flow_line:
-                self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE", "ELBOW", "FLOW_CONNECT_ELBOW"))
-            else:
-                self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE"))
-                if hasattr(self, "btn_flow_elbow") and self.btn_flow_elbow:
-                    self.btn_flow_elbow.setChecked(mode in ("ELBOW", "FLOW_CONNECT_ELBOW"))
+            self.btn_flow_line.setChecked(mode in ("FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW"))
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -16571,7 +16652,7 @@ class ManualStudioWindow(QMainWindow):
                 if modifiers & Qt.ShiftModifier:
                     self.action_merge_project()
                 else:
-                    self.toggle_ribbon_display_mode()
+                    self.toggle_ui_style_mode()
                 self.hide_keytips()
                 return
             elif key == Qt.Key_C:

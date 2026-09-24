@@ -214,7 +214,7 @@ Manual Studio uses a multi-layered annotation schema supporting single-file JSON
   - `BtnSaveAsProject` / Ctrl+Shift+S: Save project with new filename.
   - `BtnMergeProject` / Ctrl+Shift+M: Merge external project slides into current timeline.
   - `BtnReleaseNotes`: Open Release Notes history dialog (30 releases viewable).
-  - `BtnToggleRibbon` / Ctrl+M: Toggle ribbon mode (Standard vs 42 Vector Icons).
+  - `BtnToggleRibbon` / Ctrl+M: Toggle UI style mode (Ribbon Menu vs Vertical Toolbar).
   - `BtnElbowTR`: Elbow arrow Right then Down (`─┐`, Top-Right corner).
   - `BtnElbowBR`: Elbow arrow Right then Up (`─┘`, Bottom-Right corner).
   - `BtnElbowBL`: Elbow arrow Down then Right (`│└`, Bottom-Left corner).
