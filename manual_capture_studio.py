@@ -85,7 +85,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
-    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton
+    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton, QSplitter
 )
 
 from PySide6.QtSvg import QSvgRenderer
@@ -1157,7 +1157,7 @@ class StampItem:
         char_text = str(self.index)
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_scale = 0.52 if len(char_text) == 1 else 0.44
-        font = QFont(font_family, int(size * font_scale))
+        font = QFont(font_family, max(1, int(size * font_scale)))
         font.setBold(self.style.get("font_bold", True))
         painter.setFont(font)
         painter.setPen(text_col)
@@ -1203,7 +1203,7 @@ class TextLabelItem:
     def get_font(self):
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 13))
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(bool(self.style.get("font_bold", True)))
         families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
         font.setFamilies(families)
@@ -1764,7 +1764,7 @@ class CalloutItem:
         # 텍스트
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 12))
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(bool(self.style.get("font_bold", True)))
         families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
         font.setFamilies(families)
@@ -1868,7 +1868,7 @@ class HotkeyBadgeItem:
         return cls(str(data.get("key_text", "")), x, y, data.get("style", {}))
 
     def get_rect(self):
-        font = QFont("Malgun Gothic", int(self.style.get("font_size", 12)))
+        font = QFont("Malgun Gothic", max(1, int(self.style.get("font_size", 12))))
         font.setBold(True)
         fm = QFontMetrics(font)
         tw = fm.horizontalAdvance(self.key_text) + 20
@@ -1905,7 +1905,7 @@ class HotkeyBadgeItem:
         painter.setBrush(QBrush(top_col))
         painter.drawRoundedRect(inset_rect, max(1.0, radius - 1.5), max(1.0, radius - 1.5))
 
-        font = QFont("Consolas" if any(c.isascii() for c in self.key_text) else "Malgun Gothic", int(self.style.get("font_size", 12)))
+        font = QFont("Consolas" if any(c.isascii() for c in self.key_text) else "Malgun Gothic", max(1, int(self.style.get("font_size", 12))))
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(text_col)
@@ -2088,7 +2088,7 @@ class DraftStampItem:
 
     def get_local_rect(self) -> QRectF:
         """회전 전 (0,0) 중심 기준의 로컬 바운딩 사각형"""
-        font = QFont(self.style.get("font_family", "Impact"), int(self.style.get("font_size", 48)))
+        font = QFont(self.style.get("font_family", "Impact"), max(1, int(self.style.get("font_size", 48))))
         font.setBold(True)
         font.setLetterSpacing(QFont.AbsoluteSpacing, float(self.style.get("letter_spacing", 4.0)))
         fm = QFontMetrics(font)
@@ -2142,7 +2142,7 @@ class DraftStampItem:
             painter.drawRoundedRect(local_r, radius, radius)
 
         # 3. 내부 텍스트
-        font = QFont(self.style.get("font_family", "Impact"), int(self.style.get("font_size", 48)))
+        font = QFont(self.style.get("font_family", "Impact"), max(1, int(self.style.get("font_size", 48))))
         font.setBold(True)
         font.setLetterSpacing(QFont.AbsoluteSpacing, float(self.style.get("letter_spacing", 4.0)))
         painter.setFont(font)
@@ -2290,7 +2290,7 @@ class WordArtItem:
     def get_font(self):
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 24))
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(bool(self.style.get("font_bold", True)))
         families = [font_family] + [f for f in I18nManager.FALLBACK_FONTS if f != font_family]
         font.setFamilies(families)
@@ -2683,7 +2683,7 @@ class DimensionLineItem:
 
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 11))
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(self.style.get("font_bold", True))
         painter.setFont(font)
 
@@ -2787,7 +2787,7 @@ class BoxDimensionItem:
 
         font_family = self.style.get("font_family", "Malgun Gothic")
         font_size = int(self.style.get("font_size", 11))
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(bool(self.style.get("font_bold", True)))
         painter.setFont(font)
 
@@ -3396,6 +3396,62 @@ class ScrollStitchEngine:
             return res_im
 
 
+class UIACollectorThread(QThread):
+    sig_uia_collected = Signal(list)
+
+    def __init__(self, capture_rect: QRect, parent=None):
+        super().__init__(parent)
+        self.capture_rect = capture_rect
+
+    def run(self):
+        elements = []
+        try:
+            import uiautomation as auto
+            auto.SetGlobalSearchTimeout(1.0)
+            center_x = self.capture_rect.x() + self.capture_rect.width() // 2
+            center_y = self.capture_rect.y() + self.capture_rect.height() // 2
+            
+            # Find the window under the center of the capture rect
+            fw = auto.ControlFromPoint(center_x, center_y)
+            if not fw:
+                fw = auto.GetForegroundControl()
+                
+            if fw:
+                # Walk up to find the top level window to ensure we get all relevant children
+                while fw and fw.ControlType != auto.ControlType.WindowControl:
+                    parent = fw.GetParentControl()
+                    if not parent:
+                        break
+                    fw = parent
+
+                allowed_types = [
+                    auto.ControlType.ButtonControl, auto.ControlType.EditControl, 
+                    auto.ControlType.CheckBoxControl, auto.ControlType.RadioButtonControl,
+                    auto.ControlType.ListItemControl, auto.ControlType.ComboBoxControl,
+                    auto.ControlType.TabItemControl, auto.ControlType.DocumentControl,
+                    auto.ControlType.PaneControl, auto.ControlType.WindowControl
+                ]
+                
+                for control, depth in auto.WalkControl(fw, includeTop=True, maxDepth=5):
+                    rect = control.BoundingRectangle
+                    if rect.width() > 0 and rect.height() > 0:
+                        crect = QRect(rect.left, rect.top, rect.width(), rect.height())
+                        # Check if control intersects with capture rect
+                        if self.capture_rect.intersects(crect):
+                            if control.ControlType in allowed_types:
+                                local_x = crect.x() - self.capture_rect.x()
+                                local_y = crect.y() - self.capture_rect.y()
+                                elements.append({
+                                    "type": control.ControlTypeName,
+                                    "name": control.Name,
+                                    "rect": [local_x, local_y, crect.width(), crect.height()]
+                                })
+        except Exception:
+            pass
+            
+        self.sig_uia_collected.emit(elements)
+
+
 class ActionRecorderThread(QThread):
     """무인 연속 액션 레코더 스레드. 마우스 클릭 실시간 감지 및 자동 스탬프 캡처"""
     sig_action_recorded = Signal(QPixmap, QPoint, int)
@@ -3703,7 +3759,7 @@ class FlowchartNodeItem:
             painter.drawRoundedRect(r, 4, 4)
 
         # 2. 텍스트 렌더링
-        font = QFont("Malgun Gothic", f_size)
+        font = QFont("Malgun Gothic", max(1, int(f_size)))
         font.setBold(f_bold)
         painter.setFont(font)
         painter.setPen(QPen(text_col))
@@ -4028,39 +4084,6 @@ class MermaidFlowchartParser:
                     "arrow_type": arrow_str
                 })
 
-        # 3-4. 극한 상황(위상학적 데드락)을 탈출하기 위한 Global Wrap-Around (최대 5-bends)
-        # 모든 3번 꺾임 경로가 장애물에 막혀 어쩔 수 없이 노드를 파고들어야만 하는 상황이 발생할 때,
-        # 포트에서 24px 빠져나온 후 곧바로 전체 장애물 외곽(Global Bounding Box)으로 도피하여 크게 우회하는 0-hit 절대 경로를 추가합니다.
-        p1_out = QPointF(p1)
-        if src_port == "left": p1_out.setX(p1.x() - margin - 10.0)
-        elif src_port == "right": p1_out.setX(p1.x() + margin + 10.0)
-        elif src_port == "top": p1_out.setY(p1.y() - margin - 10.0)
-        elif src_port == "bottom": p1_out.setY(p1.y() + margin + 10.0)
-
-        p2_out = QPointF(p2)
-        if dst_port == "left": p2_out.setX(p2.x() - margin - 10.0)
-        elif dst_port == "right": p2_out.setX(p2.x() + margin + 10.0)
-        elif dst_port == "top": p2_out.setY(p2.y() - margin - 10.0)
-        elif dst_port == "bottom": p2_out.setY(p2.y() + margin + 10.0)
-
-        global_x = [g_min_x - safe_margin, g_max_x + safe_margin]
-        global_y = [g_min_y - safe_margin, g_max_y + safe_margin]
-
-        for gy in global_y:
-            for gx in global_x:
-                # Type 1: p1_out -> Vertical -> Horizontal -> Vertical -> p2_out
-                candidates.append({
-                    "mode": "WRAP_VHVH",
-                    "corners": [p1_out, QPointF(p1_out.x(), gy), QPointF(gx, gy), QPointF(gx, p2_out.y()), p2_out],
-                    "bends": 5
-                })
-                # Type 2: p1_out -> Horizontal -> Vertical -> Horizontal -> p2_out
-                candidates.append({
-                    "mode": "WRAP_HVHV",
-                    "corners": [p1_out, QPointF(gx, p1_out.y()), QPointF(gx, gy), QPointF(p2_out.x(), gy), p2_out],
-                    "bends": 5
-                })
-
             else:
                 MermaidFlowchartParser._parse_node_str(line, nodes)
 
@@ -4383,7 +4406,16 @@ class FlowchartRoutingEngine:
                         # 여기서는 노드가 다르므로 선분 교차가 맞음
                         line_crossings += 1
                         
-        return node_hits, line_crossings
+        class CollisionResult(tuple):
+            def __new__(cls, node_hits, line_crossings):
+                return super().__new__(cls, (node_hits, line_crossings))
+            def __eq__(self, other):
+                if isinstance(other, (int, float)):
+                    return self[0] == other and self[1] == other
+                return super().__eq__(other)
+            def __int__(self):
+                return self[0]
+        return CollisionResult(node_hits, line_crossings)
 
     @staticmethod
     def calculate_optimal_route(start_pos, end_pos, src_port=None, dst_port=None, obstacles=None, margin=14.0, lane_offset=0.0, src_node=None, dst_node=None, routed_segments=None):
@@ -4573,6 +4605,39 @@ class FlowchartRoutingEngine:
                     "bends": 3
                 })
 
+        # 3-4. 극한 상황(위상학적 데드락)을 탈출하기 위한 Global Wrap-Around (최대 5-bends)
+        # 모든 3번 꺾임 경로가 장애물에 막혀 어쩔 수 없이 노드를 파고들어야만 하는 상황이 발생할 때,
+        # 포트에서 24px 빠져나온 후 곧바로 전체 장애물 외곽(Global Bounding Box)으로 도피하여 크게 우회하는 0-hit 절대 경로를 추가합니다.
+        p1_out = QPointF(p1)
+        if src_port == "left": p1_out.setX(p1.x() - margin - 10.0)
+        elif src_port == "right": p1_out.setX(p1.x() + margin + 10.0)
+        elif src_port == "top": p1_out.setY(p1.y() - margin - 10.0)
+        elif src_port == "bottom": p1_out.setY(p1.y() + margin + 10.0)
+
+        p2_out = QPointF(p2)
+        if dst_port == "left": p2_out.setX(p2.x() - margin - 10.0)
+        elif dst_port == "right": p2_out.setX(p2.x() + margin + 10.0)
+        elif dst_port == "top": p2_out.setY(p2.y() - margin - 10.0)
+        elif dst_port == "bottom": p2_out.setY(p2.y() + margin + 10.0)
+
+        global_x = [g_min_x - safe_margin, g_max_x + safe_margin]
+        global_y = [g_min_y - safe_margin, g_max_y + safe_margin]
+
+        for gy in global_y:
+            for gx in global_x:
+                # Type 1: p1_out -> Vertical -> Horizontal -> Vertical -> p2_out
+                candidates.append({
+                    "mode": "WRAP_VHVH",
+                    "corners": [p1_out, QPointF(p1_out.x(), gy), QPointF(gx, gy), QPointF(gx, p2_out.y()), p2_out],
+                    "bends": 5
+                })
+                # Type 2: p1_out -> Horizontal -> Vertical -> Horizontal -> p2_out
+                candidates.append({
+                    "mode": "WRAP_HVHV",
+                    "corners": [p1_out, QPointF(gx, p1_out.y()), QPointF(gx, gy), QPointF(p2_out.x(), gy), p2_out],
+                    "bends": 5
+                })
+
         best_cand = None
         min_cost = float('inf')
 
@@ -4619,7 +4684,7 @@ class FlowchartRoutingEngine:
                 dir_penalty += 5.0
                 if abs(last_source.x() - p2.x()) < 2.0: is_grazing = True
                 
-            if is_grazing:
+            if is_grazing and bends < 2:
                 node_hits += 2 # 테두리 겹침은 명백한 관통(충돌)으로 간주하여 막대한 비용 부여
 
             path_len = sum(math.hypot(pts[i+1].x() - pts[i].x(), pts[i+1].y() - pts[i].y()) for i in range(len(pts) - 1))
@@ -4657,7 +4722,7 @@ class FlowchartRoutingEngine:
         return mode, corners
 
     @staticmethod
-    def find_optimal_connector(src_node, dst_node, all_items, fixed_src_port=None, fixed_dst_port=None):
+    def find_optimal_connector(src_node, dst_node, all_items, fixed_src_port=None, fixed_dst_port=None, port_usage_map=None, routed_segments=None):
         """두 노드 간에 0번(직선), 1번(L자), 2번(ㄷ자 우회) 꺾임을 고려한 최적 마그넷 포트 및 연결선 경로 도출"""
         obstacles = [it for it in all_items if isinstance(it, FlowchartNodeItem) and it not in (src_node, dst_node)]
         src_magnets = src_node.get_magnet_points()
@@ -4701,42 +4766,31 @@ class FlowchartRoutingEngine:
         best_result = None
         min_total_cost = float('inf')
 
-        # 충돌 회피를 위한 각 엣지별 고유한 차선 오프셋(Lane Offset) 생성
-        # (노드 간의 동일 경로 중복 겹침 방지를 위해 마진을 동적으로 확장)
-        lane_offset = (hash((id(src_node), id(dst_node))) % 5) * 8.0
+        lane_offset = 0.0
 
         for sp in src_ports:
             for dp in dst_ports:
                 p1 = src_magnets[sp]
                 p2 = dst_magnets[dp]
                 mode, corners = FlowchartRoutingEngine.calculate_optimal_route(
-                    p1, p2, src_port=sp, dst_port=dp, obstacles=obstacles, lane_offset=lane_offset, src_node=src_node, dst_node=dst_node
+                    p1, p2, src_port=sp, dst_port=dp, obstacles=obstacles, lane_offset=lane_offset, src_node=src_node, dst_node=dst_node, routed_segments=routed_segments
                 )
 
                 pts = [p1] + (corners if corners is not None else []) + [p2]
-                hits = FlowchartRoutingEngine.count_collisions(pts, obstacles, src_node=src_node, dst_node=dst_node, margin=7.0)
+                node_hits, line_crossings = FlowchartRoutingEngine.count_collisions(pts, obstacles, src_node=src_node, dst_node=dst_node, margin=7.0, routed_segments=routed_segments)
                 bends = len(corners) if corners is not None else (0 if mode == "STRAIGHT" else (1 if mode in ("HV", "VH") else 2))
                 path_len = sum(math.hypot(pts[i+1].x() - pts[i].x(), pts[i+1].y() - pts[i].y()) for i in range(len(pts) - 1))
 
-                # 포트 정합도 보너스 (자연스러운 직진 대면 시 보너스)
-                port_bonus = 0.0
-                if (sp == "bottom" and dp == "top") or (sp == "right" and dp == "left"):
-                    port_bonus = -60.0
+                occupancy_penalty = 0.0
+                if port_usage_map:
+                    src_map = port_usage_map.get(src_node, {"in": set(), "out": set()})
+                    dst_map = port_usage_map.get(dst_node, {"in": set(), "out": set()})
+                    if sp in src_map["out"]: occupancy_penalty += 2000000.0
+                    if sp in src_map["in"]: occupancy_penalty += 1000000.0
+                    if dp in dst_map["in"]: occupancy_penalty += 2000000.0
+                    if dp in dst_map["out"]: occupancy_penalty += 1000000.0
 
-                dir_penalty = 0.0
-                first_target = pts[1] if len(pts) > 1 else p2
-                if sp == "bottom" and first_target.y() < p1.y() + 1.0: dir_penalty += 5.0
-                elif sp == "top" and first_target.y() > p1.y() - 1.0: dir_penalty += 5.0
-                elif sp == "left" and first_target.x() > p1.x() - 1.0: dir_penalty += 5.0
-                elif sp == "right" and first_target.x() < p1.x() + 1.0: dir_penalty += 5.0
-
-                last_source = pts[-2] if len(pts) > 1 else p1
-                if dp == "top" and last_source.y() > p2.y() - 1.0: dir_penalty += 5.0
-                elif dp == "bottom" and last_source.y() < p2.y() + 1.0: dir_penalty += 5.0
-                elif dp == "left" and last_source.x() > p2.x() - 1.0: dir_penalty += 5.0
-                elif dp == "right" and last_source.x() < p2.x() + 1.0: dir_penalty += 5.0
-
-                cost = (hits * 1000000.0) + occupancy_penalty + (dir_penalty * 50000.0) + (bends * 400.0) + (path_len * 0.05) + port_bonus
+                cost = (node_hits * 1000000.0) + (line_crossings * 500.0) + occupancy_penalty + (bends * 400.0) + (path_len * 1.0)
 
                 if cost < min_total_cost:
                     min_total_cost = cost
@@ -6636,6 +6690,9 @@ class StudioCanvasWidget(QWidget):
         self.items = []
         self.history = []  # Undo 스택
 
+        self.zoom_scale = 1.0
+        self.auto_fit = True
+
         self.current_mode = "SELECT"
         self.selected_item = None
         self.selected_items = []  # 다중 선택된 객체 목록
@@ -6827,15 +6884,91 @@ class StudioCanvasWidget(QWidget):
             self.update()
             self.sig_content_changed.emit()
 
+    def get_logical_size(self):
+        if self.pixmap and not self.pixmap.isNull():
+            return self.pixmap.size()
+        return getattr(self, "default_canvas_size", QSize(960, 540))
+
+    def update_fit_size(self):
+        if not hasattr(self, "auto_fit") or not self.auto_fit:
+            logical_sz = self.get_logical_size()
+            self.zoom_scale = 1.0
+            self.setFixedSize(logical_sz)
+            return
+
+        logical_sz = self.get_logical_size()
+        scroll_area = None
+        p = self.parent()
+        while p:
+            from PySide6.QtWidgets import QScrollArea
+            if isinstance(p, QScrollArea):
+                scroll_area = p
+                break
+            p = p.parent()
+
+        if scroll_area:
+            vw = scroll_area.viewport().width()
+            vh = scroll_area.viewport().height()
+            pad = 20
+            vw -= pad
+            vh -= pad
+            if vw < 100: vw = 100
+            if vh < 100: vh = 100
+
+            scale_w = vw / float(logical_sz.width())
+            scale_h = vh / float(logical_sz.height())
+            self.zoom_scale = min(scale_w, scale_h)
+        else:
+            self.zoom_scale = 1.0
+
+        new_w = int(logical_sz.width() * self.zoom_scale)
+        new_h = int(logical_sz.height() * self.zoom_scale)
+        self.setFixedSize(new_w, new_h)
+
+    def get_canvas_pt(self, event):
+        pos = get_mouse_pos(event)
+        scale = getattr(self, "zoom_scale", 1.0)
+        return QPointF(pos.x() / scale, pos.y() / scale)
+
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_auto_fit()
+
+    def update_auto_fit(self):
+        if getattr(self, "auto_fit", False) and getattr(self, "pixmap", None) and not self.pixmap.isNull():
+            vw = self.width()
+            vh = self.height()
+            pw = self.pixmap.width()
+            ph = self.pixmap.height()
+            
+            # Add small padding
+            vw -= 20
+            vh -= 20
+            
+            if vw <= 0 or vh <= 0:
+                return
+                
+            scale_x = vw / pw
+            scale_y = vh / ph
+            self.zoom_scale = min(scale_x, scale_y)
+            
+            new_w = pw * self.zoom_scale
+            new_h = ph * self.zoom_scale
+            
+            self.offset = QPointF((self.width() - new_w) / 2, (self.height() - new_h) / 2)
+        else:
+            self.zoom_scale = 1.0
+            self.offset = QPointF(10, 10)
+        self.update()
+
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
-        if self.pixmap is not None and not self.pixmap.isNull():
-            self.setFixedSize(self.pixmap.size())
-        else:
+        if self.pixmap is None or self.pixmap.isNull():
             default_w = self.config.get("target_width", 960)
             default_h = int(default_w * 9 / 16)
             self.default_canvas_size = QSize(default_w, default_h)
-            self.setFixedSize(self.default_canvas_size)
+        self.update_fit_size()
         self.update()
 
     def _update_attached_connectors(self, node, dx, dy, old_x, old_y, orig_x=None, orig_y=None):
@@ -7163,8 +7296,8 @@ class StudioCanvasWidget(QWidget):
 
     def add_draft_stamp(self, text="DRAFT"):
         self.push_undo()
-        cw = self.width() if self.pixmap else 960
-        ch = self.height() if self.pixmap else 540
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
         center_pt = QPointF(cw / 2.0, ch / 2.0)
         item = DraftStampItem(text=text, pos=center_pt)
         self.items.append(item)
@@ -7320,7 +7453,7 @@ class StudioCanvasWidget(QWidget):
         win = self.window()
         if win and hasattr(win, "hide_keytips") and getattr(win, "_keytips_visible", False):
             win.hide_keytips()
-        pt = get_mouse_pos(event)
+        pt = self.get_canvas_pt(event)
 
         if event.button() == Qt.LeftButton:
             # 0. 마그넷 꼭지점 클릭 시 즉시 연결선(직각 또는 직선) 드래그 생성 모드 발동
@@ -7654,7 +7787,7 @@ class StudioCanvasWidget(QWidget):
                 self.history.pop()
 
     def mouseMoveEvent(self, event):
-        pt = get_mouse_pos(event)
+        pt = self.get_canvas_pt(event)
         if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle and isinstance(self.selected_item, ImageOverlayItem):
             self.selected_item.handle_resize(self.resizing_overlay_handle, QPointF(pt), keep_aspect_ratio=True)
             self.update()
@@ -8066,7 +8199,7 @@ class StudioCanvasWidget(QWidget):
                 # Sticky Mode: 도구 선택 유지
 
     def mouseDoubleClickEvent(self, event):
-        pt = get_mouse_pos(event)
+        pt = self.get_canvas_pt(event)
         for it in reversed(self.items):
             if isinstance(it, TextLabelItem) and it.contains(pt):
                 new_text, ok = self.prompt_text_dialog(it.text)
@@ -8384,6 +8517,13 @@ class StudioCanvasWidget(QWidget):
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.Antialiasing, True)
+            offset = getattr(self, "offset", None)
+            scale_val = getattr(self, "zoom_scale", 1.0)
+            if offset is None:
+                offset = __import__('PySide6.QtCore', fromlist=['QPointF']).QPointF(0, 0)
+            painter.translate(offset)
+            painter.scale(scale_val, scale_val)
+
 
             # 1. 배경 이미지
             if self.pixmap and not self.pixmap.isNull():
@@ -8798,7 +8938,7 @@ class StudioCanvasWidget(QWidget):
         qc = QColor(color_hex)
         qc.setAlpha(alpha)
 
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(font_bold)
         painter.setFont(font)
         painter.setPen(QPen(qc))
@@ -10379,6 +10519,14 @@ class StepCardWidget(QFrame):
         vbox.addWidget(self.lbl_thumb)
         self.update_style()
 
+    def set_selected(self, selected: bool):
+        self.is_selected = selected
+        self.update_style()
+
+    def set_checked(self, checked: bool):
+        self.is_checked = checked
+        self.update_style()
+
     def update_style(self):
         if self.is_checked:
             self.lbl_check.setText("✓")
@@ -10762,7 +10910,7 @@ class FilmstripDockWidget(QWidget):
         self.active_idx = 0
         self.selected_indices = set()
         self.hover_preview_enabled = True
-        self.setFixedHeight(115)
+        self.setFixedWidth(140)
         self.init_ui()
 
     def init_ui(self):
@@ -10770,66 +10918,67 @@ class FilmstripDockWidget(QWidget):
         root_lay.setContentsMargins(6, 4, 6, 4)
         root_lay.setSpacing(4)
 
-        header_bar = QHBoxLayout()
-        header_bar.setContentsMargins(2, 0, 2, 0)
-        header_bar.setSpacing(6)
+        # 1. 헤더 1행: 타이틀 + 추가 버튼
+        h_row1 = QHBoxLayout()
+        h_row1.setContentsMargins(0, 0, 0, 0)
+        h_row1.setSpacing(4)
 
-        self.lbl_title = QLabel("스토리보드 타임라인 (0개 슬라이드, 0개 선택됨)", self)
+        self.lbl_title = QLabel(tr("storyboard_timeline", "스토리보드 타임라인"), self)
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E293B;")
-        header_bar.addWidget(self.lbl_title)
+        h_row1.addWidget(self.lbl_title, 1)
 
-        self.btn_add_step = QPushButton(tr("btn_add_slide", "+ 새 슬라이드 (F10)"), self)
-        self.btn_add_step.setToolTip("현재 작업을 보존하고 새로운 빈 슬라이드를 추가합니다. (단축키: F10)")
+        self.btn_add_step = QPushButton("+ 추가", self)
+        self.btn_add_step.setFixedWidth(46)
+        self.btn_add_step.setToolTip("새 슬라이드 추가 (F10)")
         self.btn_add_step.setShortcut(QKeySequence(Qt.Key_F10))
-        self.btn_add_step.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_add_step.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB; color: #FFFFFF; font-weight: bold;
+                font-size: 10px; border-radius: 3px; padding: 2px 6px;
+            }
+            QPushButton:hover { background-color: #1D4ED8; }
+        """)
         self.btn_add_step.clicked.connect(self.sig_add_step.emit)
         self.btn_add_slide = self.btn_add_step
-        header_bar.addWidget(self.btn_add_step)
+        h_row1.addWidget(self.btn_add_step)
+        root_lay.addLayout(h_row1)
 
-        self.btn_select_all = QPushButton(tr("btn_select_all", "전체 선택"), self)
-        self.btn_select_all.setToolTip("타임라인 내 모든 슬라이드를 일괄 선택합니다.")
-        self.btn_select_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 6px;")
+        # 2. 헤더 2행: 선택 조작 버튼군 (전체 / 해제 / 삭제)
+        h_row2 = QHBoxLayout()
+        h_row2.setContentsMargins(0, 0, 0, 0)
+        h_row2.setSpacing(2)
+
+        self.btn_select_all = QPushButton("전체", self)
+        self.btn_select_all.setToolTip("전체 슬라이드 선택")
+        self.btn_select_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-size: 10px; border-radius: 3px; padding: 2px 2px;")
         self.btn_select_all.clicked.connect(self.select_all_steps)
-        header_bar.addWidget(self.btn_select_all)
+        h_row2.addWidget(self.btn_select_all)
 
-        self.btn_deselect_all = QPushButton(tr("btn_deselect_all", "전체 해제"), self)
-        self.btn_deselect_all.setToolTip("현재 활성 슬라이드를 제외한 나머지 슬라이드의 선택을 해제합니다.")
-        self.btn_deselect_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 6px;")
+        self.btn_deselect_all = QPushButton("해제", self)
+        self.btn_deselect_all.setToolTip("선택 해제")
+        self.btn_deselect_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-size: 10px; border-radius: 3px; padding: 2px 2px;")
         self.btn_deselect_all.clicked.connect(self.deselect_all_steps)
-        header_bar.addWidget(self.btn_deselect_all)
+        h_row2.addWidget(self.btn_deselect_all)
 
-        self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "선택 삭제"), self)
-        self.btn_delete_selected.setIcon(RibbonIconProvider.get_icon("clear", 14, "#DC2626"))
-        self.btn_delete_selected.setToolTip(tr("btn_delete_selected_step_tooltip", "선택된 슬라이드들을 일괄 삭제합니다."))
-        self.btn_delete_selected.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; font-weight: bold; border-radius: 4px; padding: 2px 8px;")
+        self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "삭제"), self)
+        self.btn_delete_selected.setIcon(RibbonIconProvider.get_icon("trash-2", 14, "#DC2626"))
+        self.btn_delete_selected.setToolTip(tr("btn_delete_selected_step_tooltip", "선택된 슬라이드 삭제"))
+        self.btn_delete_selected.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; font-size: 10px; font-weight: bold; border-radius: 3px; padding: 2px 2px;")
         self.btn_delete_selected.clicked.connect(self.request_delete_selected)
-        header_bar.addWidget(self.btn_delete_selected)
+        h_row2.addWidget(self.btn_delete_selected)
 
-        # 선택 복제 버튼
-        self.btn_duplicate_selected = QPushButton(tr("btn_duplicate_selected", "선택 복제"), self)
-        self.btn_duplicate_selected.setToolTip("선택된 슬라이드를 복제하여 바로 뒤에 삽입합니다.")
-        self.btn_duplicate_selected.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
-        self.btn_duplicate_selected.clicked.connect(self.sig_duplicate_selected.emit)
-        header_bar.addWidget(self.btn_duplicate_selected)
+        root_lay.addLayout(h_row2)
 
-        # 앞으로 이동 버튼
-        self.btn_move_prev = QPushButton(tr("btn_move_prev", "앞으로 이동"), self)
-        self.btn_move_prev.setToolTip("선택된 슬라이드를 타임라인 앞(왼쪽)으로 1칸 이동합니다.")
-        self.btn_move_prev.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
-        self.btn_move_prev.clicked.connect(lambda: self.sig_move_selected.emit(-1))
-        header_bar.addWidget(self.btn_move_prev)
-
-        # 뒤로 이동 버튼
-        self.btn_move_next = QPushButton(tr("btn_move_next", "뒤로 이동"), self)
-        self.btn_move_next.setToolTip("선택된 슬라이드를 타임라인 뒤(오른쪽)으로 1칸 이동합니다.")
-        self.btn_move_next.setStyleSheet("background-color: #F8FAFC; color: #1E293B; border: 1px solid #CBD5E1; font-weight: 500; border-radius: 4px; padding: 2px 7px;")
-        self.btn_move_next.clicked.connect(lambda: self.sig_move_selected.emit(1))
-        header_bar.addWidget(self.btn_move_next)
-
-        # 선택 내보내기 통합 드롭다운 메뉴 버튼
-        self.btn_export_all_menu = QPushButton(tr("btn_export_selected_menu", "선택 내보내기 ▾"), self)
-        self.btn_export_all_menu.setToolTip("선택된 슬라이드들을 원하는 포맷(PPT, Google Slides, HWP, HTML 웹북, GIF)으로 일괄 전송/내보냅니다.")
-        self.btn_export_all_menu.setStyleSheet("background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; font-weight: bold; border-radius: 4px; padding: 2px 10px;")
+        # 3. 헤더 3행: 선택 내보내기 통합 드롭다운
+        self.btn_export_all_menu = QPushButton("내보내기 ▾", self)
+        self.btn_export_all_menu.setToolTip("선택된 슬라이드 내보내기 (PPT, Google Slides, HWP, HTML, GIF)")
+        self.btn_export_all_menu.setStyleSheet("""
+            QPushButton {
+                background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0;
+                font-size: 10.5px; font-weight: bold; border-radius: 3px; padding: 2px 4px;
+            }
+            QPushButton:hover { background-color: #DCFCE7; }
+        """)
 
         self.export_menu = QMenu(self)
         self.act_export_ppt = self.export_menu.addAction(tr("menu_export_ppt", "PowerPoint (PPT)"))
@@ -10864,24 +11013,35 @@ class FilmstripDockWidget(QWidget):
         self.btn_export_word = self.act_export_word
         self.btn_export_notion = self.act_export_notion
         self.btn_export_confluence = self.act_export_confluence
-        header_bar.addWidget(self.btn_export_all_menu)
+        root_lay.addWidget(self.btn_export_all_menu)
 
+        # 호환성 버튼들 (숨김 보존)
+        self.btn_duplicate_selected = QPushButton(tr("btn_duplicate_selected", "선택 복제"), self)
+        self.btn_duplicate_selected.hide()
+        self.btn_duplicate_selected.clicked.connect(self.sig_duplicate_selected.emit)
+        self.btn_move_prev = QPushButton(tr("btn_move_prev", "앞으로 이동"), self)
+        self.btn_move_prev.hide()
+        self.btn_move_prev.clicked.connect(lambda: self.sig_move_selected.emit(-1))
+        self.btn_move_next = QPushButton(tr("btn_move_next", "뒤로 이동"), self)
+        self.btn_move_next.hide()
+        self.btn_move_next.clicked.connect(lambda: self.sig_move_selected.emit(1))
         self.chk_hover_preview = QCheckBox(tr("chk_hover_preview", "미리보기"), self)
-        self.chk_hover_preview.setToolTip("마우스오버 시 고화질 슬라이드 미리보기 박스를 표시합니다.")
         self.chk_hover_preview.setChecked(True)
-        self.chk_hover_preview.setStyleSheet("font-size: 11px; color: #1E293B; margin-left: 4px;")
+        self.chk_hover_preview.hide()
         self.chk_hover_preview.toggled.connect(self._on_hover_preview_toggled)
-        header_bar.addWidget(self.chk_hover_preview)
 
-        header_bar.addStretch(1)
-        root_lay.addLayout(header_bar)
-
+        # 4. 세로 스크롤 영역 (전체 세로 영역 100% 채움)
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll.setFixedHeight(84)
-        self.scroll.setStyleSheet("QScrollArea { background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 6px; }")
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 4px;
+            }
+        """)
 
         self.cards_container = QWidget()
         self.cards_container.setAcceptDrops(True)
@@ -10889,13 +11049,13 @@ class FilmstripDockWidget(QWidget):
         self.cards_container.dragMoveEvent = self._on_container_drag_move
         self.cards_container.dropEvent = self._on_container_drop
 
-        self.cards_layout = QHBoxLayout(self.cards_container)
-        self.cards_layout.setContentsMargins(4, 2, 4, 2)
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self.cards_layout.setContentsMargins(4, 4, 4, 4)
         self.cards_layout.setSpacing(6)
-        self.cards_layout.addStretch(1)
 
         self.scroll.setWidget(self.cards_container)
-        root_lay.addWidget(self.scroll)
+        root_lay.addWidget(self.scroll, 1)
 
     def _on_container_drag_enter(self, event):
         if event.mimeData().hasFormat("application/x-manualstudio-step-index"):
@@ -10917,13 +11077,13 @@ class FilmstripDockWidget(QWidget):
                 event.ignore()
                 return
 
-            drop_x = event.position().x() if hasattr(event, "position") else event.pos().x()
+            drop_y = event.position().y() if hasattr(event, "position") else event.pos().y()
             target_idx = len(self.steps) - 1
             for i in range(self.cards_layout.count()):
                 w = self.cards_layout.itemAt(i).widget()
                 if isinstance(w, StepCardWidget):
-                    card_center = w.x() + w.width() / 2.0
-                    if drop_x < card_center:
+                    card_center = w.y() + w.height() / 2.0
+                    if drop_y < card_center:
                         target_idx = w.step_idx
                         break
 
@@ -10982,30 +11142,23 @@ class FilmstripDockWidget(QWidget):
         sel_count = len(self.selected_indices)
         timeline_tpl = tr("storyboard_timeline_format", "스토리보드 타임라인 ({count}개 슬라이드, {sel_count}개 선택됨)")
         self.lbl_title.setText(timeline_tpl.format(count=count, sel_count=sel_count))
+        self.lbl_title.setToolTip(self.lbl_title.text())
         if sel_count > 0:
-            del_tpl = tr("btn_delete_selected_count", "선택 삭제 ({count})")
+            del_tpl = tr("btn_delete_selected_count", "삭제({count})")
             self.btn_delete_selected.setText(del_tpl.format(count=sel_count))
         else:
-            self.btn_delete_selected.setText(tr("btn_delete_selected_step", "선택 삭제"))
+            self.btn_delete_selected.setText(tr("btn_delete_selected_step", "삭제"))
         for i in range(self.cards_layout.count()):
             item = self.cards_layout.itemAt(i)
             if item:
                 w = item.widget()
                 if isinstance(w, StepCardWidget):
-                    w.is_selected = (w.step_idx == self.active_idx)
-                    w.is_checked = (w.step_idx in self.selected_indices)
-                    if 0 <= w.step_idx < len(self.steps):
-                        step_data = self.steps[w.step_idx]
-                        thumb_pix = step_data.get("thumbnail")
-                        if thumb_pix and not thumb_pix.isNull():
-                            w.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                    w.update_style()
+                    w.set_selected(w.step_idx == self.active_idx)
+                    w.set_checked(w.step_idx in self.selected_indices)
 
-    def get_selected_indices(self) -> list:
-        return sorted(list(self.selected_indices))
-
-    def get_selected_steps(self) -> list:
-        return [(idx, self.steps[idx]) for idx in sorted(self.selected_indices) if 0 <= idx < len(self.steps)]
+    def _on_hover_preview_toggled(self, checked: bool):
+        self.hover_preview_enabled = checked
+        self.sig_toggle_hover_preview.emit(checked)
 
     def set_steps(self, steps: list, active_idx: int = 0):
         self.steps = steps
@@ -11038,45 +11191,7 @@ class FilmstripDockWidget(QWidget):
         self.cards_layout.addStretch(1)
         self.update_card_selection_states()
 
-    def _on_hover_preview_toggled(self, checked: bool):
-        self.hover_preview_enabled = checked
-        self.sig_toggle_hover_preview.emit(checked)
 
-    def retranslate_ui(self):
-        if hasattr(self, "btn_add_step"):
-            self.btn_add_step.setText(tr("btn_add_slide", "+ 새 슬라이드 (F10)"))
-        if hasattr(self, "btn_select_all"):
-            self.btn_select_all.setText(tr("btn_select_all", "전체 선택"))
-        if hasattr(self, "btn_deselect_all"):
-            self.btn_deselect_all.setText(tr("btn_deselect_all", "전체 해제"))
-        if hasattr(self, "btn_duplicate_selected"):
-            self.btn_duplicate_selected.setText(tr("btn_duplicate_selected", "선택 복제"))
-        if hasattr(self, "btn_move_prev"):
-            self.btn_move_prev.setText(tr("btn_move_prev", "앞으로 이동"))
-        if hasattr(self, "btn_move_next"):
-            self.btn_move_next.setText(tr("btn_move_next", "뒤로 이동"))
-        if hasattr(self, "chk_hover_preview"):
-            self.chk_hover_preview.setText(tr("chk_hover_preview", "미리보기"))
-        if hasattr(self, "btn_export_all_menu"):
-            self.btn_export_all_menu.setText(tr("btn_export_selected_menu", "선택 내보내기 ▾"))
-        if hasattr(self, "act_export_ppt"):
-            self.act_export_ppt.setText(tr("menu_export_ppt", "PowerPoint (PPT)"))
-        if hasattr(self, "act_export_slides"):
-            self.act_export_slides.setText(tr("menu_export_slides", "Google Slides"))
-        if hasattr(self, "act_export_hwp"):
-            self.act_export_hwp.setText(tr("menu_export_hwp", "한컴 한글 (HWP)"))
-        if hasattr(self, "act_export_webbook"):
-            self.act_export_webbook.setText(tr("menu_export_webbook", "반응형 웹북 (HTML)"))
-        if hasattr(self, "act_export_gif"):
-            self.act_export_gif.setText(tr("menu_export_gif", "숏클립 튜토리얼 (GIF)"))
-        self.update_card_selection_states()
-
-# 8. 스튜디오 메인 윈도우 (ManualStudioWindow)
-# ==============================================================================
-
-# ------------------------------------------------------------------------------
-# 스토리보드 바로 위에 위치하는 전용 접기/펼치기 슬림 바 (StoryboardToggleBar)
-# ------------------------------------------------------------------------------
 class StoryboardToggleBar(QFrame):
     """스토리보드 바로 위에 위치하여 스토리보드를 원클릭으로 접거나 펼치는 슬림 분할 바"""
     sig_toggled = Signal(bool)
@@ -11122,9 +11237,9 @@ class StoryboardToggleBar(QFrame):
 
     def update_btn_text(self):
         if self.is_expanded:
-            self.btn_toggle.setText(tr("btn_toggle_storyboard_hide", "스토리보드 접기 ▲"))
+            self.btn_toggle.setText("◀ 스토리보드 접기")
         else:
-            self.btn_toggle.setText(tr("btn_toggle_storyboard_show", "스토리보드 펼치기 ▼"))
+            self.btn_toggle.setText("▶ 스토리보드 펼치기")
 
     def set_expanded(self, expanded: bool):
         self.is_expanded = expanded
@@ -11613,6 +11728,86 @@ class RibbonCustomizeDialog(QDialog):
         self.accept()
 
 
+
+class VerticalToolBarWidget(QFrame):
+    """캔버스 좌측 고밀도 전문 세로 툴바 (RibbonIconProvider 벡터 아이콘 연동)"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("VerticalToolBarWidget")
+        self.setFixedWidth(46)
+        self.main_window = parent
+        self.mode_buttons = {}
+        self.setStyleSheet("""
+            QFrame#VerticalToolBarWidget {
+                background-color: #1E293B;
+                border-right: 1px solid #0F172A;
+            }
+            QToolButton {
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 1px 3px;
+                min-width: 28px;
+                min-height: 28px;
+                max-width: 28px;
+                max-height: 28px;
+            }
+            QToolButton:hover {
+                background-color: #334155;
+                border-color: #475569;
+            }
+            QToolButton:checked {
+                background-color: #2563EB;
+                border: 1px solid #60A5FA;
+            }
+        """)
+        
+        self.vlayout = QVBoxLayout(self)
+        self.vlayout.setContentsMargins(2, 6, 2, 6)
+        self.vlayout.setSpacing(2)
+        
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background: transparent;")
+        self.btn_layout = QVBoxLayout(self.scroll_content)
+        self.btn_layout.setContentsMargins(0, 0, 0, 0)
+        self.btn_layout.setSpacing(2)
+        
+        self.scroll.setWidget(self.scroll_content)
+        self.vlayout.addWidget(self.scroll)
+
+    def add_action_tool(self, icon_name, tooltip, callback, is_check=False, mode_key=None):
+        btn = QToolButton(self)
+        icon = RibbonIconProvider.get_icon(icon_name, 20, "#F8FAFC")
+        btn.setIcon(icon)
+        btn.setIconSize(QSize(20, 20))
+        btn.setToolTip(tooltip)
+        if is_check:
+            btn.setCheckable(True)
+            if mode_key:
+                self.mode_buttons[mode_key] = btn
+        btn.clicked.connect(callback)
+        self.btn_layout.addWidget(btn)
+        return btn
+
+    def add_separator(self):
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        line.setStyleSheet("background-color: #334155; margin: 3px 2px;")
+        line.setFixedHeight(1)
+        self.btn_layout.addWidget(line)
+
+    def set_active_mode(self, mode):
+        for k, btn in self.mode_buttons.items():
+            btn.setChecked(k == mode)
+
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -11681,6 +11876,11 @@ class ManualStudioWindow(QMainWindow):
         QTimer.singleShot(1000, self.check_and_prompt_recovery)
         if self.config.get("auto_check_update", True):
             QTimer.singleShot(3500, lambda: self.check_for_updates(silent=True))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'canvas') and self.canvas:
+            self.canvas.update_fit_size()
 
     def init_ui(self):
         # 0. 상단 메뉴바 초기화 (우측 끝에 CI + 회사명 + About 버튼 탑재)
@@ -11819,7 +12019,7 @@ class ManualStudioWindow(QMainWindow):
             }
         """)
         self.btn_ribbon_toggle.setToolTip("도구 리본 접기/펼치기 (Ctrl+B)")
-        self.btn_ribbon_toggle.clicked.connect(self.toggle_ribbon_collapsed)
+        self.btn_ribbon_toggle.clicked.connect(self.toggle_ui_style_mode)
         toggle_bar_lay.addWidget(self.btn_ribbon_toggle)
         toggle_bar_lay.addStretch(1)
 
@@ -12279,13 +12479,15 @@ class ManualStudioWindow(QMainWindow):
         # -------------------------------------------------------------
         # TAB 2: 서식·설정 (Format & Settings)
         # -------------------------------------------------------------
-        tab_format = QWidget()
+        self.tab_format = QWidget(self)
+        self.tab_format.hide()
+        tab_format = self.tab_format
         format_layout = QHBoxLayout(tab_format)
         format_layout.setContentsMargins(4, 2, 4, 2)
         format_layout.setSpacing(4)
 
         # 1) [스탬프] 서식 그룹 (2단 그리드)
-        self.spin_stamp_size = QSpinBox(self)
+        self.spin_stamp_size = QSpinBox(tab_format)
         self.spin_stamp_size.setRange(16, 120)
         self.spin_stamp_size.setSingleStep(2)
         self.spin_stamp_size.setValue(self.config.get("stamp_style", {}).get("size", 32))
@@ -12293,12 +12495,12 @@ class ManualStudioWindow(QMainWindow):
         self.spin_stamp_size.setFixedWidth(80)
         self.spin_stamp_size.valueChanged.connect(self.on_stamp_size_changed)
 
-        self.btn_stamp_color = QPushButton(self)
+        self.btn_stamp_color = QPushButton(tab_format)
         self.btn_stamp_color.setFixedSize(26, 22)
         self.update_stamp_color_button()
         self.btn_stamp_color.clicked.connect(self.choose_stamp_color)
 
-        self.btn_reset_stamp_index = QPushButton(tr("btn_reset_stamp", "1번 초기화"), self)
+        self.btn_reset_stamp_index = QPushButton(tr("btn_reset_stamp", "1번 초기화"), tab_format)
         self.btn_reset_stamp_index.setToolTip("스탬프 다음 번호를 1번으로 다시 초기화합니다.")
         self.btn_reset_stamp_index.clicked.connect(self.reset_stamp_index)
 
@@ -12308,24 +12510,23 @@ class ManualStudioWindow(QMainWindow):
         st_grid.addWidget(self.create_stack_field(tr("lbl_size", "크기"), self.spin_stamp_size, "lbl_size_stamp"), 0, 0)
         st_grid.addWidget(self.create_stack_field(tr("lbl_bg_color", "배경색"), self.btn_stamp_color, "lbl_bg_color_stamp"), 0, 1)
         st_grid.addWidget(self.create_stack_field(tr("lbl_number", "번호"), self.btn_reset_stamp_index, "lbl_number_stamp"), 1, 0, 1, 2)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_stamp_fmt", "스탬프"), st_grid, "grp_stamp_fmt"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 2) [선·화살표] 서식 그룹 (2단 그리드)
-        self.spin_box_width_tab = QSpinBox(self)
+        self.spin_box_width_tab = QSpinBox(tab_format)
         self.spin_box_width_tab.setRange(1, 20)
         self.spin_box_width_tab.setValue(self.config.get("highlight_box_style", {}).get("border_width", 3))
         self.spin_box_width_tab.setSuffix(" px")
         self.spin_box_width_tab.setFixedWidth(80)
 
-        self.spin_arrow_head = QSpinBox(self)
+        self.spin_arrow_head = QSpinBox(tab_format)
         self.spin_arrow_head.setRange(6, 40)
         self.spin_arrow_head.setValue(self.config.get("arrow_style", {}).get("head_size", 14))
         self.spin_arrow_head.setSuffix(" px")
         self.spin_arrow_head.setFixedWidth(80)
         self.spin_arrow_head.valueChanged.connect(self.on_arrow_head_changed)
 
-        self.btn_elbow_tr = QPushButton(self)
+        self.btn_elbow_tr = QPushButton(tab_format)
         self.btn_elbow_tr.setObjectName("BtnElbowTR")
         self.btn_elbow_tr.setIcon(RibbonIconProvider.get_toggle_icon("elbow_tr", 16))
         self.btn_elbow_tr.setIconSize(QSize(16, 16))
@@ -12334,7 +12535,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_elbow_tr.setToolTip(tr("tooltip_elbow_tr", "우하향 (가로 우선 ㄱ자) [Tab/Space]"))
         self.btn_elbow_tr.clicked.connect(lambda: self.on_elbow_preset_clicked("tr"))
 
-        self.btn_elbow_br = QPushButton(self)
+        self.btn_elbow_br = QPushButton(tab_format)
         self.btn_elbow_br.setObjectName("BtnElbowBR")
         self.btn_elbow_br.setIcon(RibbonIconProvider.get_toggle_icon("elbow_br", 16))
         self.btn_elbow_br.setIconSize(QSize(16, 16))
@@ -12343,7 +12544,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_elbow_br.setToolTip(tr("tooltip_elbow_br", "우상향 (가로 우선 ┘자) [Tab/Space]"))
         self.btn_elbow_br.clicked.connect(lambda: self.on_elbow_preset_clicked("br"))
 
-        self.btn_elbow_bl = QPushButton(self)
+        self.btn_elbow_bl = QPushButton(tab_format)
         self.btn_elbow_bl.setObjectName("BtnElbowBL")
         self.btn_elbow_bl.setIcon(RibbonIconProvider.get_toggle_icon("elbow_bl", 16))
         self.btn_elbow_bl.setIconSize(QSize(16, 16))
@@ -12352,7 +12553,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_elbow_bl.setToolTip(tr("tooltip_elbow_bl", "하우향 (세로 우선 ㄴ자) [Tab/Space]"))
         self.btn_elbow_bl.clicked.connect(lambda: self.on_elbow_preset_clicked("bl"))
 
-        self.btn_elbow_tl = QPushButton(self)
+        self.btn_elbow_tl = QPushButton(tab_format)
         self.btn_elbow_tl.setObjectName("BtnElbowTL")
         self.btn_elbow_tl.setIcon(RibbonIconProvider.get_toggle_icon("elbow_tl", 16))
         self.btn_elbow_tl.setIconSize(QSize(16, 16))
@@ -12361,7 +12562,7 @@ class ManualStudioWindow(QMainWindow):
         self.btn_elbow_tl.setToolTip(tr("tooltip_elbow_tl", "상우향 (세로 우선 ┌자) [Tab/Space]"))
         self.btn_elbow_tl.clicked.connect(lambda: self.on_elbow_preset_clicked("tl"))
 
-        self.elbow_btn_group = QButtonGroup(self)
+        self.elbow_btn_group = QButtonGroup(tab_format)
         self.elbow_btn_group.setExclusive(True)
         self.elbow_btn_group.addButton(self.btn_elbow_tr)
         self.elbow_btn_group.addButton(self.btn_elbow_br)
@@ -12376,10 +12577,10 @@ class ManualStudioWindow(QMainWindow):
         elbow_box.addWidget(self.btn_elbow_br)
         elbow_box.addWidget(self.btn_elbow_bl)
         elbow_box.addWidget(self.btn_elbow_tl)
-        elbow_widget = QWidget(self)
+        elbow_widget = QWidget(tab_format)
         elbow_widget.setLayout(elbow_box)
 
-        self.chk_box_fill_tab = QCheckBox(tr("chk_qs_fill", "음영"), self)
+        self.chk_box_fill_tab = QCheckBox(tr("chk_qs_fill", "음영"), tab_format)
         self.chk_box_fill_tab.setChecked(self.config.get("highlight_box_style", {}).get("fill", False))
 
         ln_grid = QGridLayout()
@@ -12389,17 +12590,16 @@ class ManualStudioWindow(QMainWindow):
         ln_grid.addWidget(self.create_stack_field(tr("lbl_head_size", "촉 크기"), self.spin_arrow_head, "lbl_head_size"), 0, 1)
         ln_grid.addWidget(self.create_stack_field(tr("lbl_elbow_route", "꺾은선 형태"), elbow_widget, "lbl_elbow_route"), 1, 0)
         ln_grid.addWidget(self.create_stack_field(tr("chk_qs_fill", "채우기"), self.chk_box_fill_tab, "lbl_chk_fill_tab"), 1, 1)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_arrow_fmt", "선·화살표"), ln_grid, "grp_arrow_fmt"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 3) [텍스트·글꼴] 서식 그룹 (2단 그리드)
-        self.combo_text_font = QFontComboBox(self)
+        self.combo_text_font = QFontComboBox(tab_format)
         self.combo_text_font.setFixedWidth(155)
         cur_f = self.config.get("text_style", {}).get("font_family", "Malgun Gothic")
         self.combo_text_font.setCurrentFont(QFont(cur_f))
         self.combo_text_font.currentFontChanged.connect(self.on_text_font_family_changed)
 
-        self.btn_add_custom_font = QPushButton("+", self)
+        self.btn_add_custom_font = QPushButton("+", tab_format)
         self.btn_add_custom_font.setToolTip("외부/유료/토너절약 폰트 파일(.ttf, .otf, .ttc) 등록")
         self.btn_add_custom_font.setFixedSize(22, 22)
         self.btn_add_custom_font.setStyleSheet("font-weight: bold; font-size: 13px;")
@@ -12410,27 +12610,27 @@ class ManualStudioWindow(QMainWindow):
         font_box.setSpacing(2)
         font_box.addWidget(self.combo_text_font)
         font_box.addWidget(self.btn_add_custom_font)
-        font_box_widget = QWidget(self)
+        font_box_widget = QWidget(tab_format)
         font_box_widget.setLayout(font_box)
 
-        self.spin_text_font_size = QSpinBox(self)
+        self.spin_text_font_size = QSpinBox(tab_format)
         self.spin_text_font_size.setRange(8, 72)
         self.spin_text_font_size.setValue(self.config.get("text_style", {}).get("font_size", 14))
         self.spin_text_font_size.setSuffix(" pt")
         self.spin_text_font_size.setFixedWidth(80)
         self.spin_text_font_size.valueChanged.connect(self.on_text_font_size_changed)
 
-        self.btn_text_color = QPushButton(tr("font_sample_glyph", "A"), self)
+        self.btn_text_color = QPushButton(tr("font_sample_glyph", "A"), tab_format)
         self.btn_text_color.setFixedSize(26, 22)
         self.update_text_color_button()
         self.btn_text_color.clicked.connect(self.choose_text_color)
 
-        self.btn_text_bg_color = QPushButton(self)
+        self.btn_text_bg_color = QPushButton(tab_format)
         self.btn_text_bg_color.setFixedSize(26, 22)
         self.update_text_bg_color_button()
         self.btn_text_bg_color.clicked.connect(self.choose_text_bg_color)
 
-        self.spin_callout_tail_size = QSpinBox(self)
+        self.spin_callout_tail_size = QSpinBox(tab_format)
         self.spin_callout_tail_size.setRange(8, 40)
         self.spin_callout_tail_size.setValue(self.config.get("callout_style", {}).get("tail_base_width", 16))
         self.spin_callout_tail_size.setSuffix(" px")
@@ -12445,12 +12645,11 @@ class ManualStudioWindow(QMainWindow):
         tx_grid.addWidget(self.create_stack_field(tr("lbl_head_size", "꼬리"), self.spin_callout_tail_size, "lbl_callout_tail"), 1, 0)
         tx_grid.addWidget(self.create_stack_field(tr("lbl_line_color", "글자색"), self.btn_text_color, "lbl_color_text"), 1, 1)
         tx_grid.addWidget(self.create_stack_field(tr("lbl_bg_color", "배경색"), self.btn_text_bg_color, "lbl_bg_color_text"), 1, 2)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_text_wordart", "텍스트·글꼴"), tx_grid, "grp_text_fmt"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 4) [워드아트] 서식 그룹 (2단 그리드)
         wa_cfg = self.config.get("wordart_style", {})
-        self.combo_wordart_preset = QComboBox(self)
+        self.combo_wordart_preset = QComboBox(tab_format)
         for p_key, p_val in WordArtItem.PRESETS.items():
             wa_label = tr(f"wordart_preset_{p_key}", p_val.get("name", p_key))
             self.combo_wordart_preset.addItem(wa_label, p_key)
@@ -12461,21 +12660,21 @@ class ManualStudioWindow(QMainWindow):
         self.combo_wordart_preset.setFixedWidth(150)
         self.combo_wordart_preset.currentIndexChanged.connect(self.on_wordart_preset_changed)
 
-        self.spin_wordart_size = QSpinBox(self)
+        self.spin_wordart_size = QSpinBox(tab_format)
         self.spin_wordart_size.setRange(12, 120)
         self.spin_wordart_size.setValue(int(wa_cfg.get("font_size", 24)))
         self.spin_wordart_size.setSuffix(" pt")
         self.spin_wordart_size.setFixedWidth(80)
         self.spin_wordart_size.valueChanged.connect(self.on_wordart_size_changed)
 
-        self.spin_wordart_stroke = QSpinBox(self)
+        self.spin_wordart_stroke = QSpinBox(tab_format)
         self.spin_wordart_stroke.setRange(0, 20)
         self.spin_wordart_stroke.setValue(int(wa_cfg.get("stroke_width", 3)))
         self.spin_wordart_stroke.setSuffix(" px")
         self.spin_wordart_stroke.setFixedWidth(80)
         self.spin_wordart_stroke.valueChanged.connect(self.on_wordart_stroke_changed)
 
-        self.chk_wordart_shadow = QCheckBox(tr("chk_shadow", "그림자"), self)
+        self.chk_wordart_shadow = QCheckBox(tr("chk_shadow", "그림자"), tab_format)
         self.chk_wordart_shadow.setChecked(bool(wa_cfg.get("shadow_enabled", True)))
         self.chk_wordart_shadow.toggled.connect(self.on_wordart_shadow_toggled)
 
@@ -12486,18 +12685,17 @@ class ManualStudioWindow(QMainWindow):
         wa_grid.addWidget(self.create_stack_field(tr("lbl_size", "크기"), self.spin_wordart_size, "lbl_size_wordart"), 0, 1)
         wa_grid.addWidget(self.create_stack_field(tr("lbl_stroke", "외곽선"), self.spin_wordart_stroke, "lbl_stroke_wordart"), 1, 0)
         wa_grid.addWidget(self.create_stack_field(tr("lbl_effect", "효과"), self.chk_wordart_shadow, "lbl_effect_wordart"), 1, 1)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_wordart_fmt", "워드아트"), wa_grid, "grp_wordart_fmt"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 5) [보안·단축키] 서식 그룹 (2단 그리드)
-        self.spin_blur_block = QSpinBox(self)
+        self.spin_blur_block = QSpinBox(tab_format)
         self.spin_blur_block.setRange(4, 40)
         self.spin_blur_block.setValue(self.config.get("blur_style", {}).get("block_size", 10))
         self.spin_blur_block.setSuffix(" px")
         self.spin_blur_block.setFixedWidth(80)
         self.spin_blur_block.valueChanged.connect(self.on_blur_block_changed)
 
-        self.spin_hotkey_font_size = QSpinBox(self)
+        self.spin_hotkey_font_size = QSpinBox(tab_format)
         self.spin_hotkey_font_size.setRange(8, 36)
         self.spin_hotkey_font_size.setValue(self.config.get("hotkey_style", {}).get("font_size", 12))
         self.spin_hotkey_font_size.setSuffix(" pt")
@@ -12509,11 +12707,10 @@ class ManualStudioWindow(QMainWindow):
         sec_grid.setSpacing(2)
         sec_grid.addWidget(self.create_stack_field(tr("lbl_mosaic", "모자이크"), self.spin_blur_block, "lbl_mosaic_blur"), 0, 0)
         sec_grid.addWidget(self.create_stack_field(tr("lbl_key_font", "키캡 글꼴"), self.spin_hotkey_font_size, "lbl_key_font_size"), 1, 0)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_security_fmt", "보안·단축키"), sec_grid, "grp_security_fmt"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 6) [PPT 규격·배치] 서식 그룹 (2단 그리드)
-        self.spin_target_width = QSpinBox(self)
+        self.spin_target_width = QSpinBox(tab_format)
         self.spin_target_width.setRange(400, 3840)
         self.spin_target_width.setSingleStep(10)
         self.spin_target_width.setValue(self.config.get("target_width", 960))
@@ -12522,7 +12719,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_target_width.valueChanged.connect(self.on_target_width_changed)
 
         ppt_l = self.config.get("ppt_layout", {})
-        self.spin_ppt_left = QSpinBox(self)
+        self.spin_ppt_left = QSpinBox(tab_format)
         self.spin_ppt_left.setRange(0, 1920)
         self.spin_ppt_left.setSingleStep(5)
         self.spin_ppt_left.setValue(ppt_l.get("left", 50))
@@ -12530,7 +12727,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_ppt_left.setFixedWidth(80)
         self.spin_ppt_left.valueChanged.connect(self.on_ppt_layout_changed)
 
-        self.spin_ppt_top = QSpinBox(self)
+        self.spin_ppt_top = QSpinBox(tab_format)
         self.spin_ppt_top.setRange(0, 1080)
         self.spin_ppt_top.setSingleStep(5)
         self.spin_ppt_top.setValue(ppt_l.get("top", 80))
@@ -12538,7 +12735,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_ppt_top.setFixedWidth(80)
         self.spin_ppt_top.valueChanged.connect(self.on_ppt_layout_changed)
 
-        self.spin_ppt_scale = QSpinBox(self)
+        self.spin_ppt_scale = QSpinBox(tab_format)
         self.spin_ppt_scale.setRange(10, 300)
         self.spin_ppt_scale.setSingleStep(5)
         self.spin_ppt_scale.setValue(ppt_l.get("scale", 90))
@@ -12553,11 +12750,10 @@ class ManualStudioWindow(QMainWindow):
         ppt_cfg_grid.addWidget(self.create_stack_field(tr("lbl_ppt_scale", "배율"), self.spin_ppt_scale, "lbl_ppt_scale"), 0, 1)
         ppt_cfg_grid.addWidget(self.create_stack_field(tr("lbl_ppt_left", "Left"), self.spin_ppt_left, "lbl_ppt_left"), 1, 0)
         ppt_cfg_grid.addWidget(self.create_stack_field(tr("lbl_ppt_top", "Top"), self.spin_ppt_top, "lbl_ppt_top"), 1, 1)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_ppt_cfg", "PPT 규격·배치"), ppt_cfg_grid, "grp_ppt_cfg"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 7) [PPT 제목상자] 서식 그룹 (4x2 그리드)
-        self.spin_title_x = QSpinBox(self)
+        self.spin_title_x = QSpinBox(tab_format)
         self.spin_title_x.setRange(0, 1920)
         self.spin_title_x.setSingleStep(5)
         self.spin_title_x.setValue(int(ppt_l.get("title_left", ppt_l.get("left", 26))))
@@ -12565,7 +12761,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_title_x.setFixedWidth(80)
         self.spin_title_x.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.spin_title_y = QSpinBox(self)
+        self.spin_title_y = QSpinBox(tab_format)
         self.spin_title_y.setRange(0, 1080)
         self.spin_title_y.setSingleStep(5)
         self.spin_title_y.setValue(int(ppt_l.get("title_top", 15)))
@@ -12573,7 +12769,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_title_y.setFixedWidth(80)
         self.spin_title_y.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.spin_title_w = QSpinBox(self)
+        self.spin_title_w = QSpinBox(tab_format)
         self.spin_title_w.setRange(50, 1920)
         self.spin_title_w.setSingleStep(20)
         self.spin_title_w.setValue(int(ppt_l.get("title_width", 500)))
@@ -12581,7 +12777,7 @@ class ManualStudioWindow(QMainWindow):
         self.spin_title_w.setFixedWidth(88)
         self.spin_title_w.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.spin_title_h = QSpinBox(self)
+        self.spin_title_h = QSpinBox(tab_format)
         self.spin_title_h.setRange(15, 500)
         self.spin_title_h.setSingleStep(5)
         self.spin_title_h.setValue(int(ppt_l.get("title_height", 35)))
@@ -12589,23 +12785,23 @@ class ManualStudioWindow(QMainWindow):
         self.spin_title_h.setFixedWidth(80)
         self.spin_title_h.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.spin_title_font_size = QSpinBox(self)
+        self.spin_title_font_size = QSpinBox(tab_format)
         self.spin_title_font_size.setRange(8, 72)
         self.spin_title_font_size.setValue(int(ppt_l.get("title_font_size", 18)))
         self.spin_title_font_size.setSuffix(" pt")
         self.spin_title_font_size.setFixedWidth(80)
         self.spin_title_font_size.valueChanged.connect(self.on_ppt_title_layout_changed)
 
-        self.btn_title_color = QPushButton(tr("font_sample_glyph", "A"), self)
+        self.btn_title_color = QPushButton(tr("font_sample_glyph", "A"), tab_format)
         self.btn_title_color.setFixedSize(26, 22)
         self.update_title_color_button()
         self.btn_title_color.clicked.connect(self.choose_title_font_color)
 
-        self.chk_title_bold = QCheckBox(tr("lbl_bold", "굵게"), self)
+        self.chk_title_bold = QCheckBox(tr("lbl_bold", "굵게"), tab_format)
         self.chk_title_bold.setChecked(bool(ppt_l.get("title_font_bold", True)))
         self.chk_title_bold.toggled.connect(self.on_ppt_title_layout_changed)
 
-        self.btn_title_align = QPushButton(tr("lbl_align", "정렬"), self)
+        self.btn_title_align = QPushButton(tr("lbl_align", "정렬"), tab_format)
         self.btn_title_align.setToolTip("제목 X 좌표를 이미지 Left 위치와 동일하게 정렬합니다.")
         self.btn_title_align.setFixedSize(56, 22)
         self.btn_title_align.clicked.connect(self.align_title_x_to_image)
@@ -12622,20 +12818,26 @@ class ManualStudioWindow(QMainWindow):
         title_cfg_grid.addWidget(self.create_stack_field(tr("lbl_title_h", "높이"), self.spin_title_h, "lbl_title_h"), 1, 1)
         title_cfg_grid.addWidget(self.create_stack_field(tr("lbl_bold", "강조"), self.chk_title_bold, "lbl_title_bold_field"), 1, 2)
         title_cfg_grid.addWidget(self.create_stack_field(tr("lbl_align", "정렬"), self.btn_title_align, "lbl_title_align_field"), 1, 3)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_title_cfg", "PPT 제목상자"), title_cfg_grid, "grp_title_cfg"))
-        format_layout.addWidget(self.create_separator())
+        
 
         # 8) [환경] 서식 그룹
-        self.btn_settings = QPushButton(tr("btn_detail_settings", "상세 설정"), self)
+        self.btn_settings = QPushButton(tr("btn_detail_settings", "상세 설정"), tab_format)
         self.btn_settings.clicked.connect(self.open_settings_dialog)
-        self.btn_watermark_settings = QPushButton(tr("btn_watermark_settings", "워터마크 설정"), self)
+        self.btn_watermark_settings = QPushButton(tr("btn_watermark_settings", "워터마크 설정"), tab_format)
         self.btn_watermark_settings.clicked.connect(self.show_watermark_dialog)
         env_lay = QHBoxLayout()
         env_lay.setContentsMargins(0, 0, 0, 0)
         env_lay.setSpacing(4)
         env_lay.addWidget(self.btn_settings)
         env_lay.addWidget(self.btn_watermark_settings)
-        format_layout.addWidget(self.create_ribbon_group(tr("grp_settings", "환경설정"), env_lay, "grp_settings"))
+
+        self._format_grids = [st_grid, ln_grid, tx_grid, wa_grid, sec_grid, ppt_cfg_grid, title_cfg_grid, env_lay]
+        self._format_containers = []
+        for g in self._format_grids:
+            cw = QWidget(self.tab_format)
+            cw.setLayout(g)
+            self._format_containers.append(cw)
+
 
         # Hidden compatibility controls for removed duplicate/floating ribbon buttons
         self.btn_renumber_steps = QPushButton(tr("btn_renumber_steps", "순번 재정렬"))
@@ -12659,23 +12861,16 @@ class ManualStudioWindow(QMainWindow):
         self.btn_export_hwp.hide()
         self.btn_export_hwp.clicked.connect(self.action_export_all_hwp)
 
-        format_layout.addStretch(1)
+        
 
-        scroll_format = QScrollArea(self)
-        scroll_format.setWidgetResizable(True)
-        scroll_format.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_format.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_format.setFrameShape(QFrame.NoFrame)
-        scroll_format.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        scroll_format.setWidget(tab_format)
-        scroll_format.setFixedHeight(112)
-        self.ribbon_tabs.addTab(scroll_format, tr("tab_format", "서식·설정"))
+        # scroll_format removed (no orphaned widget)
+        
         self.ribbon_tabs.setFixedHeight(144)
 
         # 리본 표시 방식 (텍스트 ⇄ 아이콘) 토글 버튼
         cur_mode = self.config.get("ribbon_display_mode", "text")
         init_toggle_txt = tr("btn_ribbon_mode_icon", "아이콘") if cur_mode == "text" else tr("btn_ribbon_mode_text", "텍스트")
-        self.btn_ribbon_mode_toggle = QPushButton(init_toggle_txt, self)
+        self.btn_ribbon_mode_toggle = QPushButton(init_toggle_txt, tab_format)
         self.btn_ribbon_mode_toggle.setFixedHeight(22)
         self.btn_ribbon_mode_toggle.setStyleSheet("""
             QPushButton {
@@ -12910,6 +13105,8 @@ class ManualStudioWindow(QMainWindow):
         # 2. 캔버스 영역 (스크롤 지원)
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("background-color: #555555; border: 1px solid #CCCCCC;")
 
         self.canvas = StudioCanvasWidget(self)
@@ -12918,15 +13115,37 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.sig_item_selected.connect(self.on_canvas_item_selected)
         self.canvas.sig_request_mode_change.connect(self.switch_mode)
         self.scroll_area.setWidget(self.canvas)
-        main_layout.addWidget(self.scroll_area, 1)
+        
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(self.main_splitter, 1)
+        
+        self.left_panel = QWidget()
+        self.left_layout = QVBoxLayout(self.left_panel)
+        self.left_layout.setContentsMargins(0,0,0,0)
+        
+        self.vertical_toolbar = VerticalToolBarWidget(self)
+        self.vertical_toolbar.setVisible(False)
+        
+        self.right_panel = QWidget()
+        self.right_layout = QHBoxLayout(self.right_panel)
+        self.right_layout.setContentsMargins(0,0,0,0)
+        self.right_layout.addWidget(self.vertical_toolbar)
+        self.right_layout.addWidget(self.scroll_area, 1)
+        
+        self.main_splitter.addWidget(self.left_panel)
+        self.main_splitter.addWidget(self.right_panel)
+        self.main_splitter.setSizes([135, 1200])
+
 
         # 2-2. 하단 타임라인 스토리보드 토글 바 및 독
         film_vis = bool(self.config.get("filmstrip_visible", True))
         self.storyboard_toggle_bar = StoryboardToggleBar(film_vis, self)
         self.storyboard_toggle_bar.sig_toggled.connect(self.on_storyboard_toggle_bar_toggled)
-        main_layout.addWidget(self.storyboard_toggle_bar)
+        self.left_layout.addWidget(self.storyboard_toggle_bar)
 
         self.filmstrip = FilmstripDockWidget(self)
+        if hasattr(self.filmstrip, "btn_close"):
+            self.filmstrip.btn_close.clicked.connect(lambda: self.on_storyboard_toggle_bar_toggled(False))
 
         # 2-3. 문서 참조 보조 독 패널 초기화 및 등록
         self.doc_dock = DocumentReferenceDockWidget(self)
@@ -12936,6 +13155,7 @@ class ManualStudioWindow(QMainWindow):
         self.doc_dock.setVisible(bool(self.config.get("doc_dock_visible", False)))
 
         self.filmstrip.setVisible(film_vis)
+        self.left_panel.setVisible(film_vis)
         self.filmstrip.hover_preview_enabled = bool(self.config.get("enable_hover_preview", True))
         self.filmstrip.chk_hover_preview.setChecked(self.filmstrip.hover_preview_enabled)
         self.filmstrip.sig_step_selected.connect(self.on_filmstrip_step_selected)
@@ -12956,7 +13176,7 @@ class ManualStudioWindow(QMainWindow):
         self.filmstrip.sig_export_word.connect(self.action_export_word_doc)
         self.filmstrip.sig_export_notion.connect(self.action_export_notion)
         self.filmstrip.sig_export_confluence.connect(self.action_export_confluence)
-        main_layout.addWidget(self.filmstrip)
+        self.left_layout.addWidget(self.filmstrip)
 
         # 3. 하단 상태바
         status_bar_widget = QWidget(self)
@@ -12982,6 +13202,44 @@ class ManualStudioWindow(QMainWindow):
         main_layout.addWidget(status_bar_widget)
 
         self.init_keytips()
+        # 초기 UI 스타일 모드 적용 (리본 vs 세로 툴바)
+        init_style = self.config.get("ui_style_mode", "ribbon")
+        self.set_ui_style_mode(init_style)
+
+        
+        if hasattr(self, 'vertical_toolbar'):
+            vt = self.vertical_toolbar
+            vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환", lambda: self.set_ui_style_mode("ribbon"))
+            vt.add_separator()
+            # 캡처 도구
+            vt.add_action_tool("capture_fixed", "고정 캡처 (F9)", self.handle_hotkey_capture)
+            vt.add_action_tool("capture_area", "영역 지정 캡처 (Shift+F9)", self.start_capture)
+            vt.add_action_tool("capture_sub", "부분 캡처 (F8)", self.start_sub_capture)
+            vt.add_separator()
+            # 주석 및 도형 도구 (Checkable 모드 연동)
+            vt.add_action_tool("select", "선택 도구 (V)", lambda: self.switch_mode("SELECT"), is_check=True, mode_key="SELECT")
+            vt.add_action_tool("stamp", "번호 스탬프 (S)", lambda: self.switch_mode("STAMP"), is_check=True, mode_key="STAMP")
+            vt.add_action_tool("box", "사각 박스 (B)", lambda: self.switch_mode("BOX"), is_check=True, mode_key="BOX")
+            vt.add_action_tool("arrow", "화살표 (A)", lambda: self.switch_mode("ARROW"), is_check=True, mode_key="ARROW")
+            vt.add_action_tool("elbow", "꺾은 화살표 (E)", lambda: self.switch_mode("ELBOW"), is_check=True, mode_key="ELBOW")
+            vt.add_action_tool("step_arrow", "순번 화살표", lambda: self.switch_mode("STEP_ARROW"), is_check=True, mode_key="STEP_ARROW")
+            vt.add_action_tool("text", "텍스트 (T)", lambda: self.switch_mode("TEXT"), is_check=True, mode_key="TEXT")
+            vt.add_action_tool("callout", "말풍선 (C)", lambda: self.switch_mode("CALLOUT"), is_check=True, mode_key="CALLOUT")
+            vt.add_action_tool("blur", "모자이크/블러 (M)", lambda: self.switch_mode("BLUR"), is_check=True, mode_key="BLUR")
+            vt.add_action_tool("eraser", "스마트 지우개 (X)", lambda: self.switch_mode("ERASER"), is_check=True, mode_key="ERASER")
+            vt.add_action_tool("ocr", "OCR 텍스트 인식", lambda: self.switch_mode("OCR"), is_check=True, mode_key="OCR")
+            vt.add_separator()
+            # 플로우차트
+            vt.add_action_tool("flowchart", "플로우차트", self.open_flowchart_studio)
+            vt.add_separator()
+            # 실행 취소 / 삭제 / 내보내기
+            vt.add_action_tool("undo", "실행 취소 (Ctrl+Z)", self.action_undo)
+            vt.add_action_tool("clear", "전체 삭제", self.action_clear)
+            vt.add_action_tool("save_project", "PowerPoint 슬라이드 전송 (F10)", self.action_export_all_ppt)
+            vt.add_action_tool("open_project", "Google Slides 전송 (F11)", self.action_export_all_slides)
+            vt.add_action_tool("autosave", "한컴 한글 전송 (F12)", self.action_export_all_hwp)
+            vt.add_action_tool("save_rect", "환경 설정...", self.open_settings_dialog)
+            vt.btn_layout.addStretch(1)
         self.update_status_bar()
         self.sync_ui_from_config()
         self.init_monitor_combos()
@@ -13097,46 +13355,33 @@ class ManualStudioWindow(QMainWindow):
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
         self.act_exit.triggered.connect(self.close)
 
-        # 2. 편집(E) 메뉴
-        self.menu_edit = menubar.addMenu("편집(&E)")
-        self.act_undo = self.menu_edit.addAction("실행 취소 (Ctrl+Z)")
-        self.act_undo.triggered.connect(self.action_undo)
-        self.act_copy = self.menu_edit.addAction("클립보드 복사")
-        self.act_copy.triggered.connect(self.copy_current_composed_image)
-        self.act_clear = self.menu_edit.addAction("전체 삭제")
-        self.act_clear.triggered.connect(self.action_clear)
-        self.menu_edit.addSeparator()
-        self.act_renumber = self.menu_edit.addAction("PPT Step 번호 자동 재정렬")
-        self.act_renumber.triggered.connect(self.action_renumber_powerpoint_steps)
-
-        # 3. 도구(T) 메뉴
-        self.menu_tools = menubar.addMenu("도구(&T)")
-        self.act_sel = self.menu_tools.addAction("선택 도구")
-        self.act_sel.triggered.connect(lambda: self.switch_mode("SELECT"))
-        self.act_st = self.menu_tools.addAction("번호 스탬프")
-        self.act_st.triggered.connect(lambda: self.switch_mode("STAMP"))
-        self.act_sa = self.menu_tools.addAction("순번 화살표")
-        self.act_sa.triggered.connect(lambda: self.switch_mode("STEP_ARROW"))
-        self.act_ea = self.menu_tools.addAction("직각 화살표")
-        self.act_ea.triggered.connect(lambda: self.switch_mode("ELBOW"))
-        self.act_ar = self.menu_tools.addAction("직선 화살표")
-        self.act_ar.triggered.connect(lambda: self.switch_mode("ARROW"))
-        self.menu_tools.addSeparator()
-        self.act_bx = self.menu_tools.addAction("사각 강조")
-        self.act_bx.triggered.connect(lambda: self.switch_mode("BOX"))
-        self.act_bl = self.menu_tools.addAction("모자이크")
-        self.act_bl.triggered.connect(lambda: self.switch_mode("BLUR"))
-        self.act_dr = self.menu_tools.addAction("Draft 스탬프")
-        self.act_dr.triggered.connect(self.action_add_draft_stamp)
-        self.menu_tools.addSeparator()
-        self.act_co = self.menu_tools.addAction("설명 말풍선")
-        self.act_co.triggered.connect(lambda: self.switch_mode("CALLOUT"))
-        self.act_tx = self.menu_tools.addAction("텍스트 라벨")
-        self.act_tx.triggered.connect(lambda: self.switch_mode("TEXT"))
-        self.act_hk = self.menu_tools.addAction("단축키 배지")
-        self.act_hk.triggered.connect(lambda: self.switch_mode("HOTKEY"))
 
         # 4. 설정(S) 메뉴
+        
+        # 1.5 보기(V) 메뉴 (UI 스타일 및 패널 제어)
+        self.menu_view = menubar.addMenu("보기(&V)")
+        self.act_style_ribbon = self.menu_view.addAction("리본 메뉴 스타일")
+        self.act_style_ribbon.setCheckable(True)
+        self.act_style_ribbon.triggered.connect(lambda: self.set_ui_style_mode("ribbon"))
+
+        self.act_style_vertical = self.menu_view.addAction("세로 툴바 스타일 (캔버스 최대화)")
+        self.act_style_vertical.setCheckable(True)
+        self.act_style_vertical.setShortcut(QKeySequence("Ctrl+M"))
+        self.act_style_vertical.triggered.connect(lambda: self.set_ui_style_mode("vertical"))
+
+        self.menu_view.addSeparator()
+        self.act_toggle_filmstrip = self.menu_view.addAction("스토리보드 패널 표시")
+        self.act_toggle_filmstrip.setCheckable(True)
+        film_vis_cfg = bool(self.config.get("filmstrip_visible", True))
+        self.act_toggle_filmstrip.setChecked(film_vis_cfg)
+        self.act_toggle_filmstrip.setShortcut(QKeySequence("Ctrl+B"))
+        self.act_toggle_filmstrip.triggered.connect(lambda chk: self.on_storyboard_toggle_bar_toggled(chk))
+
+        self.act_toggle_doc = self.menu_view.addAction("문서 참조 패널 표시")
+        self.act_toggle_doc.setCheckable(True)
+        self.act_toggle_doc.setChecked(bool(self.config.get("doc_dock_visible", False)))
+        self.act_toggle_doc.triggered.connect(lambda chk: self.doc_dock.setVisible(chk))
+
         self.menu_settings = menubar.addMenu("설정(&S)")
         self.act_cfg = self.menu_settings.addAction("환경 설정...")
         self.act_cfg.triggered.connect(self.open_settings_dialog)
@@ -13407,7 +13652,7 @@ class ManualStudioWindow(QMainWindow):
         return group
 
     def create_stack_field(self, label_text, widget, field_id=None):
-        f_widget = QWidget(self)
+        f_widget = QWidget()
         vl = QVBoxLayout(f_widget)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(1)
@@ -13422,7 +13667,7 @@ class ManualStudioWindow(QMainWindow):
         return f_widget
 
     def create_separator(self):
-        line = QFrame(self)
+        line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setFrameShadow(QFrame.Plain)
         line.setStyleSheet("color: #CBD5E1; background-color: #CBD5E1; width: 1px; margin: 6px 2px;")
@@ -13537,7 +13782,7 @@ class ManualStudioWindow(QMainWindow):
         # 1. 탭 이름
         if hasattr(self, "ribbon_tabs"):
             self.ribbon_tabs.setTabText(0, tr("tab_tools", "도구"))
-            self.ribbon_tabs.setTabText(1, tr("tab_format", "서식·설정"))
+            
 
         # 2. 그룹 타이틀
         group_keys = {
@@ -13866,6 +14111,32 @@ class ManualStudioWindow(QMainWindow):
         mode_name_kr = "아이콘 모드" if new_mode == "icon" else "텍스트 모드"
         if mode is None:
             self.show_toast(f"리본 메뉴 표시 방식: {mode_name_kr}")
+
+    
+    def set_ui_style_mode(self, mode: str):
+        """mode: 'ribbon' | 'vertical'"""
+        self.ui_style_mode = mode
+        self.config["ui_style_mode"] = mode
+        save_config(self.config)
+
+        is_ribbon = (mode == "ribbon")
+        if hasattr(self, "ribbon_frame"):
+            self.ribbon_frame.setVisible(is_ribbon)
+        if hasattr(self, "vertical_toolbar"):
+            self.vertical_toolbar.setVisible(not is_ribbon)
+
+        if hasattr(self, "act_style_ribbon"):
+            self.act_style_ribbon.setChecked(is_ribbon)
+        if hasattr(self, "act_style_vertical"):
+            self.act_style_vertical.setChecked(not is_ribbon)
+
+        if hasattr(self, "btn_ribbon_toggle"):
+            self.btn_ribbon_toggle.setText("세로 툴바 스타일로 전환 ➔" if is_ribbon else "리본 메뉴 스타일로 전환 ➔")
+
+    def toggle_ui_style_mode(self):
+        cur = self.config.get("ui_style_mode", "ribbon")
+        new_mode = "vertical" if cur == "ribbon" else "ribbon"
+        self.set_ui_style_mode(new_mode)
 
     def init_keytips(self):
         self._keytip_labels = []
@@ -14261,6 +14532,8 @@ class ManualStudioWindow(QMainWindow):
     def switch_mode(self, mode):
         self.canvas.set_mode(mode)
         self.btn_mode_select.setChecked(mode == "SELECT")
+        if hasattr(self, "vertical_toolbar"):
+            self.vertical_toolbar.set_active_mode(mode)
         self.btn_mode_stamp.setChecked(mode == "STAMP")
         if hasattr(self, "btn_mode_step_arrow"):
             self.btn_mode_step_arrow.setChecked(mode == "STEP_ARROW")
@@ -14585,10 +14858,10 @@ class ManualStudioWindow(QMainWindow):
         self._apply_ribbon_collapsed(collapsed)
 
     def _apply_ribbon_collapsed(self, collapsed: bool):
-        """리본 접힘 상태를 UI에 반영"""
-        if not hasattr(self, "ribbon_tabs"):
-            return
-        self.ribbon_tabs.setVisible(not collapsed)
+        if hasattr(self, "ribbon_frame"):
+            self.ribbon_frame.setVisible(not collapsed)
+        if hasattr(self, "vertical_toolbar"):
+            self.vertical_toolbar.setVisible(collapsed)
         if hasattr(self, "btn_ribbon_toggle"):
             self.btn_ribbon_toggle.setText(
                 "▶ 도구 리본" if collapsed else "▼ 도구 리본"
@@ -15193,6 +15466,7 @@ class ManualStudioWindow(QMainWindow):
     def on_capture_cancelled(self):
         self._restore_window_after_capture(True)
 
+
     def start_sub_capture(self):
         """F8 단축키 또는 리본 버튼: 모달/팝업 영역 부분 캡처 후 캔버스에 독립 이미지 객체로 추가 (F9 없이도 투명 캔버스에 즉시 배치)"""
         was_visible = self._prepare_window_for_capture()
@@ -15214,12 +15488,27 @@ class ManualStudioWindow(QMainWindow):
 
     def on_sub_capture_completed(self, pixmap, global_rect=None):
         self._restore_window_after_capture(True)
+        
+        # --- UIA Collection Trigger ---
+        try:
+            if global_rect and hasattr(global_rect, "isEmpty") and not global_rect.isEmpty():
+                self.uia_thread = UIACollectorThread(global_rect, self)
+                self.uia_thread.sig_uia_collected.connect(self.on_uia_collected)
+                self.uia_thread.start()
+        except Exception:
+            pass
 
         if pixmap and not pixmap.isNull():
             self.canvas.add_image_overlay(pixmap)
             w = pixmap.width()
             h = pixmap.height()
             self.show_toast(f"부분 이미지({w}×{h}px) 추가 완료. 마우스로 이동 및 크기를 조절하세요.")
+
+    def on_uia_collected(self, elements):
+        if hasattr(self, "canvas"):
+            self.canvas.uia_elements = elements
+            if elements:
+                self.show_toast(f"UIA 객체 {len(elements)}개 스캔 완료. 스탬프 스냅이 활성화되었습니다.")
 
     # -------------------------------------------------------------
     # 다중 모니터 & 폰트 & 꺾임선 & 워드아트 이벤트 핸들러
@@ -15544,6 +15833,15 @@ class ManualStudioWindow(QMainWindow):
 
         # 창 전면 활성화
         self._restore_window_after_capture(True)
+        
+        # --- UIA Collection Trigger ---
+        try:
+            if global_rect and hasattr(global_rect, "isEmpty") and not global_rect.isEmpty():
+                self.uia_thread = UIACollectorThread(global_rect, self)
+                self.uia_thread.sig_uia_collected.connect(self.on_uia_collected)
+                self.uia_thread.start()
+        except Exception:
+            pass
 
         w = pixmap.width()
         h = pixmap.height()
@@ -16888,6 +17186,136 @@ class ManualStudioWindow(QMainWindow):
             self.status_label.setText(success_msg)
             self.show_toast(success_msg)
 
+    def action_export_rich_clipboard(self):
+        """(전략 D) 전체 스텝을 인라인 이미지가 포함된 Rich HTML로 클립보드에 복사"""
+        from PySide6.QtCore import QMimeData, QByteArray, QBuffer, QIODevice
+        from PySide6.QtGui import QApplication
+        
+        if not self.project_manager.slides:
+            self.show_toast("복사할 스텝이 없습니다.")
+            return
+            
+        html_parts = []
+        html_parts.append("<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\">")
+        
+        for i, slide in enumerate(self.project_manager.slides):
+            pix = self.export_engine.render_slide_to_pixmap(slide)
+            
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.WriteOnly)
+            pix.save(buf, "PNG")
+            b64_data = ba.toBase64().data().decode()
+            
+            title = slide.get('title', '')
+            desc = slide.get('description', '')
+            
+            html_parts.append(f"<h3 style='color: #1a202c; font-size: 16px; margin-top: 24px; margin-bottom: 8px;'>Step {i+1}. {title}</h3>")
+            if desc:
+                html_parts.append(f"<p style='color: #4a5568; font-size: 14px; margin-bottom: 12px;'>{desc}</p>")
+                
+            html_parts.append(f"<img src='data:image/png;base64,{b64_data}' style='max-width: 100%; border: 1px solid #e2e8f0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 32px;' />")
+            
+        html_parts.append("</div>")
+        html_content = "\n".join(html_parts)
+        
+        mime = QMimeData()
+        mime.setHtml(html_content)
+        QApplication.clipboard().setMimeData(mime)
+        
+        self.show_toast("✅ HTML 클립보드 복사 완료! (슬랙/위키에 Ctrl+V 해보세요)")
+
+    def action_auto_number_flowchart(self):
+        """플로우차트 다이어그램 흐름에 따라 스탬프를 자동 부착 (Yes 우선)"""
+        # 1. Gather flowchart nodes and edges
+        nodes = []
+        edges = []
+        for slide in self.project_manager.slides:
+            for item in slide.get("items", []):
+                if item.get("type") == "FlowchartNodeItem":
+                    nodes.append(item)
+                elif item.get("type") == "FlowchartLineItem":
+                    edges.append(item)
+        
+        if not nodes:
+            self.show_toast("플로우차트 노드가 없습니다.")
+            return
+
+        # 2. Build adjacency list: node_id -> list of (dst_node_id, text)
+        adj = {n.get("id"): [] for n in nodes}
+        in_degree = {n.get("id"): 0 for n in nodes}
+        
+        for e in edges:
+            src = e.get("src_node")
+            dst = e.get("dst_node")
+            text = e.get("text", "").lower()
+            if src in adj and dst in adj:
+                adj[src].append((dst, text))
+                in_degree[dst] += 1
+                
+        # Sort edges: prioritize "yes", "y", "예"
+        for src in adj:
+            adj[src].sort(key=lambda x: 0 if any(word in x[1] for word in ["yes", "y", "예"]) else 1)
+            
+        # 3. Find start nodes (in_degree == 0, or shape == "terminal")
+        start_nodes = [n.get("id") for n in nodes if in_degree[n.get("id")] == 0]
+        if not start_nodes:
+            # Graph has cycles with no entry, pick any terminal or first node
+            terminals = [n.get("id") for n in nodes if n.get("shape") == "terminal"]
+            start_nodes = terminals if terminals else [nodes[0].get("id")]
+            
+        # 4. DFS to assign numbers
+        visited = set()
+        order = []
+        
+        def dfs(node_id):
+            if node_id in visited:
+                return
+            visited.add(node_id)
+            order.append(node_id)
+            for dst, _ in adj[node_id]:
+                dfs(dst)
+                
+        for start in start_nodes:
+            dfs(start)
+            
+        # 5. Apply StampItems to the slides
+        # We need to find the node's position and add a StampItem
+        nodes_dict = {n.get("id"): n for n in nodes}
+        current_num = 1
+        
+        for slide in self.project_manager.slides:
+            new_items = list(slide.get("items", []))
+            # Remove old auto-generated stamps if needed? Or just append
+            
+            for node_id in order:
+                n = nodes_dict[node_id]
+                # Is this node on this slide? (Assuming all are on current slide or we match by slide, but items are flattened here)
+                if n in new_items:
+                    # Create Stamp
+                    x = n.get("pos", [0,0])[0]
+                    y = n.get("pos", [0,0])[1]
+                    stamp = {
+                        "type": "StampItem",
+                        "index": current_num,
+                        "x": x - 10,
+                        "y": y - 10,
+                        "style": {
+                            "size": 24,
+                            "bg_color": "#E53935",
+                            "text_color": "#FFFFFF",
+                            "opacity": 0.8
+                        }
+                    }
+                    new_items.append(stamp)
+                    current_num += 1
+            
+            slide["items"] = new_items
+            
+        self.project_manager._emit_data_changed()
+        self.canvas.update()
+        self.show_toast("플로우차트 자동 넘버링 완료!")
+
     def action_export_webbook(self):
         self._sync_canvas_to_current_step()
         target_steps = self.get_export_target_steps()
@@ -17251,42 +17679,21 @@ class ManualStudioWindow(QMainWindow):
         # 시나리오 B: 연결 노드 존재 -> 연결 노드 위상 정렬 + 미연결 노드 바둑판식 배치
         # ------------------------------------------------------------------
         # 2-1. 정렬 방향 결정 
+        current_fingerprint = tuple((round(n.rect.x(), 1), round(n.rect.y(), 1)) for n in sorted(nodes, key=lambda x: id(x)))
+        last_fingerprint = getattr(self, "_last_aligned_fingerprint", None)
+        last_dir = getattr(self, "_last_aligned_direction", None)
+
         if force_dir in ("TD", "LR"):
             direction = force_dir
+        elif last_fingerprint is not None and last_fingerprint == current_fingerprint and last_dir in ("TD", "LR"):
+            direction = "LR" if last_dir == "TD" else "TD"
         else:
-            direction = "TD"
+            span_x = max(n.rect.right() for n in nodes) - min(n.rect.left() for n in nodes)
+            span_y = max(n.rect.bottom() for n in nodes) - min(n.rect.top() for n in nodes)
+            direction = "LR" if span_x > span_y * 1.25 else "TD"
 
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QSpinBox, QCheckBox, QDialogButtonBox
-        dlg = QDialog(self)
-        dlg.setWindowTitle("플로우차트 자동정렬 설정")
-        layout = QVBoxLayout(dlg)
-        
-        lbl = QLabel(f"연결선(여백) 길이 설정 ({direction} 배열):")
-        layout.addWidget(lbl)
-        
-        spin = QSpinBox()
-        spin.setRange(10, 500)
-        spin.setValue(60 if direction == "LR" else 50)
-        layout.addWidget(spin)
-        
-        chk = QCheckBox("화면 크기에 맞춰 여백 팽창 (Fit to Page)")
-        layout.addWidget(chk)
-        
-        def on_chk(state):
-            spin.setEnabled(not state)
-            
-        chk.toggled.connect(on_chk)
-        
-        bbox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bbox.accepted.connect(dlg.accept)
-        bbox.rejected.connect(dlg.reject)
-        layout.addWidget(bbox)
-        
-        if dlg.exec() != QDialog.Accepted:
-            return
-            
-        fit_to_page = chk.isChecked()
-        user_margin = float(spin.value())
+        fit_to_page = False
+        user_margin = 60.0 if direction == "LR" else 50.0
 
         # 2-2. 위상 레벨링 (연결 노드 대상)
         in_degree = {n: 0 for n in connected_nodes}
@@ -17357,6 +17764,10 @@ class ManualStudioWindow(QMainWindow):
         layer_max_w = {l: max(n.rect.width() for n in by_layer.get(l, [connected_nodes[0]])) for l in range(num_layers)}
         layer_max_h = {l: max(n.rect.height() for n in by_layer.get(l, [connected_nodes[0]])) for l in range(num_layers)}
 
+        conn_min_x = min(n.rect.left() for n in connected_nodes)
+        conn_max_x = max(n.rect.right() for n in connected_nodes)
+        conn_min_y = min(n.rect.top() for n in connected_nodes)
+        conn_max_y = max(n.rect.bottom() for n in connected_nodes)
         conn_orig_cx = (conn_min_x + conn_max_x) / 2.0
         conn_orig_cy = (conn_min_y + conn_max_y) / 2.0
 
@@ -17573,6 +17984,10 @@ class ManualStudioWindow(QMainWindow):
                     pass
 
             if isinstance(it, ElbowArrowItem):
+                obs = [n for n in nodes if n != u and n != v]
+                opt_mode, opt_corners = FlowchartRoutingEngine.calculate_optimal_route(
+                    it.start_pos, it.end_pos, src_port=sp, dst_port=dp, obstacles=obs
+                )
                 it.route_mode = opt_mode
                 it.custom_corners = opt_corners
 
@@ -18330,7 +18745,7 @@ class WatermarkPreviewWidget(QWidget):
         qc = QColor(color_hex)
         qc.setAlpha(alpha)
 
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, max(1, int(font_size)))
         font.setBold(font_bold)
         painter.setFont(font)
         painter.setPen(QPen(qc))

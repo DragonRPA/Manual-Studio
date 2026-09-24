@@ -175,7 +175,7 @@ fun MainScreen(
         val (bestFromPort, bestToPort) = if (manualFromPort != null && manualToPort != null) {
             Pair(manualFromPort, manualToPort)
         } else {
-            calculateBestPorts(fromNode, toNode)
+            findOptimalPorts(fromNode, toNode, nodes, edges)
         }
 
         // 기존에 두 노드 사이에 연결된 선이 있다면 제거 (재차 연결 시 마지막 선만 단일 유지)
@@ -384,7 +384,7 @@ fun MainScreen(
                                 // 이전 노드가 있다면 자동으로 자연스럽게 연결
                                 val newEdges = if (nodes.isNotEmpty()) {
                                     val prev = nodes.last()
-                                    val (fPort, tPort) = calculateBestPorts(prev, newNode)
+                                    val (fPort, tPort) = findOptimalPorts(prev, newNode, nodes, edges)
                                     edges + FlowEdge(
                                         id = "e_${System.currentTimeMillis()}",
                                         fromNodeId = prev.id,
@@ -464,23 +464,9 @@ fun MainScreen(
                         val end = calculatePortOffset(toNode, edge.toPort)
 
                         val path = Path().apply {
-                            moveTo(start.x, start.y)
-                            if (edge.fromPort == PortPosition.BOTTOM && edge.toPort == PortPosition.TOP) {
-                                val midY = (start.y + end.y) / 2
-                                lineTo(start.x, midY)
-                                lineTo(end.x, midY)
-                                lineTo(end.x, end.y)
-                            } else if (edge.fromPort == PortPosition.RIGHT && edge.toPort == PortPosition.LEFT) {
-                                val midX = (start.x + end.x) / 2
-                                lineTo(midX, start.y)
-                                lineTo(midX, end.y)
-                                lineTo(end.x, end.y)
-                            } else {
-                                val midX = (start.x + end.x) / 2
-                                lineTo(midX, start.y)
-                                lineTo(midX, end.y)
-                                lineTo(end.x, end.y)
-                            }
+                            val pts = buildRoutePts(start, end, edge.fromPort, edge.toPort)
+                            moveTo(pts.first().x, pts.first().y)
+                            for (pt in pts.drop(1)) lineTo(pt.x, pt.y)
                         }
 
                         drawPath(path = path, color = edgeColor, style = Stroke(width = strokeW))
@@ -756,32 +742,145 @@ fun MainScreen(
 }
 
 /**
- * 두 노드의 기하학적 상대 위치에 따른 최적 마그넷 포트 자동 판정
+ * PC 버전과 동일한 비용 기반 16개 포트 조합 평가로 최적 마그넷 포트 자동 판정
+ * 4 src_ports × 4 dst_ports = 16 조합을 모두 평가하여 최소 비용 포트 쌍 반환
  */
-fun calculateBestPorts(from: FlowNode, to: FlowNode): Pair<PortPosition, PortPosition> {
-    val centerFromX = from.x + from.width / 2
-    val centerFromY = from.y + from.height / 2
-    val centerToX = to.x + to.width / 2
-    val centerToY = to.y + to.height / 2
+fun findOptimalPorts(
+    from: FlowNode,
+    to: FlowNode,
+    allNodes: List<FlowNode>,
+    existingEdges: List<FlowEdge>
+): Pair<PortPosition, PortPosition> {
+    val srcPorts = listOf(PortPosition.TOP, PortPosition.BOTTOM, PortPosition.LEFT, PortPosition.RIGHT)
+    val dstPorts = listOf(PortPosition.TOP, PortPosition.BOTTOM, PortPosition.LEFT, PortPosition.RIGHT)
 
-    val dx = centerToX - centerFromX
-    val dy = centerToY - centerFromY
+    // 현재 포트 사용 현황 집계
+    val srcUsedOut = mutableSetOf<PortPosition>()
+    val srcUsedIn = mutableSetOf<PortPosition>()
+    val dstUsedIn = mutableSetOf<PortPosition>()
+    val dstUsedOut = mutableSetOf<PortPosition>()
+    for (e in existingEdges) {
+        if (e.fromNodeId == from.id) srcUsedOut.add(e.fromPort)
+        if (e.toNodeId == from.id) srcUsedIn.add(e.toPort)
+        if (e.toNodeId == to.id) dstUsedIn.add(e.toPort)
+        if (e.fromNodeId == to.id) dstUsedOut.add(e.fromPort)
+    }
 
-    return if (abs(dy) >= abs(dx)) {
-        // 수직 배치 성향
-        if (dy >= 0) {
-            Pair(PortPosition.BOTTOM, PortPosition.TOP)
-        } else {
-            Pair(PortPosition.TOP, PortPosition.BOTTOM)
-        }
-    } else {
-        // 수평 배치 성향
-        if (dx >= 0) {
-            Pair(PortPosition.RIGHT, PortPosition.LEFT)
-        } else {
-            Pair(PortPosition.LEFT, PortPosition.RIGHT)
+    // 장애물 목록 (src, dst 제외)
+    val obstacles = allNodes.filter { it.id != from.id && it.id != to.id }
+
+    var bestSp = PortPosition.BOTTOM
+    var bestDp = PortPosition.TOP
+    var minCost = Float.MAX_VALUE
+
+    for (sp in srcPorts) {
+        for (dp in dstPorts) {
+            val start = calculatePortOffset(from, sp)
+            val end = calculatePortOffset(to, dp)
+
+            // 포트 점유 페널티
+            var occupancyPenalty = 0f
+            if (sp in srcUsedOut) occupancyPenalty += 2_000_000f
+            if (sp in srcUsedIn)  occupancyPenalty += 1_000_000f
+            if (dp in dstUsedIn)  occupancyPenalty += 2_000_000f
+            if (dp in dstUsedOut) occupancyPenalty += 1_000_000f
+
+            // 경로 포인트 계산
+            val pts = buildRoutePts(start, end, sp, dp)
+
+            // 충돌 페널티
+            val nodeHits = countNodeHits(pts, obstacles)
+
+            // 경로 길이
+            val pathLen = calcPathLen(pts)
+
+            // 꺾임 수 (중간 점 개수)
+            val bends = pts.size - 2
+
+            val cost = nodeHits * 1_000_000f + occupancyPenalty + bends * 400f + pathLen
+
+            if (cost < minCost) {
+                minCost = cost
+                bestSp = sp
+                bestDp = dp
+            }
         }
     }
+    return Pair(bestSp, bestDp)
+}
+
+/**
+ * 두 포트 간 경로 점들을 반환 (출발, 중간 꺾임들, 도착)
+ * 수직 포트(TOP/BOTTOM) → VH, 수평 포트(LEFT/RIGHT) → HV
+ */
+fun buildRoutePts(start: Offset, end: Offset, sp: PortPosition, dp: PortPosition): List<Offset> {
+    // 직선 가능 여부 확인
+    if (abs(start.x - end.x) < 4f && sp == PortPosition.TOP && dp == PortPosition.BOTTOM) {
+        return listOf(start, end)
+    }
+    if (abs(start.y - end.y) < 4f && sp == PortPosition.LEFT && dp == PortPosition.RIGHT) {
+        return listOf(start, end)
+    }
+    return if (sp == PortPosition.TOP || sp == PortPosition.BOTTOM) {
+        // VH: 수직 먼저 → 수평
+        val midY = (start.y + end.y) / 2f
+        listOf(start, Offset(start.x, midY), Offset(end.x, midY), end)
+    } else {
+        // HV: 수평 먼저 → 수직
+        val midX = (start.x + end.x) / 2f
+        listOf(start, Offset(midX, start.y), Offset(midX, end.y), end)
+    }
+}
+
+/**
+ * 경로 선분들이 장애물 노드 박스를 관통하는 횟수 계산
+ */
+fun countNodeHits(pts: List<Offset>, obstacles: List<FlowNode>): Int {
+    var hits = 0
+    for (i in 0 until pts.size - 1) {
+        val p1 = pts[i]; val p2 = pts[i + 1]
+        for (obs in obstacles) {
+            val left = obs.x - 4f; val right = obs.x + obs.width + 4f
+            val top = obs.y - 4f; val bot = obs.y + obs.height + 4f
+            if (segmentIntersectsRect(p1, p2, left, top, right, bot)) hits++
+        }
+    }
+    return hits
+}
+
+/**
+ * 축 정렬 선분(HV/VH 경로)과 AABB 박스의 교차 여부 판정
+ */
+fun segmentIntersectsRect(
+    p1: Offset, p2: Offset,
+    left: Float, top: Float, right: Float, bottom: Float
+): Boolean {
+    return if (abs(p1.x - p2.x) < 0.5f) {
+        // 수직 선분
+        val x = p1.x
+        if (x < left || x > right) return false
+        val y1 = minOf(p1.y, p2.y); val y2 = maxOf(p1.y, p2.y)
+        y2 > top && y1 < bottom
+    } else {
+        // 수평 선분
+        val y = p1.y
+        if (y < top || y > bottom) return false
+        val x1 = minOf(p1.x, p2.x); val x2 = maxOf(p1.x, p2.x)
+        x2 > left && x1 < right
+    }
+}
+
+/**
+ * 경로 포인트 목록의 총 길이 계산
+ */
+fun calcPathLen(pts: List<Offset>): Float {
+    var len = 0f
+    for (i in 0 until pts.size - 1) {
+        val dx = pts[i + 1].x - pts[i].x
+        val dy = pts[i + 1].y - pts[i].y
+        len += kotlin.math.sqrt(dx * dx + dy * dy)
+    }
+    return len
 }
 
 /**
