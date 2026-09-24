@@ -6215,6 +6215,7 @@ class ProjectManager:
                             "thumb_file": thumb_rel_path,
                             "next_stamp_index": int(next_stamp),
                             "items": items_serialized,
+                            "uia_elements": list(step.get("uia_elements", [])),
                         })
 
                     manifest = {
@@ -6272,6 +6273,7 @@ class ProjectManager:
                         "raw_image_b64": b64_str,
                         "next_stamp_index": int(next_stamp),
                         "items": items_serialized,
+                        "uia_elements": list(step.get("uia_elements", [])),
                     })
 
                 project_dict = {
@@ -6355,7 +6357,8 @@ class ProjectManager:
                             "raw_pixmap": raw_px,
                             "thumbnail": thumb_px,
                             "items": items,
-                            "next_stamp_index": next_stamp
+                            "next_stamp_index": next_stamp,
+                            "uia_elements": list(sdata.get("uia_elements", []))
                         })
                     return ProjectData(storyboard_steps, active_idx, metadata)
 
@@ -6400,7 +6403,8 @@ class ProjectManager:
                         "raw_pixmap": raw_px,
                         "thumbnail": thumb_px,
                         "items": items,
-                        "next_stamp_index": next_stamp
+                        "next_stamp_index": next_stamp,
+                        "uia_elements": list(sdata.get("uia_elements", []))
                     })
                 return ProjectData(storyboard_steps, active_idx, metadata)
 
@@ -6429,7 +6433,8 @@ class ProjectManager:
                 "raw_pixmap": raw_pixmap,
                 "thumbnail": raw_pixmap.copy() if raw_pixmap else None,
                 "items": items,
-                "next_stamp_index": next_stamp_index
+                "next_stamp_index": next_stamp_index,
+                "uia_elements": list(data.get("uia_elements", []))
             }
             return ProjectData([single_step], 0, metadata)
 
@@ -6455,6 +6460,7 @@ class ProjectManager:
             clean_title = orig_title.split(". ", 1)[-1] if ". " in orig_title else orig_title
             new_s["title"] = f"Step {new_s['step_num']}. {clean_title}"
             new_s["items"] = [it.clone() for it in s.get("items", [])]
+            new_s["uia_elements"] = [dict(el) for el in s.get("uia_elements", [])]
             if s.get("raw_pixmap"):
                 new_s["raw_pixmap"] = s["raw_pixmap"].copy()
             if s.get("thumbnail"):
@@ -15880,6 +15886,7 @@ class ManualStudioWindow(QMainWindow):
             active_step.get("items", []),
             active_step.get("next_stamp_index", 1)
         )
+        self.canvas.uia_elements = list(active_step.get("uia_elements", []))
         if hasattr(self, "filmstrip"):
             self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
 
@@ -18407,7 +18414,8 @@ class ManualStudioWindow(QMainWindow):
             "raw_pixmap": None,
             "items": [],
             "next_stamp_index": 1,
-            "thumbnail": None
+            "thumbnail": None,
+            "uia_elements": []
         }
         self.storyboard_steps.append(new_step)
         self.current_step_idx = new_idx
@@ -18416,6 +18424,7 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.items.clear()
         self.canvas.next_stamp_index = 1
         self.canvas.history.clear()
+        self.canvas.uia_elements = []
         self.canvas.update()
 
         if hasattr(self, "filmstrip"):
@@ -18474,14 +18483,17 @@ class ManualStudioWindow(QMainWindow):
             new_steps.append(self.storyboard_steps[idx])
             if idx in selected:
                 orig = self.storyboard_steps[idx]
+                raw_px = orig.get("raw_pixmap")
+                thumb_px = orig.get("thumbnail")
                 dup = {
                     "step_num": orig.get("step_num", idx + 1),
                     "title": (orig.get("title", "") + " (복사본)").strip(),
                     "desc": orig.get("desc", ""),
-                    "raw_pixmap": QPixmap(orig.get("raw_pixmap")) if orig.get("raw_pixmap") else None,
-                    "thumbnail": QPixmap(orig.get("thumbnail")) if orig.get("thumbnail") else None,
+                    "raw_pixmap": raw_px.copy() if raw_px and not raw_px.isNull() else None,
+                    "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                     "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
-                    "next_stamp_index": orig.get("next_stamp_index", 1)
+                    "next_stamp_index": orig.get("next_stamp_index", 1),
+                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])]
                 }
                 new_steps.append(dup)
                 new_selected.add(len(new_steps) - 1)
@@ -18507,13 +18519,16 @@ class ManualStudioWindow(QMainWindow):
         for idx in selected:
             if 0 <= idx < len(self.storyboard_steps):
                 orig = self.storyboard_steps[idx]
+                raw_px = orig.get("raw_pixmap")
+                thumb_px = orig.get("thumbnail")
                 copied = {
                     "title": orig.get("title", ""),
                     "desc": orig.get("desc", ""),
-                    "raw_pixmap": QPixmap(orig.get("raw_pixmap")) if orig.get("raw_pixmap") else None,
-                    "thumbnail": QPixmap(orig.get("thumbnail")) if orig.get("thumbnail") else None,
+                    "raw_pixmap": raw_px.copy() if raw_px and not raw_px.isNull() else None,
+                    "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                     "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
-                    "next_stamp_index": orig.get("next_stamp_index", 1)
+                    "next_stamp_index": orig.get("next_stamp_index", 1),
+                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])]
                 }
                 self._clipboard_slide_buffer.append(copied)
         self.show_toast(f"슬라이드 {len(self._clipboard_slide_buffer)}개 복사 완료")
@@ -18536,14 +18551,17 @@ class ManualStudioWindow(QMainWindow):
         new_steps = list(self.storyboard_steps[:insert_idx])
         pasted_indices = set()
         for idx, item in enumerate(buffer):
+            raw_px = item.get("raw_pixmap")
+            thumb_px = item.get("thumbnail")
             dup = {
                 "step_num": len(new_steps) + 1,
                 "title": item.get("title", ""),
                 "desc": item.get("desc", ""),
-                "raw_pixmap": QPixmap(item.get("raw_pixmap")) if item.get("raw_pixmap") else None,
-                "thumbnail": QPixmap(item.get("thumbnail")) if item.get("thumbnail") else None,
+                "raw_pixmap": raw_px.copy() if raw_px and not raw_px.isNull() else None,
+                "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                 "items": [it.clone() for it in item.get("items", []) if hasattr(it, "clone")],
-                "next_stamp_index": item.get("next_stamp_index", 1)
+                "next_stamp_index": item.get("next_stamp_index", 1),
+                "uia_elements": [dict(el) for el in item.get("uia_elements", [])]
             }
             new_steps.append(dup)
             pasted_indices.add(len(new_steps) - 1)
@@ -18631,12 +18649,7 @@ class ManualStudioWindow(QMainWindow):
         if self.current_step_idx >= len(self.storyboard_steps):
             self.current_step_idx = len(self.storyboard_steps) - 1
 
-        target_step = self.storyboard_steps[self.current_step_idx]
-        raw_px = target_step.get("raw_pixmap")
-        self.canvas.pixmap = raw_px.copy() if raw_px and not raw_px.isNull() else None
-        self.canvas.items = [it.clone() for it in target_step.get("items", [])]
-        self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
-        self.canvas.update()
+        self.load_step_to_canvas(self.current_step_idx)
 
         if hasattr(self, "filmstrip"):
             self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
@@ -18655,17 +18668,23 @@ class ManualStudioWindow(QMainWindow):
         if 0 <= dup_idx < len(self.storyboard_steps):
             self._sync_canvas_to_current_step()
             src_step = self.storyboard_steps[dup_idx]
+            raw_px = src_step.get("raw_pixmap")
+            thumb_px = src_step.get("thumbnail")
             new_step = {
                 "step_num": len(self.storyboard_steps) + 1,
-                "title": src_step.get("title", "") + " (복사본)",
-                "raw_pixmap": src_step["raw_pixmap"].copy() if src_step.get("raw_pixmap") else None,
-                "items": [it.clone() for it in src_step.get("items", [])],
+                "title": (src_step.get("title", "") + " (복사본)").strip(),
+                "desc": src_step.get("desc", ""),
+                "raw_pixmap": raw_px.copy() if raw_px and not raw_px.isNull() else None,
+                "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
+                "items": [it.clone() for it in src_step.get("items", []) if hasattr(it, "clone")],
                 "next_stamp_index": src_step.get("next_stamp_index", 1),
-                "thumbnail": src_step["thumbnail"].copy() if src_step.get("thumbnail") else None
+                "uia_elements": [dict(el) for el in src_step.get("uia_elements", [])]
             }
             self.storyboard_steps.insert(dup_idx + 1, new_step)
             for i, s in enumerate(self.storyboard_steps):
                 s["step_num"] = i + 1
+            if hasattr(self, "filmstrip"):
+                self.filmstrip.set_steps(self.storyboard_steps, dup_idx + 1)
             self.on_filmstrip_step_selected(dup_idx + 1)
 
     def on_filmstrip_move_step(self, from_idx: int, to_idx: int):

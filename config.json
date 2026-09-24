@@ -117,7 +117,7 @@
   "locale": "ko",
   "auto_save_enabled": true,
   "auto_save_interval_min": 5,
-  "ribbon_display_mode": "text",
+  "ribbon_display_mode": "icon",
   "ppt_template_path": "",
   "auto_check_update": true,
   "export_target": "powerpoint",
@@ -167,5 +167,14 @@
     "opacity": 30,
     "color": "#2563EB"
   },
-  "ui_style_mode": "ribbon"
+  "ui_style_mode": "ribbon",
+  "qat_items": [
+    "capture",
+    "drag_capture",
+    "add_step",
+    "undo",
+    "redo",
+    "export_ppt",
+    "mode_eraser"
+  ]
 }
