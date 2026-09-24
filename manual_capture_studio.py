@@ -8975,10 +8975,15 @@ class StudioCanvasWidget(QWidget):
             dlg.setFixedSize(340, 140)
             dlg.setStyleSheet("""
                 QDialog { background-color: #FFFFFF; color: #1E293B; }
-                QLabel { color: #1E293B; font-weight: bold; }
-                QSpinBox { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 14px; font-weight: bold; }
-                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px 14px; color: #1E293B; font-weight: bold; }
-                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+                QLabel { background: transparent; color: #334155; font-weight: bold; }
+                QSpinBox { background-color: #FFFFFF; color: #0F172A; border: 1px solid #CBD5E1; border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: bold; }
+                QSpinBox:focus { border: 2px solid #2563EB; }
+                QPushButton { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 5px; padding: 6px 14px; color: #1E293B; font-weight: 600; }
+                QPushButton:hover { background-color: #F1F5F9; border-color: #94A3B8; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border: 1px solid #1D4ED8; font-weight: bold; }
+                QPushButton#btn_ok:hover { background-color: #1D4ED8; }
+                QPushButton#btn_cancel { background-color: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
+                QPushButton#btn_cancel:hover { background-color: #E2E8F0; color: #1E293B; }
             """)
             layout = QVBoxLayout(dlg)
             lbl = QLabel("스탬프 번호를 입력하세요 (1 ~ 999):", dlg)
@@ -9026,11 +9031,15 @@ class StudioCanvasWidget(QWidget):
             dlg.setFixedSize(380, 140)
             dlg.setStyleSheet("""
                 QDialog { background-color: #FFFFFF; color: #1E293B; }
-                QLabel { color: #1E293B; font-weight: bold; }
-                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
-                QLineEdit:focus { border: 1px solid #2563EB; }
-                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px 14px; color: #1E293B; font-weight: bold; }
-                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+                QLabel { background: transparent; color: #334155; font-weight: bold; }
+                QLineEdit { background-color: #FFFFFF; color: #0F172A; border: 1px solid #CBD5E1; border-radius: 6px; padding: 6px 10px; font-size: 12px; selection-background-color: #2563EB; selection-color: #FFFFFF; }
+                QLineEdit:focus { border: 2px solid #2563EB; }
+                QPushButton { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 5px; padding: 6px 14px; color: #1E293B; font-weight: 600; }
+                QPushButton:hover { background-color: #F1F5F9; border-color: #94A3B8; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border: 1px solid #1D4ED8; font-weight: bold; }
+                QPushButton#btn_ok:hover { background-color: #1D4ED8; }
+                QPushButton#btn_cancel { background-color: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
+                QPushButton#btn_cancel:hover { background-color: #E2E8F0; color: #1E293B; }
             """)
             layout = QVBoxLayout(dlg)
 
@@ -9074,20 +9083,84 @@ class StudioCanvasWidget(QWidget):
     def prompt_hotkey_dialog(self, initial_text="Enter ↵"):
         try:
             dlg = QDialog(self)
-            dlg.setWindowTitle("단축키 뱃지 선택/입력")
-            dlg.setFixedSize(380, 240)
+            dlg.setWindowTitle("단축키 배지 입력")
+            dlg.setFixedSize(390, 255)
             dlg.setStyleSheet("""
-                QDialog { background-color: #FFFFFF; color: #1E293B; }
-                QLabel { color: #1E293B; }
-                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
-                QLineEdit:focus { border: 1px solid #2563EB; }
-                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 4px 8px; color: #1E293B; font-weight: bold; }
-                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+                QDialog {
+                    background-color: #FFFFFF;
+                    color: #1E293B;
+                }
+                QLabel {
+                    background: transparent;
+                    color: #334155;
+                    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                }
+                QLineEdit {
+                    background-color: #FFFFFF;
+                    color: #0F172A;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                    font-size: 13px;
+                    font-weight: bold;
+                    selection-background-color: #2563EB;
+                    selection-color: #FFFFFF;
+                }
+                QLineEdit:focus {
+                    border: 2px solid #2563EB;
+                    background-color: #FFFFFF;
+                }
+                QPushButton {
+                    background-color: #F8FAFC;
+                    border: 1px solid #CBD5E1;
+                    border-bottom: 2px solid #94A3B8;
+                    border-radius: 4px;
+                    padding: 3px 6px;
+                    color: #1E293B;
+                    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                    font-size: 10px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #F1F5F9;
+                    border-color: #94A3B8;
+                    color: #0F172A;
+                }
+                QPushButton:pressed {
+                    background-color: #E2E8F0;
+                    border-bottom: 1px solid #94A3B8;
+                }
+                QPushButton#btn_ok {
+                    background-color: #2563EB;
+                    color: #FFFFFF;
+                    border: 1px solid #1D4ED8;
+                    border-bottom: 2px solid #1E40AF;
+                    font-size: 11px;
+                    font-weight: bold;
+                    padding: 6px 16px;
+                }
+                QPushButton#btn_ok:hover {
+                    background-color: #1D4ED8;
+                }
+                QPushButton#btn_cancel {
+                    background-color: #F1F5F9;
+                    color: #475569;
+                    border: 1px solid #CBD5E1;
+                    border-bottom: 2px solid #94A3B8;
+                    font-size: 11px;
+                    font-weight: 500;
+                    padding: 6px 14px;
+                }
+                QPushButton#btn_cancel:hover {
+                    background-color: #E2E8F0;
+                    color: #1E293B;
+                }
             """)
             layout = QVBoxLayout(dlg)
             layout.setSpacing(8)
 
-            lbl = QLabel("삽입할 키보드 키를 선택하거나 직접 입력하세요:", dlg)
+            lbl = QLabel("삽입할 키를 선택하거나 직접 입력하세요:", dlg)
             lbl.setFont(QFont("Malgun Gothic", 10, QFont.Bold))
             layout.addWidget(lbl)
 
@@ -9098,7 +9171,7 @@ class StudioCanvasWidget(QWidget):
 
             lbl_preset = QLabel("자주 사용하는 키 프리셋:", dlg)
             lbl_preset.setFont(QFont("Malgun Gothic", 9))
-            lbl_preset.setStyleSheet("color: #666666;")
+            lbl_preset.setStyleSheet("color: #64748B; background: transparent;")
             layout.addWidget(lbl_preset)
 
             grid_presets = [
@@ -9124,6 +9197,7 @@ class StudioCanvasWidget(QWidget):
             btn_ok.setDefault(True)
             btn_ok.clicked.connect(dlg.accept)
             btn_cancel = QPushButton("취소", dlg)
+            btn_cancel.setObjectName("btn_cancel")
             btn_cancel.clicked.connect(dlg.reject)
             btn_box.addStretch()
             btn_box.addWidget(btn_ok)
@@ -9153,11 +9227,15 @@ class StudioCanvasWidget(QWidget):
             dlg.setFixedSize(380, 240)
             dlg.setStyleSheet("""
                 QDialog { background-color: #FFFFFF; color: #1E293B; }
-                QLabel { color: #1E293B; }
-                QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px; font-size: 11px; }
-                QLineEdit:focus { border: 1px solid #2563EB; }
-                QPushButton { background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 4px 8px; color: #1E293B; font-weight: bold; }
-                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border-color: #1D4ED8; }
+                QLabel { background: transparent; color: #334155; }
+                QLineEdit { background-color: #FFFFFF; color: #0F172A; border: 1px solid #CBD5E1; border-radius: 6px; padding: 6px 10px; font-size: 12px; selection-background-color: #2563EB; selection-color: #FFFFFF; }
+                QLineEdit:focus { border: 2px solid #2563EB; }
+                QPushButton { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 5px; padding: 5px 10px; color: #1E293B; font-weight: 600; }
+                QPushButton:hover { background-color: #F1F5F9; border-color: #94A3B8; }
+                QPushButton#btn_ok { background-color: #2563EB; color: #FFFFFF; border: 1px solid #1D4ED8; font-weight: bold; }
+                QPushButton#btn_ok:hover { background-color: #1D4ED8; }
+                QPushButton#btn_cancel { background-color: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
+                QPushButton#btn_cancel:hover { background-color: #E2E8F0; color: #1E293B; }
             """)
             layout = QVBoxLayout(dlg)
             layout.setSpacing(8)
@@ -14152,7 +14230,7 @@ class ManualStudioWindow(QMainWindow):
         self.scroll_area.setAlignment(Qt.AlignCenter)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("background-color: #555555; border: 1px solid #CCCCCC;")
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: #555555; border: 1px solid #CCCCCC; }")
 
         self.canvas = StudioCanvasWidget(self)
         self.canvas.set_config(self.config)
