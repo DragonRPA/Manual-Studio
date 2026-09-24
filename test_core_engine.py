@@ -3549,6 +3549,16 @@ def test_phase6_multi_selection_and_f10_slide():
     assert "3선택" in film.lbl_title.text() or "3개 선택됨" in film.lbl_title.text()
     assert "3" in film.btn_delete_selected.text()
 
+    # 3-1. Ctrl+A Shortcut Verification on Filmstrip
+    film.deselect_all_steps()
+    assert film.selected_indices == {2}
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent
+    event_ctrl_a = QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.ControlModifier)
+    film.keyPressEvent(event_ctrl_a)
+    assert film.selected_indices == {0, 1, 2}
+    assert "3개 선택됨" in film.lbl_title.text()
+
     targets = win.get_export_target_steps()
     assert len(targets) == 3
     assert [t[0] for t in targets] == [0, 1, 2]
@@ -4697,7 +4707,7 @@ def test_phase15_lucide_vector_icons_and_emoji_purge():
     # 4. OS 이모지 전면 박멸 및 QIcon 전환 검증
     # 스토리보드 타이틀
     assert "\U0001f39e" not in win.filmstrip.lbl_title.text()
-    assert "스토리보드 타임라인" in win.filmstrip.lbl_title.text()
+    assert "슬라이드" in win.filmstrip.lbl_title.text() or "스토리보드" in win.filmstrip.lbl_title.text()
     # 스토리보드 선택 삭제 버튼
     assert "\U0001f5d1" not in win.filmstrip.btn_delete_selected.text()
     assert not win.filmstrip.btn_delete_selected.icon().isNull()

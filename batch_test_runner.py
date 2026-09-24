@@ -1,6 +1,22 @@
 import sys
 import time
 import os
+
+# 테스트 실행 시 콘솔 창이 숨겨지지 않도록 디버그 환경변수 강제 설정
+os.environ["MANUAL_STUDIO_DEBUG"] = "1"
+
+# Windows 환경에서 실행 시 콘솔 창 표시 및 포그라운드 활성화
+if sys.platform == "win32":
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            ctypes.windll.kernel32.SetConsoleTitleW("Manual Studio - Batch Test Runner (83 Tests)")
+    except Exception:
+        pass
+
 import test_core_engine
 
 TEST_FUNCTIONS = [
@@ -110,6 +126,12 @@ def run_group(start_idx, end_idx):
             print(f"[{i}/{len(TEST_FUNCTIONS)}] [SKIP] {fn_name}: not found in module", flush=True)
             continue
 
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.kernel32.SetConsoleTitleW(f"[{i}/{len(TEST_FUNCTIONS)}] {fn_name} - Manual Studio Batch Test Runner")
+            except Exception:
+                pass
+
         t0 = time.time()
         print(f"[{i}/{len(TEST_FUNCTIONS)}] RUNNING {fn_name}...", end="", flush=True)
         try:
@@ -171,4 +193,10 @@ if __name__ == "__main__":
             ok = run_group(s, e)
             if not ok:
                 all_ok = False
+        if sys.platform == "win32":
+            try:
+                status_txt = "ALL 83 TESTS PASSED (100%)" if all_ok else "TESTS FAILED"
+                ctypes.windll.kernel32.SetConsoleTitleW(f"[{status_txt}] Manual Studio Batch Test Runner")
+            except Exception:
+                pass
         os._exit(0 if all_ok else 1)

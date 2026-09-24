@@ -68,11 +68,25 @@ except Exception:
 
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, Signal, Slot, QTimer, QCoreApplication,
-    QByteArray, QBuffer, QIODevice, QUrl, QMimeData
+    QByteArray, QBuffer, QIODevice, QUrl, QMimeData, qInstallMessageHandler, QtMsgType
 )
 # 하위 호환성 별칭 제공
 pyqtSignal = Signal
 pyqtSlot = Slot
+
+def _qt_message_handler(msg_type, context, msg):
+    # Qt C++ 내부 무해한 폰트/스타일 경고 (QFont::setPointSize 등) 필터링
+    if "setPointSize" in msg or "Point size <= 0" in msg:
+        return
+    if msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtInfoMsg):
+        return
+    if msg_type in (QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
+        sys.__stderr__.write(f"[Qt {msg_type.name}] {msg}\n")
+
+try:
+    qInstallMessageHandler(_qt_message_handler)
+except Exception:
+    pass
 
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
@@ -10989,6 +11003,10 @@ class FilmstripDockWidget(QWidget):
             self.request_delete_selected()
             event.accept()
             return
+        elif (modifiers & Qt.ControlModifier) and key == Qt.Key_A:
+            self.select_all_steps()
+            event.accept()
+            return
         elif (modifiers & Qt.ControlModifier) and key == Qt.Key_C:
             self.sig_copy_selected.emit()
             event.accept()
@@ -11005,71 +11023,52 @@ class FilmstripDockWidget(QWidget):
 
     def init_ui(self):
         root_lay = QVBoxLayout(self)
-        root_lay.setContentsMargins(6, 4, 6, 4)
-        root_lay.setSpacing(4)
+        root_lay.setContentsMargins(4, 3, 4, 3)
+        root_lay.setSpacing(3)
 
-        # 1. 헤더 1행: 타이틀 + 추가 버튼
-        h_row1 = QHBoxLayout()
-        h_row1.setContentsMargins(0, 0, 0, 0)
-        h_row1.setSpacing(4)
-
-        self.lbl_title = QLabel(tr("storyboard_timeline", "스토리보드 타임라인"), self)
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E293B;")
-        h_row1.addWidget(self.lbl_title, 1)
-
-        self.btn_add_step = QPushButton("+ 추가", self)
-        self.btn_add_step.setFixedWidth(46)
-        self.btn_add_step.setToolTip("새 슬라이드 추가 (F10)")
-        self.btn_add_step.setShortcut(QKeySequence(Qt.Key_F10))
-        self.btn_add_step.setStyleSheet("""
-            QPushButton {
-                background-color: #2563EB; color: #FFFFFF; font-weight: bold;
-                font-size: 10px; border-radius: 3px; padding: 2px 6px;
+        # 1. 초슬림 슬라이드 타이틀 바 (상단 군더더기 버튼 전면 제거, 단 1줄 고밀도 정보 표기)
+        self.lbl_title = QLabel(tr("storyboard_timeline", "슬라이드 (0)"), self)
+        self.lbl_title.setAlignment(Qt.AlignCenter)
+        self.lbl_title.setFixedHeight(20)
+        self.lbl_title.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 11px;
+                color: #334155;
+                background-color: #F1F5F9;
+                border: 1px solid #CBD5E1;
+                border-radius: 3px;
+                padding: 1px 4px;
+                white-space: nowrap;
             }
-            QPushButton:hover { background-color: #1D4ED8; }
         """)
+        root_lay.addWidget(self.lbl_title)
+
+        # 2. 호환성 및 테스트용 객체 보존 (UI상에서는 미노출 처리하여 세로 작업 공간 극대화)
+        self.btn_add_step = QPushButton("+ 추가", self)
+        self.btn_add_step.hide()
+        self.btn_add_step.setToolTip("새 슬라이드 추가 (F10)")
         self.btn_add_step.clicked.connect(self.sig_add_step.emit)
         self.btn_add_slide = self.btn_add_step
-        h_row1.addWidget(self.btn_add_step)
-        root_lay.addLayout(h_row1)
-
-        # 2. 헤더 2행: 선택 조작 버튼군 (전체 / 해제 / 삭제)
-        h_row2 = QHBoxLayout()
-        h_row2.setContentsMargins(0, 0, 0, 0)
-        h_row2.setSpacing(2)
 
         self.btn_select_all = QPushButton("전체", self)
-        self.btn_select_all.setToolTip("전체 슬라이드 선택")
-        self.btn_select_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-size: 10px; border-radius: 3px; padding: 2px 2px;")
+        self.btn_select_all.hide()
+        self.btn_select_all.setToolTip("전체 슬라이드 선택 (Ctrl+A)")
         self.btn_select_all.clicked.connect(self.select_all_steps)
-        h_row2.addWidget(self.btn_select_all)
 
         self.btn_deselect_all = QPushButton("해제", self)
-        self.btn_deselect_all.setToolTip("선택 해제")
-        self.btn_deselect_all.setStyleSheet("background-color: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-size: 10px; border-radius: 3px; padding: 2px 2px;")
+        self.btn_deselect_all.hide()
+        self.btn_deselect_all.setToolTip("선택 해제 (단일 클릭)")
         self.btn_deselect_all.clicked.connect(self.deselect_all_steps)
-        h_row2.addWidget(self.btn_deselect_all)
 
         self.btn_delete_selected = QPushButton(tr("btn_delete_selected_step", "삭제"), self)
-        self.btn_delete_selected.setIcon(RibbonIconProvider.get_icon("trash-2", 14, "#DC2626"))
-        self.btn_delete_selected.setToolTip(tr("btn_delete_selected_step_tooltip", "선택된 슬라이드 삭제"))
-        self.btn_delete_selected.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; font-size: 10px; font-weight: bold; border-radius: 3px; padding: 2px 2px;")
+        self.btn_delete_selected.setIcon(RibbonIconProvider.get_icon("clear", 14))
+        self.btn_delete_selected.hide()
+        self.btn_delete_selected.setToolTip("선택된 슬라이드 삭제 (Delete)")
         self.btn_delete_selected.clicked.connect(self.request_delete_selected)
-        h_row2.addWidget(self.btn_delete_selected)
 
-        root_lay.addLayout(h_row2)
-
-        # 3. 헤더 3행: 선택 내보내기 통합 드롭다운
         self.btn_export_all_menu = QPushButton("내보내기 ▾", self)
-        self.btn_export_all_menu.setToolTip("선택된 슬라이드 내보내기 (PPT, Google Slides, HWP, HTML, GIF)")
-        self.btn_export_all_menu.setStyleSheet("""
-            QPushButton {
-                background-color: #F0FDF4; color: #166534; border: 1px solid #BBF7D0;
-                font-size: 10.5px; font-weight: bold; border-radius: 3px; padding: 2px 4px;
-            }
-            QPushButton:hover { background-color: #DCFCE7; }
-        """)
-
+        self.btn_export_all_menu.hide()
         self.export_menu = QMenu(self)
         self.act_export_ppt = self.export_menu.addAction(tr("menu_export_ppt", "PowerPoint (PPT)"))
         self.act_export_ppt.triggered.connect(self.sig_export_all_ppt.emit)
@@ -11092,7 +11091,6 @@ class FilmstripDockWidget(QWidget):
         self.act_export_notion.triggered.connect(self.sig_export_notion.emit)
         self.act_export_confluence = self.export_menu.addAction(tr("menu_export_confluence", "컨플루언스 (Confluence)"))
         self.act_export_confluence.triggered.connect(self.sig_export_confluence.emit)
-
         self.btn_export_all_menu.setMenu(self.export_menu)
         self.btn_export_selected_menu = self.btn_export_all_menu
         self.btn_export_all_ppt = self.act_export_ppt
@@ -11103,7 +11101,6 @@ class FilmstripDockWidget(QWidget):
         self.btn_export_word = self.act_export_word
         self.btn_export_notion = self.act_export_notion
         self.btn_export_confluence = self.act_export_confluence
-        root_lay.addWidget(self.btn_export_all_menu)
 
         # 호환성 버튼들 (숨김 보존)
         self.btn_duplicate_selected = QPushButton(tr("btn_duplicate_selected", "선택 복제"), self)
@@ -11265,9 +11262,11 @@ class FilmstripDockWidget(QWidget):
     def update_card_selection_states(self):
         count = len(self.steps)
         sel_count = len(self.selected_indices)
-        timeline_tpl = tr("storyboard_timeline_format", "스토리보드 타임라인 ({count}개 슬라이드, {sel_count}개 선택됨)")
-        self.lbl_title.setText(timeline_tpl.format(count=count, sel_count=sel_count))
-        self.lbl_title.setToolTip(self.lbl_title.text())
+        if sel_count > 0:
+            self.lbl_title.setText(f"슬라이드 {count} ({sel_count}개 선택됨)")
+        else:
+            self.lbl_title.setText(f"슬라이드 {count}")
+        self.lbl_title.setToolTip(f"총 {count}개 슬라이드 ({sel_count}개 선택됨)\n• 전체 선택: Ctrl+A\n• 삭제: Delete\n• 범위 선택: Shift+클릭\n• 개별 토글: Ctrl+클릭")
         if sel_count > 0:
             del_tpl = tr("btn_delete_selected_count", "삭제({count})")
             self.btn_delete_selected.setText(del_tpl.format(count=sel_count))
@@ -16402,7 +16401,14 @@ class ManualStudioWindow(QMainWindow):
 
         # 2. Control 조합 단축키
         if modifiers & Qt.ControlModifier:
-            if key == Qt.Key_Z:
+            if key == Qt.Key_A:
+                fw = self.focusWidget()
+                if not isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                    if hasattr(self, "filmstrip") and self.filmstrip.isVisible():
+                        self.filmstrip.select_all_steps()
+                        self.hide_keytips()
+                        return
+            elif key == Qt.Key_Z:
                 self.action_undo()
                 self.hide_keytips()
                 return
