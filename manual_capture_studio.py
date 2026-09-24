@@ -3448,7 +3448,7 @@ class UIACollectorThread(QThread):
             import ctypes
             from ctypes import wintypes
             user32 = ctypes.windll.user32
-            auto.SetGlobalSearchTimeout(2.5)
+            auto.SetGlobalSearchTimeout(1.0)
 
             target_fw = None
             if self.target_hwnd and user32.IsWindow(self.target_hwnd):
@@ -3489,53 +3489,115 @@ class UIACollectorThread(QThread):
                     pass
 
             if target_fw:
-                # 최상위 윈도우로 이동 (단, 바탕화면 PaneControl까지 올라가지 않도록 방어)
-                curr = target_fw
-                while curr:
-                    p = curr.GetParentControl()
-                    if not p or getattr(p, "ClassName", "") == "#32769":
-                        break
-                    curr = p
-                    if curr.ControlType == auto.ControlType.WindowControl:
-                        break
-                target_fw = curr
+                # 브라우저(Edge/Chrome)인 경우 웹 페이지 본문인 DocumentControl 우선 직행
+                root_search = target_fw
+                try:
+                    cls_name = getattr(target_fw, "ClassName", "")
+                    if "Chrome" in cls_name or "Edge" in cls_name or "Widget" in cls_name:
+                        doc = target_fw.DocumentControl(searchDepth=6)
+                        if doc and doc.Exists(0, 0):
+                            root_search = doc
+                except Exception:
+                    pass
 
-                allowed_types = {
-                    auto.ControlType.ButtonControl, auto.ControlType.EditControl, 
-                    auto.ControlType.CheckBoxControl, auto.ControlType.RadioButtonControl,
-                    auto.ControlType.ListItemControl, auto.ControlType.ComboBoxControl,
-                    auto.ControlType.TabItemControl, auto.ControlType.DocumentControl,
-                    auto.ControlType.MenuItemControl, auto.ControlType.HyperlinkControl,
-                    auto.ControlType.TextControl, auto.ControlType.TreeItemControl,
-                    auto.ControlType.ToolBarControl, auto.ControlType.HeaderItemControl,
-                    auto.ControlType.DataItemControl, auto.ControlType.CustomControl
+                # 수집 대상 컨트롤 타입 (매뉴얼 작성용 조작 가능 핵심 컨트롤)
+                actionable_types = {
+                    auto.ControlType.ButtonControl: "버튼",
+                    auto.ControlType.EditControl: "입력란",
+                    auto.ControlType.CheckBoxControl: "확인란",
+                    auto.ControlType.RadioButtonControl: "라디오버튼",
+                    auto.ControlType.ComboBoxControl: "드롭다운",
+                    auto.ControlType.ListItemControl: "목록항목",
+                    auto.ControlType.TabItemControl: "탭",
+                    auto.ControlType.MenuItemControl: "메뉴",
+                    auto.ControlType.HyperlinkControl: "링크",
+                    auto.ControlType.TextControl: "텍스트",
+                    auto.ControlType.TreeItemControl: "트리항목",
+                    auto.ControlType.DataItemControl: "데이터셀",
+                    auto.ControlType.HeaderItemControl: "헤더",
+                    auto.ControlType.ToolBarControl: "툴바",
+                    auto.ControlType.CustomControl: "커스텀"
                 }
-                
+
                 seen_rects = set()
-                for control, depth in auto.WalkControl(target_fw, includeTop=True, maxDepth=10):
+                # Depth 25 지원 DFS 순회 (화면 영역 공간 가지치기 적용)
+                stack = [(root_search, 0)]
+                max_elements = 500
+                cap_l = self.capture_rect.left()
+                cap_t = self.capture_rect.top()
+                cap_r = self.capture_rect.right()
+                cap_b = self.capture_rect.bottom()
+
+                while stack and len(elements) < max_elements:
+                    ctrl, depth = stack.pop()
+                    if depth > 25:
+                        continue
+
                     try:
-                        rect = control.BoundingRectangle
-                        if rect.width() >= 10 and rect.height() >= 10:
-                            crect = QRect(rect.left, rect.top, rect.width(), rect.height())
+                        b_rect = ctrl.BoundingRectangle
+                        if not b_rect or b_rect.width() <= 0 or b_rect.height() <= 0:
+                            for ch in reversed(ctrl.GetChildren()):
+                                stack.append((ch, depth + 1))
+                            continue
+
+                        # 공간 가지치기: 캡처 영역과 전혀 겹치지 않는 부모는 자식까지 스킵
+                        if b_rect.right < cap_l or b_rect.left > cap_r or b_rect.bottom < cap_t or b_rect.top > cap_b:
+                            continue
+
+                        ctype = ctrl.ControlType
+                        w = b_rect.width()
+                        h = b_rect.height()
+
+                        is_candidate = False
+                        type_label = actionable_types.get(ctype)
+
+                        if type_label:
+                            if w >= 10 and h >= 10:
+                                is_candidate = True
+                        elif ctype == auto.ControlType.GroupControl:
+                            # GroupControl: 적절한 크기이면서 이름이 있거나 조작 가능한 경우
+                            name_val = (ctrl.Name or "").strip()
+                            if (12 <= w <= 1400 and 12 <= h <= 500) and (name_val or ctrl.AutomationId):
+                                is_candidate = True
+                                type_label = "그룹"
+
+                        if is_candidate:
+                            crect = QRect(b_rect.left, b_rect.top, w, h)
                             if self.capture_rect.intersects(crect):
-                                if control.ControlType in allowed_types:
-                                    local_x = crect.x() - self.capture_rect.x()
-                                    local_y = crect.y() - self.capture_rect.y()
-                                    key = (local_x, local_y, crect.width(), crect.height())
-                                    if key not in seen_rects:
-                                        seen_rects.add(key)
-                                        elements.append({
-                                            "type": control.ControlTypeName,
-                                            "name": control.Name or "",
-                                            "automation_id": getattr(control, "AutomationId", ""),
-                                            "class_name": getattr(control, "ClassName", ""),
-                                            "rect": [local_x, local_y, crect.width(), crect.height()]
-                                        })
+                                local_x = crect.x() - self.capture_rect.x()
+                                local_y = crect.y() - self.capture_rect.y()
+                                key = (local_x, local_y, w, h)
+                                if key not in seen_rects:
+                                    seen_rects.add(key)
+                                    name_str = (ctrl.Name or "").strip()
+                                    accel_key = getattr(ctrl, "AcceleratorKey", "") or getattr(ctrl, "AccessKey", "")
+                                    help_txt = getattr(ctrl, "HelpText", "")
+                                    is_pwd = bool(getattr(ctrl, "IsPassword", False))
+                                    auto_id = getattr(ctrl, "AutomationId", "")
+                                    cls_name = getattr(ctrl, "ClassName", "")
+
+                                    elements.append({
+                                        "type": ctrl.ControlTypeName,
+                                        "type_label": type_label or "컨트롤",
+                                        "name": name_str,
+                                        "automation_id": auto_id,
+                                        "class_name": cls_name,
+                                        "rect": [local_x, local_y, w, h],
+                                        "accelerator_key": accel_key,
+                                        "help_text": help_txt,
+                                        "is_password": is_pwd
+                                    })
+
+                        # 자식 노드 스택 푸시
+                        children = ctrl.GetChildren()
+                        if children:
+                            for ch in reversed(children):
+                                stack.append((ch, depth + 1))
                     except Exception:
                         continue
         except Exception:
             pass
-            
+
         self.sig_uia_collected.emit(elements)
 
 
@@ -6922,8 +6984,16 @@ class StudioCanvasWidget(QWidget):
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
+        self._ctrl_pressed = False
+        self.uia_elements = []
+        self._active_uia_rect = None
+        self._active_uia_el = None
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Control:
+            self._ctrl_pressed = True
+            self._check_uia_hover()
+            self.update()
         if event.key() == Qt.Key_Escape:
             if self.current_mode != "SELECT":
                 self.sig_request_mode_change.emit("SELECT")
@@ -6951,6 +7021,54 @@ class StudioCanvasWidget(QWidget):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Control:
+            self._ctrl_pressed = False
+            self._active_uia_rect = None
+            self._active_uia_el = None
+            self.update()
+        super().keyReleaseEvent(event)
+
+    def _check_uia_hover(self, pt=None):
+        if pt is None:
+            cur_pos = QCursor.pos()
+            pt = self.mapFromGlobal(cur_pos)
+        modifiers = QGuiApplication.keyboardModifiers()
+        is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+        if not is_ctrl or not getattr(self, "uia_elements", None):
+            if self._active_uia_rect is not None or self._active_uia_el is not None:
+                self._active_uia_rect = None
+                self._active_uia_el = None
+                self.update()
+            return
+
+        best_el = None
+        best_area = float("inf")
+        for el in self.uia_elements:
+            rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+            if rx <= pt.x() <= rx + rw and ry <= pt.y() <= ry + rh:
+                area = rw * rh
+                if area < best_area:
+                    best_area = area
+                    best_el = el
+
+        changed = False
+        if best_el:
+            rx, ry, rw, rh = best_el.get("rect", [0, 0, 0, 0])
+            new_rect = QRectF(rx, ry, rw, rh)
+            if self._active_uia_rect != new_rect or self._active_uia_el != best_el:
+                self._active_uia_rect = new_rect
+                self._active_uia_el = best_el
+                changed = True
+        else:
+            if self._active_uia_rect is not None or self._active_uia_el is not None:
+                self._active_uia_rect = None
+                self._active_uia_el = None
+                changed = True
+
+        if changed:
+            self.update()
 
     def set_arrow_color(self, color):
         self.current_arrow_color = color
@@ -7599,11 +7717,8 @@ class StudioCanvasWidget(QWidget):
 
             if self.current_mode == "STAMP":
                 self.push_undo()
-                snap = getattr(self, "_active_uia_snap", None)
-                sx = snap[0] if snap else pt.x()
-                sy = snap[1] if snap else pt.y()
                 stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
-                stamp = StampItem(self.next_stamp_index, sx, sy, stamp_style)
+                stamp = StampItem(self.next_stamp_index, pt.x(), pt.y(), stamp_style)
                 self.items.append(stamp)
                 self.next_stamp_index += 1
                 self.update()
@@ -7803,8 +7918,19 @@ class StudioCanvasWidget(QWidget):
                 self.update()
 
         elif event.button() == Qt.RightButton:
+            modifiers = QGuiApplication.keyboardModifiers()
+            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+            global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+
+            # 1. Ctrl 키다운 상태에서 UIA 객체 우클릭 시: UIA 스마트 추천 메뉴
+            if is_ctrl:
+                self._check_uia_hover(pt)
+                if getattr(self, "_active_uia_el", None):
+                    self.show_uia_smart_menu(self._active_uia_el, global_pt)
+                    return
+
+            # 2. 기존 주석 객체 클릭 시: 객체 속성/정렬/순서 컨텍스트 메뉴
             hit_item = None
-            # 오버레이 객체보다 일반 주석을 최우선 선택하여 우클릭 속성창 표시
             for it in reversed(self.items):
                 if not isinstance(it, ImageOverlayItem) and hasattr(it, "contains") and it.contains(pt):
                     hit_item = it
@@ -7820,11 +7946,12 @@ class StudioCanvasWidget(QWidget):
                     self.selected_item = hit_item
                     self.sig_item_selected.emit(hit_item)
                 self.update()
-                global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
                 self.show_item_context_menu(hit_item, global_pt)
             elif len(self.selected_items) > 1:
-                global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
                 self.show_item_context_menu(self.selected_items[-1], global_pt)
+            else:
+                # 3. 빈 캔버스/이미지 우클릭 시: 캔버스 퀵 액션 메뉴
+                self.show_canvas_quick_menu(pt, global_pt)
 
     def show_item_context_menu(self, item, global_pos):
         menu = QMenu(self)
@@ -7919,6 +8046,422 @@ class StudioCanvasWidget(QWidget):
         else:
             if self.history:
                 self.history.pop()
+
+    def _generate_uia_action_sentence(self, el):
+        t_label = el.get("type_label") or "컨트롤"
+        name = (el.get("name") or "").strip()
+        is_pwd = el.get("is_password", False)
+
+        if t_label == "버튼":
+            return f"'{name}' 버튼 클릭" if name else "버튼 클릭"
+        elif t_label == "입력란":
+            if is_pwd:
+                return f"'{name}' 비밀번호 입력" if name else "비밀번호 입력"
+            return f"'{name}' 입력란 값 입력" if name else "입력란 값 입력"
+        elif t_label == "확인란":
+            return f"'{name}' 항목 체크" if name else "항목 체크"
+        elif t_label == "라디오버튼":
+            return f"'{name}' 옵션 선택" if name else "옵션 선택"
+        elif t_label == "드롭다운":
+            return f"'{name}' 목록 항목 선택" if name else "드롭다운 목록 선택"
+        elif t_label == "탭":
+            return f"'{name}' 탭 이동" if name else "탭 선택"
+        elif t_label == "메뉴":
+            return f"'{name}' 메뉴 클릭" if name else "메뉴 클릭"
+        elif t_label == "링크":
+            return f"'{name}' 링크 클릭" if name else "링크 클릭"
+        elif t_label == "목록항목":
+            return f"'{name}' 항목 선택" if name else "목록 항목 선택"
+        elif t_label == "트리항목":
+            return f"'{name}' 트리 노드 선택" if name else "트리 노드 선택"
+        elif t_label == "데이터셀":
+            return f"'{name}' 셀 선택/조회" if name else "데이터셀 선택"
+        else:
+            return f"'{name}' {t_label} 조작" if name else f"{t_label} 조작"
+
+    def show_uia_smart_menu(self, el, global_pos):
+        if not el:
+            return
+        rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+        t_label = el.get("type_label") or "컨트롤"
+        name = (el.get("name") or "").strip()
+        accel_key = (el.get("accelerator_key") or "").strip()
+        is_pwd = el.get("is_password", False)
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::item:disabled {
+                color: #64748B;
+                font-weight: bold;
+                background-color: #F8FAFC;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """)
+
+        # 1. 헤더 (컨트롤 정보)
+        hdr_title = f"[{t_label}] {name} ({rw}×{rh})" if name else f"[{t_label}] ({rw}×{rh})"
+        act_hdr = menu.addAction(hdr_title)
+        act_hdr.setEnabled(False)
+        menu.addSeparator()
+
+        # 2. 가이드 일괄 생성 (스탬프 + 박스 + 설명문)
+        act_bundle = menu.addAction(RibbonIconProvider.get_icon("flowchart", 16, "#2563EB"), "가이드 일괄 생성 (스탬프+박스+설명문)")
+        menu.addSeparator()
+
+        # 3. 개별 요소 배치
+        act_stamp = menu.addAction(RibbonIconProvider.get_icon("stamp", 16, "#2563EB"), f"스탬프 배치 (№ {self.next_stamp_index})")
+        act_box = menu.addAction(RibbonIconProvider.get_icon("box", 16, "#2563EB"), "강조 박스 맞춤")
+        act_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#2563EB"), "설명 말풍선 배치")
+        act_label = menu.addAction(RibbonIconProvider.get_icon("text", 16, "#2563EB"), "텍스트 라벨 추가")
+        act_hotkey = None
+        if accel_key:
+            act_hotkey = menu.addAction(RibbonIconProvider.get_icon("hotkey", 16, "#2563EB"), f"단축키 배지 배치 ({accel_key})")
+
+        menu.addSeparator()
+        # 4. 부가 기능 (OCR / 블러 / 메타데이터 복사)
+        act_ocr = menu.addAction(RibbonIconProvider.get_icon("ocr", 16, "#2563EB"), "OCR 텍스트 추출 및 복사")
+        act_blur = menu.addAction(RibbonIconProvider.get_icon("blur", 16, "#2563EB"), "블러 모자이크 처리")
+        act_copy_meta = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "UIA 메타데이터 복사")
+
+        chosen = menu.exec_(global_pos)
+        if not chosen:
+            return
+
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+        action_sentence = self._generate_uia_action_sentence(el)
+
+        if chosen == act_bundle:
+            self.push_undo()
+            # 1) 박스
+            box_style = {
+                "color": self.current_box_color,
+                "border_width": self.current_box_width,
+                "fill": self.current_box_fill
+            }
+            self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
+
+            # 2) 스탬프
+            stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+            self.items.append(StampItem(self.next_stamp_index, rx, ry, stamp_style))
+            self.next_stamp_index += 1
+
+            # 3) 말풍선 (우측 또는 하단 배치)
+            tw = max(110.0, float(len(action_sentence) * 13 + 24))
+            th = 40.0
+            target_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+            if rx + rw + tw + 20 <= cw:
+                c_rect = QRectF(rx + rw + 20, ry + (rh - th) / 2.0, tw, th)
+            elif rx - tw - 20 >= 0:
+                c_rect = QRectF(rx - tw - 20, ry + (rh - th) / 2.0, tw, th)
+            else:
+                c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rx + (rw - tw) / 2.0)), min(ch - th - 10.0, ry + rh + 20.0), tw, th)
+            callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+            callout_st["border_color"] = self.current_box_color
+            callout_st["border_width"] = self.current_box_width
+            self.items.append(CalloutItem(action_sentence, c_rect, target_pt, callout_st))
+
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"가이드 일괄 생성 완료: {action_sentence}")
+
+        elif chosen == act_stamp:
+            self.push_undo()
+            stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+            self.items.append(StampItem(self.next_stamp_index, rx, ry, stamp_style))
+            self.next_stamp_index += 1
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"스탬프 배치 완료 (№ {self.next_stamp_index - 1})")
+
+        elif chosen == act_box:
+            self.push_undo()
+            box_style = {
+                "color": self.current_box_color,
+                "border_width": self.current_box_width,
+                "fill": self.current_box_fill
+            }
+            box_item = HighlightBoxItem(QRect(rx, ry, rw, rh), box_style)
+            self.items.append(box_item)
+            self.selected_item = box_item
+            self.sig_item_selected.emit(box_item)
+            self.update()
+            self.sig_content_changed.emit()
+
+        elif chosen == act_callout:
+            self.push_undo()
+            tw = max(110.0, float(len(action_sentence) * 13 + 24))
+            th = 40.0
+            target_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+            if rx + rw + tw + 20 <= cw:
+                c_rect = QRectF(rx + rw + 20, ry + (rh - th) / 2.0, tw, th)
+            elif rx - tw - 20 >= 0:
+                c_rect = QRectF(rx - tw - 20, ry + (rh - th) / 2.0, tw, th)
+            else:
+                c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rx + (rw - tw) / 2.0)), min(ch - th - 10.0, ry + rh + 20.0), tw, th)
+            callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+            callout_st["border_color"] = self.current_box_color
+            callout_st["border_width"] = self.current_box_width
+            callout_item = CalloutItem(action_sentence, c_rect, target_pt, callout_st)
+            self.items.append(callout_item)
+            self.selected_item = callout_item
+            self.sig_item_selected.emit(callout_item)
+            self.update()
+            self.sig_content_changed.emit()
+
+        elif chosen == act_label:
+            lbl_text = name if name else t_label
+            text, ok = self.prompt_text_dialog(lbl_text)
+            if ok and text.strip():
+                self.push_undo()
+                text_style = dict(self.config.get("text_style", DEFAULT_CONFIG["text_style"]))
+                lbl_y = max(10, ry - 24) if ry >= 24 else ry + rh + 4
+                label_item = TextLabelItem(text.strip(), rx, lbl_y, text_style)
+                self.items.append(label_item)
+                self.selected_item = label_item
+                self.sig_item_selected.emit(label_item)
+                self.update()
+                self.sig_content_changed.emit()
+
+        elif act_hotkey and chosen == act_hotkey:
+            self.push_undo()
+            hk_style = dict(self.config.get("hotkey_style", DEFAULT_CONFIG["hotkey_style"]))
+            hk_item = HotkeyBadgeItem(accel_key, rx + rw - 35, ry + 2, hk_style)
+            self.items.append(hk_item)
+            self.selected_item = hk_item
+            self.sig_item_selected.emit(hk_item)
+            self.update()
+            self.sig_content_changed.emit()
+
+        elif chosen == act_ocr:
+            extracted = name
+            if self.pixmap and not self.pixmap.isNull():
+                crop_rect = QRect(rx, ry, rw, rh).intersected(QRect(0, 0, self.pixmap.width(), self.pixmap.height()))
+                if crop_rect.width() > 6 and crop_rect.height() > 6:
+                    self._run_ocr_on_region(crop_rect, as_label=False)
+                    return
+            if extracted:
+                QGuiApplication.clipboard().setText(extracted)
+                self.sig_request_toast.emit(f"텍스트 복사 완료: '{extracted}'")
+            else:
+                self.sig_request_toast.emit("추출 가능한 텍스트 없음")
+
+        elif chosen == act_blur:
+            self.push_undo()
+            blur_st = dict(self.config.get("blur_style", DEFAULT_CONFIG["blur_style"]))
+            blur_item = BlurMosaicItem(QRect(rx, ry, rw, rh), blur_st)
+            self.items.append(blur_item)
+            self.selected_item = blur_item
+            self.sig_item_selected.emit(blur_item)
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"[{t_label}] 블러 모자이크 처리 완료")
+
+        elif chosen == act_copy_meta:
+            import json
+            meta_json = json.dumps(el, ensure_ascii=False, indent=2)
+            QGuiApplication.clipboard().setText(meta_json)
+            self.sig_request_toast.emit("UIA 메타데이터 클립보드 복사 완료")
+
+    def show_canvas_quick_menu(self, canvas_pt, global_pos):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """)
+
+        # 1. 도구 전환 서브메뉴
+        menu_tools = menu.addMenu(RibbonIconProvider.get_icon("select", 16, "#2563EB"), "도구 전환")
+        menu_tools.setStyleSheet(menu.styleSheet())
+        tools_list = [
+            ("선택 도구 (V)", "SELECT", "select"),
+            ("번호 스탬프 (S)", "STAMP", "stamp"),
+            ("영역 박스 (B)", "BOX", "box"),
+            ("직각 꺾은선 (E)", "ELBOW", "elbow"),
+            ("직선 화살표 (A)", "ARROW", "arrow"),
+            ("설명 말풍선 (C)", "CALLOUT", "callout"),
+            ("텍스트 입력 (T)", "TEXT", "text"),
+            ("단축키 배지 (H)", "HOTKEY", "hotkey"),
+            ("블러 모자이크 (M)", "BLUR", "blur"),
+            ("스마트 지우개 (X)", "ERASER", "eraser"),
+        ]
+        tool_actions = {}
+        for t_name, t_mode, t_icon in tools_list:
+            act = menu_tools.addAction(RibbonIconProvider.get_icon(t_icon, 16, "#2563EB"), t_name)
+            if self.current_mode == t_mode:
+                act.setIcon(RibbonIconProvider.get_icon("check", 14, "#2563EB"))
+            tool_actions[act] = t_mode
+
+        menu.addSeparator()
+
+        # 2. 현재 커서 위치 주석 추가
+        act_add_stamp = menu.addAction(RibbonIconProvider.get_icon("stamp", 16, "#2563EB"), f"스탬프 추가 (№ {self.next_stamp_index})")
+        act_add_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#2563EB"), "말풍선 추가...")
+        act_add_text = menu.addAction(RibbonIconProvider.get_icon("text", 16, "#2563EB"), "텍스트 추가...")
+        act_add_hotkey = menu.addAction(RibbonIconProvider.get_icon("hotkey", 16, "#2563EB"), "단축키 배지 추가...")
+        act_ocr_cursor = menu.addAction(RibbonIconProvider.get_icon("ocr", 16, "#2563EB"), "커서 위치 OCR 인식")
+
+        menu.addSeparator()
+
+        # 3. 클립보드 및 외부 내보내기
+        clipboard = QGuiApplication.clipboard()
+        has_cb_img = bool(clipboard.mimeData() and clipboard.mimeData().hasImage())
+        act_paste = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "클립보드 이미지 붙여넣기 (Ctrl+V)")
+        act_paste.setEnabled(has_cb_img)
+
+        win = self.window()
+        act_ppt = menu.addAction(RibbonIconProvider.get_icon("ppt_export", 16, "#2563EB"), "PowerPoint 내보내기 (F10)")
+        act_hwp = menu.addAction(RibbonIconProvider.get_icon("export_hwp", 16, "#2563EB"), "한컴 한글(HWP) 내보내기 (Shift+F10)")
+
+        menu.addSeparator()
+
+        # 4. 히스토리 & 스탬프 리셋
+        act_undo = menu.addAction(RibbonIconProvider.get_icon("undo", 16, "#2563EB"), "실행 취소 (Ctrl+Z)")
+        act_undo.setEnabled(len(self.history) > 0)
+        act_reset_stamp = menu.addAction(RibbonIconProvider.get_icon("reset_index", 16, "#2563EB"), "스탬프 번호 1 초기화")
+
+        chosen = menu.exec_(global_pos)
+        if not chosen:
+            return
+
+        if chosen in tool_actions:
+            target_mode = tool_actions[chosen]
+            self.set_mode(target_mode)
+            self.sig_request_mode_change.emit(target_mode)
+
+        elif chosen == act_add_stamp:
+            self.push_undo()
+            stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+            stamp = StampItem(self.next_stamp_index, canvas_pt.x(), canvas_pt.y(), stamp_style)
+            self.items.append(stamp)
+            self.next_stamp_index += 1
+            self.update()
+            self.sig_content_changed.emit()
+
+        elif chosen == act_add_callout:
+            text, ok = self.prompt_text_dialog("", title="말풍선 내용 입력")
+            if ok and text.strip():
+                self.push_undo()
+                w = max(110.0, float(len(text.strip()) * 13 + 24))
+                h = 40.0
+                box_r = QRectF(canvas_pt.x() - w / 2.0, canvas_pt.y() - h - 20.0, w, h)
+                callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+                callout_st["border_color"] = self.current_box_color
+                callout_st["border_width"] = self.current_box_width
+                c_item = CalloutItem(text.strip(), box_r, QPointF(canvas_pt), callout_st)
+                self.items.append(c_item)
+                self.selected_item = c_item
+                self.sig_item_selected.emit(c_item)
+                self.update()
+                self.sig_content_changed.emit()
+
+        elif chosen == act_add_text:
+            text, ok = self.prompt_text_dialog("")
+            if ok and text.strip():
+                self.push_undo()
+                text_style = dict(self.config.get("text_style", DEFAULT_CONFIG["text_style"]))
+                label = TextLabelItem(text.strip(), canvas_pt.x(), canvas_pt.y(), text_style)
+                self.items.append(label)
+                self.selected_item = label
+                self.sig_item_selected.emit(label)
+                self.update()
+                self.sig_content_changed.emit()
+
+        elif chosen == act_add_hotkey:
+            key_text, ok = self.prompt_hotkey_dialog("Enter ↵")
+            if ok and key_text.strip():
+                self.push_undo()
+                hk_style = dict(self.config.get("hotkey_style", DEFAULT_CONFIG["hotkey_style"]))
+                badge = HotkeyBadgeItem(key_text.strip(), canvas_pt.x(), canvas_pt.y(), hk_style)
+                self.items.append(badge)
+                self.selected_item = badge
+                self.sig_item_selected.emit(badge)
+                self.update()
+                self.sig_content_changed.emit()
+
+        elif chosen == act_ocr_cursor:
+            if self.pixmap and not self.pixmap.isNull():
+                ocr_w = 200
+                ocr_h = 60
+                ocr_rect = QRect(int(canvas_pt.x() - ocr_w / 2), int(canvas_pt.y() - ocr_h / 2), ocr_w, ocr_h)
+                ocr_rect = ocr_rect.intersected(QRect(0, 0, self.pixmap.width(), self.pixmap.height()))
+                if ocr_rect.width() > 6 and ocr_rect.height() > 6:
+                    self._run_ocr_on_region(ocr_rect, as_label=False)
+
+        elif chosen == act_paste:
+            cb_pix = clipboard.pixmap()
+            if cb_pix and not cb_pix.isNull():
+                self.push_undo()
+                pw = cb_pix.width()
+                ph = cb_pix.height()
+                init_x = float(max(0, canvas_pt.x() - pw // 2))
+                init_y = float(max(0, canvas_pt.y() - ph // 2))
+                overlay_rect = QRectF(init_x, init_y, float(pw), float(ph))
+                item = ImageOverlayItem(overlay_rect, cb_pix)
+                self.items.append(item)
+                self.selected_item = item
+                self.sig_item_selected.emit(item)
+                self.update()
+                self.sig_content_changed.emit()
+                self.sig_request_toast.emit(f"이미지 붙여넣기 완료 ({pw}×{ph}px)")
+
+        elif chosen == act_ppt:
+            if win and hasattr(win, "action_export_all_ppt"):
+                win.action_export_all_ppt()
+
+        elif chosen == act_hwp:
+            if win and hasattr(win, "action_send_to_hwp"):
+                win.action_send_to_hwp()
+
+        elif chosen == act_undo:
+            self.undo()
+
+        elif chosen == act_reset_stamp:
+            self.next_stamp_index = 1
+            self.sig_request_toast.emit("스탬프 번호 1 초기화 완료")
 
     def mouseMoveEvent(self, event):
         pt = self.get_canvas_pt(event)
@@ -8057,22 +8600,16 @@ class StudioCanvasWidget(QWidget):
             self.flow_node_end = QPointF(pt)
             self.update()
         else:
-            # UIA 스냅 감지 (스탬프 / 박스 / 콜아웃 모드)
-            old_snap = getattr(self, "_active_uia_snap", None)
-            old_rect = getattr(self, "_active_uia_rect", None)
-            self._active_uia_snap = None
-            self._active_uia_rect = None
-            self._active_uia_el = None
-            if self.current_mode in ("STAMP", "BOX", "CALLOUT") and getattr(self, "uia_elements", None):
-                for el in self.uia_elements:
-                    rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
-                    if rx - 6 <= pt.x() <= rx + rw + 6 and ry - 6 <= pt.y() <= ry + rh + 6:
-                        self._active_uia_snap = (rx + 4, ry + 4)
-                        self._active_uia_rect = QRectF(rx, ry, rw, rh)
-                        self._active_uia_el = el
-                        break
-            if bool(old_snap) != bool(self._active_uia_snap) or old_rect != self._active_uia_rect:
-                self.update()
+            # UIA 호버 감지 (Ctrl 키다운 상태에서만 수행)
+            modifiers = QGuiApplication.keyboardModifiers()
+            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+            if is_ctrl:
+                self._check_uia_hover(pt)
+            else:
+                if getattr(self, "_active_uia_rect", None) is not None or getattr(self, "_active_uia_el", None) is not None:
+                    self._active_uia_rect = None
+                    self._active_uia_el = None
+                    self.update()
 
             # 유휴 마우스 이동 시 플로우차트 노드 마그넷 포인트 호버 및 자석 십자 커서 실시간 반응
             hovered_node = None
@@ -8127,8 +8664,6 @@ class StudioCanvasWidget(QWidget):
             elif self.drawing_box:
                 self.drawing_box = False
                 r = QRect(self.box_start, self.box_end).normalized()
-                if (r.width() <= 8 or r.height() <= 8) and getattr(self, "_active_uia_rect", None):
-                    r = self._active_uia_rect.toRect()
                 if r.width() > 8 and r.height() > 8:
                     self.push_undo()
                     box_style = {
@@ -8764,34 +9299,58 @@ class StudioCanvasWidget(QWidget):
                 except Exception as e:
                     pass
             # 2.5. UIA 객체 스냅 하이라이트 (스탬프 / 박스 / 콜아웃 모드)
-            if self.current_mode in ("STAMP", "BOX", "CALLOUT") and getattr(self, "_active_uia_rect", None):
+            modifiers = QGuiApplication.keyboardModifiers()
+            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+            if is_ctrl and getattr(self, "_active_uia_rect", None) and getattr(self, "_active_uia_el", None):
                 painter.save()
+                rect_f = self._active_uia_rect
                 painter.setPen(QPen(QColor("#2563EB"), 1.5, Qt.DashLine))
                 painter.setBrush(QColor(37, 99, 235, 35))
-                painter.drawRect(self._active_uia_rect)
-                if self.current_mode == "STAMP":
-                    snap_pt = getattr(self, "_active_uia_snap", None)
-                    if snap_pt:
-                        painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
-                        painter.setBrush(QColor(229, 57, 53, 180))
-                        painter.drawEllipse(QPointF(snap_pt[0], snap_pt[1]), 8, 8)
-                elif self.current_mode == "BOX":
-                    cr = self._active_uia_rect
-                    c_len = min(12.0, min(cr.width(), cr.height()) / 3)
-                    p_corner = QPen(QColor("#2563EB"), 2.5)
-                    painter.setPen(p_corner)
-                    # TL
-                    painter.drawLine(QPointF(cr.left(), cr.top()), QPointF(cr.left() + c_len, cr.top()))
-                    painter.drawLine(QPointF(cr.left(), cr.top()), QPointF(cr.left(), cr.top() + c_len))
-                    # TR
-                    painter.drawLine(QPointF(cr.right(), cr.top()), QPointF(cr.right() - c_len, cr.top()))
-                    painter.drawLine(QPointF(cr.right(), cr.top()), QPointF(cr.right(), cr.top() + c_len))
-                    # BL
-                    painter.drawLine(QPointF(cr.left(), cr.bottom()), QPointF(cr.left() + c_len, cr.bottom()))
-                    painter.drawLine(QPointF(cr.left(), cr.bottom()), QPointF(cr.left(), cr.bottom() - c_len))
-                    # BR
-                    painter.drawLine(QPointF(cr.right(), cr.bottom()), QPointF(cr.right() - c_len, cr.bottom()))
-                    painter.drawLine(QPointF(cr.right(), cr.bottom()), QPointF(cr.right(), cr.bottom() - c_len))
+                painter.drawRect(rect_f)
+
+                c_len = min(12.0, min(rect_f.width(), rect_f.height()) / 3.0)
+                p_corner = QPen(QColor("#1D4ED8"), 2.5)
+                painter.setPen(p_corner)
+                painter.drawLine(QPointF(rect_f.left(), rect_f.top()), QPointF(rect_f.left() + c_len, rect_f.top()))
+                painter.drawLine(QPointF(rect_f.left(), rect_f.top()), QPointF(rect_f.left(), rect_f.top() + c_len))
+                painter.drawLine(QPointF(rect_f.right(), rect_f.top()), QPointF(rect_f.right() - c_len, rect_f.top()))
+                painter.drawLine(QPointF(rect_f.right(), rect_f.top()), QPointF(rect_f.right(), rect_f.top() + c_len))
+                painter.drawLine(QPointF(rect_f.left(), rect_f.bottom()), QPointF(rect_f.left() + c_len, rect_f.bottom()))
+                painter.drawLine(QPointF(rect_f.left(), rect_f.bottom()), QPointF(rect_f.left() - c_len, rect_f.bottom()))
+                painter.drawLine(QPointF(rect_f.right(), rect_f.bottom()), QPointF(rect_f.right() - c_len, rect_f.bottom()))
+                painter.drawLine(QPointF(rect_f.right(), rect_f.bottom()), QPointF(rect_f.right(), rect_f.bottom() - c_len))
+
+                el = self._active_uia_el
+                t_label = el.get("type_label") or "컨트롤"
+                name_str = (el.get("name") or "").strip()
+                w_int = int(rect_f.width())
+                h_int = int(rect_f.height())
+                if name_str:
+                    tag_text = f"[{t_label}] {name_str} ({w_int}×{h_int})"
+                else:
+                    tag_text = f"[{t_label}] ({w_int}×{h_int})"
+
+                font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+                b_font = QFont(font_family, 9)
+                b_font.setBold(True)
+                fm = QFontMetrics(b_font)
+                txt_w = fm.horizontalAdvance(tag_text) + 12
+                txt_h = 18
+
+                badge_x = rect_f.left()
+                if rect_f.top() >= txt_h + 4:
+                    badge_y = rect_f.top() - txt_h - 2
+                else:
+                    badge_y = rect_f.top() + 2
+                badge_rect = QRectF(badge_x, badge_y, txt_w, txt_h)
+
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(15, 23, 42, 220))
+                painter.drawRoundedRect(badge_rect, 3, 3)
+
+                painter.setFont(b_font)
+                painter.setPen(QColor("#FFFFFF"))
+                painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
                 painter.restore()
 
             # 3. 실시간 드로잉 프리뷰
