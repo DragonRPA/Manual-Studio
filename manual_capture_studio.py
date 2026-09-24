@@ -3434,53 +3434,105 @@ class ScrollStitchEngine:
 class UIACollectorThread(QThread):
     sig_uia_collected = Signal(list)
 
-    def __init__(self, capture_rect: QRect, parent=None):
+    def __init__(self, capture_rect: QRect, target_hwnd=None, own_pid=None, parent=None):
         super().__init__(parent)
         self.capture_rect = capture_rect
+        self.target_hwnd = target_hwnd
+        import os
+        self.own_pid = own_pid or os.getpid()
 
     def run(self):
         elements = []
         try:
             import uiautomation as auto
-            auto.SetGlobalSearchTimeout(1.0)
-            center_x = self.capture_rect.x() + self.capture_rect.width() // 2
-            center_y = self.capture_rect.y() + self.capture_rect.height() // 2
-            
-            # Find the window under the center of the capture rect
-            fw = auto.ControlFromPoint(center_x, center_y)
-            if not fw:
-                fw = auto.GetForegroundControl()
-                
-            if fw:
-                # Walk up to find the top level window to ensure we get all relevant children
-                while fw and fw.ControlType != auto.ControlType.WindowControl:
-                    parent = fw.GetParentControl()
-                    if not parent:
-                        break
-                    fw = parent
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            auto.SetGlobalSearchTimeout(2.5)
 
-                allowed_types = [
+            target_fw = None
+            if self.target_hwnd and user32.IsWindow(self.target_hwnd):
+                try:
+                    target_fw = auto.ControlFromHandle(self.target_hwnd)
+                except Exception:
+                    target_fw = None
+
+            if not target_fw:
+                center_x = self.capture_rect.x() + self.capture_rect.width() // 2
+                center_y = self.capture_rect.y() + self.capture_rect.height() // 2
+
+                class POINT(ctypes.Structure):
+                    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+                pt = POINT(int(center_x), int(center_y))
+                hwnd = user32.WindowFromPoint(pt)
+                curr_hwnd = hwnd
+                GA_ROOT = 2
+                GW_HWNDNEXT = 2
+                while curr_hwnd:
+                    root_hwnd = user32.GetAncestor(curr_hwnd, GA_ROOT) or curr_hwnd
+                    pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(root_hwnd, ctypes.byref(pid))
+                    if pid.value != self.own_pid and user32.IsWindowVisible(root_hwnd):
+                        try:
+                            target_fw = auto.ControlFromHandle(root_hwnd)
+                            if target_fw:
+                                break
+                        except Exception:
+                            pass
+                    curr_hwnd = user32.GetWindow(curr_hwnd, GW_HWNDNEXT)
+
+            if not target_fw:
+                try:
+                    target_fw = auto.GetForegroundControl()
+                except Exception:
+                    pass
+
+            if target_fw:
+                # 최상위 윈도우로 이동 (단, 바탕화면 PaneControl까지 올라가지 않도록 방어)
+                curr = target_fw
+                while curr:
+                    p = curr.GetParentControl()
+                    if not p or getattr(p, "ClassName", "") == "#32769":
+                        break
+                    curr = p
+                    if curr.ControlType == auto.ControlType.WindowControl:
+                        break
+                target_fw = curr
+
+                allowed_types = {
                     auto.ControlType.ButtonControl, auto.ControlType.EditControl, 
                     auto.ControlType.CheckBoxControl, auto.ControlType.RadioButtonControl,
                     auto.ControlType.ListItemControl, auto.ControlType.ComboBoxControl,
                     auto.ControlType.TabItemControl, auto.ControlType.DocumentControl,
-                    auto.ControlType.PaneControl, auto.ControlType.WindowControl
-                ]
+                    auto.ControlType.MenuItemControl, auto.ControlType.HyperlinkControl,
+                    auto.ControlType.TextControl, auto.ControlType.TreeItemControl,
+                    auto.ControlType.ToolBarControl, auto.ControlType.HeaderItemControl,
+                    auto.ControlType.DataItemControl, auto.ControlType.CustomControl
+                }
                 
-                for control, depth in auto.WalkControl(fw, includeTop=True, maxDepth=5):
-                    rect = control.BoundingRectangle
-                    if rect.width() > 0 and rect.height() > 0:
-                        crect = QRect(rect.left, rect.top, rect.width(), rect.height())
-                        # Check if control intersects with capture rect
-                        if self.capture_rect.intersects(crect):
-                            if control.ControlType in allowed_types:
-                                local_x = crect.x() - self.capture_rect.x()
-                                local_y = crect.y() - self.capture_rect.y()
-                                elements.append({
-                                    "type": control.ControlTypeName,
-                                    "name": control.Name,
-                                    "rect": [local_x, local_y, crect.width(), crect.height()]
-                                })
+                seen_rects = set()
+                for control, depth in auto.WalkControl(target_fw, includeTop=True, maxDepth=10):
+                    try:
+                        rect = control.BoundingRectangle
+                        if rect.width() >= 10 and rect.height() >= 10:
+                            crect = QRect(rect.left, rect.top, rect.width(), rect.height())
+                            if self.capture_rect.intersects(crect):
+                                if control.ControlType in allowed_types:
+                                    local_x = crect.x() - self.capture_rect.x()
+                                    local_y = crect.y() - self.capture_rect.y()
+                                    key = (local_x, local_y, crect.width(), crect.height())
+                                    if key not in seen_rects:
+                                        seen_rects.add(key)
+                                        elements.append({
+                                            "type": control.ControlTypeName,
+                                            "name": control.Name or "",
+                                            "automation_id": getattr(control, "AutomationId", ""),
+                                            "class_name": getattr(control, "ClassName", ""),
+                                            "rect": [local_x, local_y, crect.width(), crect.height()]
+                                        })
+                    except Exception:
+                        continue
         except Exception:
             pass
             
@@ -6587,6 +6639,20 @@ class CaptureOverlayWidget(QWidget):
                 r.width(),
                 r.height()
             )
+        # 오버레이 창을 즉시 숨겨 대상 창이 노출되도록 한 뒤 타겟 HWND 선점
+        self.hide()
+        target_hwnd = None
+        try:
+            import ctypes
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+            cx = emit_rect.x() + emit_rect.width() // 2
+            cy = emit_rect.y() + emit_rect.height() // 2
+            target_hwnd = ctypes.windll.user32.WindowFromPoint(POINT(int(cx), int(cy)))
+        except Exception:
+            pass
+        self.target_hwnd = target_hwnd
+
         self.sig_captured.emit(cropped, emit_rect)
         self.close()
         self.deleteLater()
@@ -7985,18 +8051,21 @@ class StudioCanvasWidget(QWidget):
             self.flow_node_end = QPointF(pt)
             self.update()
         else:
-            # UIA 스냅 감지 (스탬프 모드)
+            # UIA 스냅 감지 (스탬프 / 박스 / 콜아웃 모드)
             old_snap = getattr(self, "_active_uia_snap", None)
+            old_rect = getattr(self, "_active_uia_rect", None)
             self._active_uia_snap = None
             self._active_uia_rect = None
-            if self.current_mode == "STAMP" and getattr(self, "uia_elements", None):
+            self._active_uia_el = None
+            if self.current_mode in ("STAMP", "BOX", "CALLOUT") and getattr(self, "uia_elements", None):
                 for el in self.uia_elements:
                     rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
-                    if rx - 8 <= pt.x() <= rx + rw + 8 and ry - 8 <= pt.y() <= ry + rh + 8:
+                    if rx - 6 <= pt.x() <= rx + rw + 6 and ry - 6 <= pt.y() <= ry + rh + 6:
                         self._active_uia_snap = (rx + 4, ry + 4)
                         self._active_uia_rect = QRectF(rx, ry, rw, rh)
+                        self._active_uia_el = el
                         break
-            if bool(old_snap) != bool(self._active_uia_snap):
+            if bool(old_snap) != bool(self._active_uia_snap) or old_rect != self._active_uia_rect:
                 self.update()
 
             # 유휴 마우스 이동 시 플로우차트 노드 마그넷 포인트 호버 및 자석 십자 커서 실시간 반응
@@ -8052,6 +8121,8 @@ class StudioCanvasWidget(QWidget):
             elif self.drawing_box:
                 self.drawing_box = False
                 r = QRect(self.box_start, self.box_end).normalized()
+                if (r.width() <= 8 or r.height() <= 8) and getattr(self, "_active_uia_rect", None):
+                    r = self._active_uia_rect.toRect()
                 if r.width() > 8 and r.height() > 8:
                     self.push_undo()
                     box_style = {
@@ -8177,8 +8248,11 @@ class StudioCanvasWidget(QWidget):
             elif self.drawing_callout:
                 self.drawing_callout = False
                 dist = math.hypot(self.callout_end.x() - self.callout_start.x(), self.callout_end.y() - self.callout_start.y())
+                default_prompt = ""
+                if getattr(self, "_active_uia_el", None):
+                    default_prompt = self._active_uia_el.get("name", "")
                 if dist > 8:
-                    text, ok = self.prompt_text_dialog("설명 입력")
+                    text, ok = self.prompt_text_dialog(default_prompt, title="설명 입력")
                     if ok and text.strip():
                         self.push_undo()
                         w = max(110.0, float(len(text.strip()) * 14 + 20))
@@ -8683,17 +8757,35 @@ class StudioCanvasWidget(QWidget):
                         item.render(painter)
                 except Exception as e:
                     pass
-            # 2.5. UIA 객체 스냅 하이라이트 (스탬프 모드)
-            if self.current_mode == "STAMP" and getattr(self, "_active_uia_rect", None):
+            # 2.5. UIA 객체 스냅 하이라이트 (스탬프 / 박스 / 콜아웃 모드)
+            if self.current_mode in ("STAMP", "BOX", "CALLOUT") and getattr(self, "_active_uia_rect", None):
                 painter.save()
                 painter.setPen(QPen(QColor("#2563EB"), 1.5, Qt.DashLine))
-                painter.setBrush(QColor(37, 99, 235, 30))
+                painter.setBrush(QColor(37, 99, 235, 35))
                 painter.drawRect(self._active_uia_rect)
-                snap_pt = getattr(self, "_active_uia_snap", None)
-                if snap_pt:
-                    painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
-                    painter.setBrush(QColor(229, 57, 53, 180))
-                    painter.drawEllipse(QPointF(snap_pt[0], snap_pt[1]), 8, 8)
+                if self.current_mode == "STAMP":
+                    snap_pt = getattr(self, "_active_uia_snap", None)
+                    if snap_pt:
+                        painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+                        painter.setBrush(QColor(229, 57, 53, 180))
+                        painter.drawEllipse(QPointF(snap_pt[0], snap_pt[1]), 8, 8)
+                elif self.current_mode == "BOX":
+                    cr = self._active_uia_rect
+                    c_len = min(12.0, min(cr.width(), cr.height()) / 3)
+                    p_corner = QPen(QColor("#2563EB"), 2.5)
+                    painter.setPen(p_corner)
+                    # TL
+                    painter.drawLine(QPointF(cr.left(), cr.top()), QPointF(cr.left() + c_len, cr.top()))
+                    painter.drawLine(QPointF(cr.left(), cr.top()), QPointF(cr.left(), cr.top() + c_len))
+                    # TR
+                    painter.drawLine(QPointF(cr.right(), cr.top()), QPointF(cr.right() - c_len, cr.top()))
+                    painter.drawLine(QPointF(cr.right(), cr.top()), QPointF(cr.right(), cr.top() + c_len))
+                    # BL
+                    painter.drawLine(QPointF(cr.left(), cr.bottom()), QPointF(cr.left() + c_len, cr.bottom()))
+                    painter.drawLine(QPointF(cr.left(), cr.bottom()), QPointF(cr.left(), cr.bottom() - c_len))
+                    # BR
+                    painter.drawLine(QPointF(cr.right(), cr.bottom()), QPointF(cr.right() - c_len, cr.bottom()))
+                    painter.drawLine(QPointF(cr.right(), cr.bottom()), QPointF(cr.right(), cr.bottom() - c_len))
                 painter.restore()
 
             # 3. 실시간 드로잉 프리뷰
@@ -14790,7 +14882,8 @@ class ManualStudioWindow(QMainWindow):
                     "raw_pixmap": self.canvas.pixmap.copy() if self.canvas.pixmap else None,
                     "thumbnail": self.canvas.pixmap.copy() if self.canvas.pixmap else None,
                     "items": [it.clone() for it in self.canvas.items],
-                    "next_stamp_index": self.canvas.next_stamp_index
+                    "next_stamp_index": self.canvas.next_stamp_index,
+                    "uia_elements": list(getattr(self.canvas, "uia_elements", []))
                 })
                 self.current_step_idx = 0
                 if hasattr(self, "filmstrip"):
@@ -14801,6 +14894,7 @@ class ManualStudioWindow(QMainWindow):
                 curr["raw_pixmap"] = self.canvas.pixmap.copy()
             curr["items"] = [it.clone() for it in self.canvas.items]
             curr["next_stamp_index"] = self.canvas.next_stamp_index
+            curr["uia_elements"] = list(getattr(self.canvas, "uia_elements", []))
             comp = self.canvas.get_composed_image()
             if comp:
                 curr["thumbnail"] = QPixmap.fromImage(comp)
@@ -15963,7 +16057,17 @@ class ManualStudioWindow(QMainWindow):
                 self.show_toast("화면 캡처 실패: 유효하지 않은 좌표입니다.")
                 return
 
-            self.on_capture_completed(cropped, QRect(x, y, w, h), is_fixed_capture=True)
+            # 화면 캡처 직후 창 복원 전, 대상 응용프로그램 HWND 즉시 획득
+            target_hwnd = None
+            try:
+                import ctypes
+                class POINT(ctypes.Structure):
+                    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+                target_hwnd = ctypes.windll.user32.WindowFromPoint(POINT(int(x + w // 2), int(y + h // 2)))
+            except Exception:
+                pass
+
+            self.on_capture_completed(cropped, QRect(x, y, w, h), is_fixed_capture=True, target_hwnd=target_hwnd)
             mon_str = "전체 가상화면" if target_mon == -1 else f"모니터 {target_mon + 1}"
             self.show_toast(f"고정 영역 ({mon_str} {x},{y} {w}×{h}px) 즉시 캡처 완료!")
         finally:
@@ -16009,13 +16113,16 @@ class ManualStudioWindow(QMainWindow):
             self._restore_window_after_capture(was_visible)
             print(f"[부분 캡처 오버레이 실행 오류]: {e}")
 
-    def on_sub_capture_completed(self, pixmap, global_rect=None):
+    def on_sub_capture_completed(self, pixmap, global_rect=None, target_hwnd=None):
+        if target_hwnd is None and hasattr(self, "overlay_window") and getattr(self.overlay_window, "target_hwnd", None):
+            target_hwnd = self.overlay_window.target_hwnd
         self._restore_window_after_capture(True)
         
         # --- UIA Collection Trigger ---
         try:
             if global_rect and hasattr(global_rect, "isEmpty") and not global_rect.isEmpty():
-                self.uia_thread = UIACollectorThread(global_rect, self)
+                import os
+                self.uia_thread = UIACollectorThread(global_rect, target_hwnd=target_hwnd, own_pid=os.getpid(), parent=self)
                 self.uia_thread.sig_uia_collected.connect(self.on_uia_collected)
                 self.uia_thread.start()
         except Exception:
@@ -16030,8 +16137,10 @@ class ManualStudioWindow(QMainWindow):
     def on_uia_collected(self, elements):
         if hasattr(self, "canvas"):
             self.canvas.uia_elements = elements
+            if hasattr(self, "storyboard_steps") and 0 <= self.current_step_idx < len(self.storyboard_steps):
+                self.storyboard_steps[self.current_step_idx]["uia_elements"] = elements
             if elements:
-                self.show_toast(f"UIA 객체 {len(elements)}개 스캔 완료. 스탬프 스냅이 활성화되었습니다.")
+                self.show_toast(f"UIA 컨트롤 {len(elements)}개 감지 완료 (스탬프/박스 스냅 활성)")
 
     # -------------------------------------------------------------
     # 다중 모니터 & 폰트 & 꺾임선 & 워드아트 이벤트 핸들러
@@ -16318,7 +16427,9 @@ class ManualStudioWindow(QMainWindow):
             self.canvas.update()
             self.canvas.sig_content_changed.emit()
 
-    def on_capture_completed(self, pixmap, global_rect=None, is_fixed_capture=False):
+    def on_capture_completed(self, pixmap, global_rect=None, is_fixed_capture=False, target_hwnd=None):
+        if target_hwnd is None and hasattr(self, "overlay_window") and getattr(self.overlay_window, "target_hwnd", None):
+            target_hwnd = self.overlay_window.target_hwnd
         if global_rect and not global_rect.isEmpty():
             self.last_capture_rect = global_rect
             # 드래그 영역 지정이든 수동 지정이든 캡처 완료 시 고정 영역으로 자동 등록 및 활성화!
@@ -16382,7 +16493,8 @@ class ManualStudioWindow(QMainWindow):
         # --- UIA Collection Trigger ---
         try:
             if global_rect and hasattr(global_rect, "isEmpty") and not global_rect.isEmpty():
-                self.uia_thread = UIACollectorThread(global_rect, self)
+                import os
+                self.uia_thread = UIACollectorThread(global_rect, target_hwnd=target_hwnd, own_pid=os.getpid(), parent=self)
                 self.uia_thread.sig_uia_collected.connect(self.on_uia_collected)
                 self.uia_thread.start()
         except Exception:
@@ -17324,6 +17436,7 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
         self.canvas.selected_item = None
         self.canvas.history.clear()
+        self.canvas.uia_elements = list(target_step.get("uia_elements", []))
         self.canvas.update()
 
     def on_filmstrip_step_selected(self, target_idx: int):
