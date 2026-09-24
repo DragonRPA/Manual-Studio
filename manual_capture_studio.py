@@ -10975,6 +10975,7 @@ class FilmstripDockWidget(QWidget):
         super().__init__(parent)
         self.steps = []
         self.active_idx = 0
+        self.anchor_idx = 0
         self.selected_indices = set()
         self.hover_preview_enabled = True
         self.setFixedWidth(140)
@@ -11203,7 +11204,36 @@ class FilmstripDockWidget(QWidget):
             self.sig_delete_steps.emit(targets)
 
     def on_card_clicked_with_mod(self, idx: int, modifiers):
-        if modifiers and (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):
+        if not self.steps or idx < 0 or idx >= len(self.steps):
+            return
+
+        is_shift = bool(modifiers and (modifiers & Qt.ShiftModifier))
+        is_ctrl = bool(modifiers and (modifiers & Qt.ControlModifier))
+
+        if is_shift:
+            # Shift + Click: 기준점(anchor)부터 클릭한 위치까지 연속 구간(Range) 선택
+            anchor = getattr(self, "anchor_idx", None)
+            if anchor is None or anchor < 0 or anchor >= len(self.steps):
+                anchor = self.active_idx if (0 <= self.active_idx < len(self.steps)) else 0
+
+            start = min(anchor, idx)
+            end = max(anchor, idx)
+            range_set = set(range(start, end + 1))
+
+            if is_ctrl:
+                # Ctrl + Shift + Click: 기존 선택 영역에 연속 구간 추가
+                self.selected_indices |= range_set
+            else:
+                # 순수 Shift + Click: 기존 선택을 해당 연속 구간으로 교체
+                self.selected_indices = range_set
+
+            self.active_idx = idx
+            # anchor_idx는 유지하여 연속 Shift-클릭 시 구간 재조정 지원
+            self.update_card_selection_states()
+            self.sig_step_selected.emit(idx)
+
+        elif is_ctrl:
+            # Ctrl + Click: 개별 아이템 토글(Inclusion/Exclusion Toggle) 선택
             if idx in self.selected_indices:
                 if len(self.selected_indices) > 1:
                     self.selected_indices.remove(idx)
@@ -11214,16 +11244,22 @@ class FilmstripDockWidget(QWidget):
                 self.selected_indices.add(idx)
                 self.active_idx = idx
                 self.sig_step_selected.emit(self.active_idx)
+
+            self.anchor_idx = idx
             self.update_card_selection_states()
+
         else:
+            # 단일 클릭 (No modifiers): 기존 선택 모두 해제하고 단일 아이템만 선택
             self.selected_indices = {idx}
             self.active_idx = idx
+            self.anchor_idx = idx
             self.update_card_selection_states()
             self.sig_step_selected.emit(idx)
 
     def set_active_step(self, idx: int):
         if self.steps and 0 <= idx < len(self.steps):
             self.active_idx = idx
+            self.anchor_idx = idx
             self.update_card_selection_states()
 
     def update_card_selection_states(self):
@@ -11252,6 +11288,7 @@ class FilmstripDockWidget(QWidget):
     def set_steps(self, steps: list, active_idx: int = 0):
         self.steps = steps
         self.active_idx = max(0, min(active_idx, len(steps) - 1)) if steps else 0
+        self.anchor_idx = self.active_idx
         if self.steps:
             self.selected_indices = {self.active_idx}
         else:
@@ -11269,7 +11306,6 @@ class FilmstripDockWidget(QWidget):
             is_sel = (idx == self.active_idx)
             is_chk = (idx in self.selected_indices)
             card = StepCardWidget(idx, step_data, is_selected=is_sel, is_checked=is_chk, parent=self.cards_container)
-            card.sig_clicked.connect(self.sig_step_selected.emit)
             card.sig_clicked_with_mod.connect(self.on_card_clicked_with_mod)
             card.sig_delete.connect(lambda i=idx: self.sig_delete_steps.emit([i]))
             card.sig_duplicate.connect(self.sig_duplicate_step.emit)

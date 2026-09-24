@@ -3562,15 +3562,15 @@ def test_phase6_multi_selection_and_f10_slide():
     assert len(targets) == 1
     assert targets[0][0] == 2
 
-    # 4. Shift-Click Inclusion / Exclusion Toggle
-    film.on_card_clicked_with_mod(0, Qt.ShiftModifier)
+    # 4. Ctrl-Click (Individual Toggle) & Shift-Click (Range Selection)
+    film.on_card_clicked_with_mod(0, Qt.ControlModifier)
     assert film.selected_indices == {0, 2}
     assert "2개 선택됨" in film.lbl_title.text()
     targets = win.get_export_target_steps()
     assert len(targets) == 2
     assert [t[0] for t in targets] == [0, 2]
 
-    film.on_card_clicked_with_mod(2, Qt.ShiftModifier)
+    film.on_card_clicked_with_mod(2, Qt.ControlModifier)
     assert film.selected_indices == {0}
     assert "1개 선택됨" in film.lbl_title.text()
 
@@ -3578,7 +3578,13 @@ def test_phase6_multi_selection_and_f10_slide():
     assert film.selected_indices == {1}
     assert win.current_step_idx == 1
 
-    film.on_card_clicked_with_mod(0, Qt.ControlModifier)
+    # Shift-Click Range Selection: from anchor 1 to 2 -> {1, 2}
+    film.on_card_clicked_with_mod(2, Qt.ShiftModifier)
+    assert film.selected_indices == {1, 2}
+
+    # Shift-Click Range Selection: from anchor 0 to 2 -> {0, 1, 2}
+    film.on_card_clicked_with_mod(0, Qt.NoModifier)
+    assert film.selected_indices == {0}
     film.on_card_clicked_with_mod(2, Qt.ShiftModifier)
     assert film.selected_indices == {0, 1, 2}
 
