@@ -6192,9 +6192,15 @@ class ProjectManager:
 
                         raw_px = step.get("raw_pixmap")
                         img_rel_path = None
-                        canvas_size = [0, 0]
-                        if raw_px and not raw_px.isNull():
+                        c_sz = step.get("canvas_size")
+                        if c_sz and len(c_sz) >= 2 and c_sz[0] > 0 and c_sz[1] > 0:
+                            canvas_size = [int(c_sz[0]), int(c_sz[1])]
+                        elif raw_px and not raw_px.isNull():
                             canvas_size = [raw_px.width(), raw_px.height()]
+                        else:
+                            canvas_size = [960, 540]
+
+                        if raw_px and not raw_px.isNull():
                             img_name = f"slides/step_{step_num:03d}_raw.png"
                             zf.writestr(img_name, cls.pixmap_to_bytes(raw_px))
                             img_rel_path = img_name
@@ -6260,7 +6266,13 @@ class ProjectManager:
 
                     raw_px = step.get("raw_pixmap")
                     b64_str = cls.pixmap_to_base64(raw_px) if raw_px and not raw_px.isNull() else ""
-                    canvas_size = [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [0, 0]
+                    c_sz = step.get("canvas_size")
+                    if c_sz and len(c_sz) >= 2 and c_sz[0] > 0 and c_sz[1] > 0:
+                        canvas_size = [int(c_sz[0]), int(c_sz[1])]
+                    elif raw_px and not raw_px.isNull():
+                        canvas_size = [raw_px.width(), raw_px.height()]
+                    else:
+                        canvas_size = [960, 540]
 
                     companion_file = raw_img_filename if (len(storyboard_steps) == 1 and i == 0) else None
 
@@ -6350,6 +6362,12 @@ class ProjectManager:
                             if it_obj:
                                 items.append(it_obj)
 
+                        c_sz = sdata.get("canvas_size")
+                        if not c_sz and raw_px and not raw_px.isNull():
+                            c_sz = [raw_px.width(), raw_px.height()]
+                        elif not c_sz:
+                            c_sz = [960, 540]
+
                         storyboard_steps.append({
                             "step_num": step_num,
                             "title": s_title,
@@ -6358,7 +6376,8 @@ class ProjectManager:
                             "thumbnail": thumb_px,
                             "items": items,
                             "next_stamp_index": next_stamp,
-                            "uia_elements": list(sdata.get("uia_elements", []))
+                            "uia_elements": list(sdata.get("uia_elements", [])),
+                            "canvas_size": list(c_sz)
                         })
                     return ProjectData(storyboard_steps, active_idx, metadata)
 
@@ -6396,6 +6415,12 @@ class ProjectManager:
 
                     thumb_px = raw_px.copy() if raw_px else None
 
+                    c_sz = sdata.get("canvas_size")
+                    if not c_sz and raw_px and not raw_px.isNull():
+                        c_sz = [raw_px.width(), raw_px.height()]
+                    elif not c_sz:
+                        c_sz = [960, 540]
+
                     storyboard_steps.append({
                         "step_num": step_num,
                         "title": s_title,
@@ -6404,7 +6429,8 @@ class ProjectManager:
                         "thumbnail": thumb_px,
                         "items": items,
                         "next_stamp_index": next_stamp,
-                        "uia_elements": list(sdata.get("uia_elements", []))
+                        "uia_elements": list(sdata.get("uia_elements", [])),
+                        "canvas_size": list(c_sz)
                     })
                 return ProjectData(storyboard_steps, active_idx, metadata)
 
@@ -6426,6 +6452,12 @@ class ProjectManager:
                     items.append(obj)
 
             next_stamp_index = int(data.get("next_stamp_index", 1))
+            c_sz = data.get("canvas_size")
+            if not c_sz and raw_pixmap and not raw_pixmap.isNull():
+                c_sz = [raw_pixmap.width(), raw_pixmap.height()]
+            elif not c_sz:
+                c_sz = [960, 540]
+
             single_step = {
                 "step_num": 1,
                 "title": "Step 1. [단계명 입력]",
@@ -6434,7 +6466,8 @@ class ProjectManager:
                 "thumbnail": raw_pixmap.copy() if raw_pixmap else None,
                 "items": items,
                 "next_stamp_index": next_stamp_index,
-                "uia_elements": list(data.get("uia_elements", []))
+                "uia_elements": list(data.get("uia_elements", [])),
+                "canvas_size": list(c_sz)
             }
             return ProjectData([single_step], 0, metadata)
 
@@ -7559,8 +7592,9 @@ class StudioCanvasWidget(QWidget):
         self.push_undo()
 
         # 캔버스 배경 크기 기준으로 1:1 원본 배치 (초과 시에만 비율 축소)
-        cw = self.pixmap.width() if self.pixmap else 960
-        ch = self.pixmap.height() if self.pixmap else 540
+        log_sz = self.get_logical_size()
+        cw = self.pixmap.width() if (self.pixmap and not self.pixmap.isNull()) else log_sz.width()
+        ch = self.pixmap.height() if (self.pixmap and not self.pixmap.isNull()) else log_sz.height()
         pw = pixmap.width()
         ph = pixmap.height()
 
@@ -7585,8 +7619,9 @@ class StudioCanvasWidget(QWidget):
 
     def add_draft_stamp(self, text="DRAFT"):
         self.push_undo()
-        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
-        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+        log_sz = self.get_logical_size()
+        cw = self.pixmap.width() if (self.pixmap and not self.pixmap.isNull()) else log_sz.width()
+        ch = self.pixmap.height() if (self.pixmap and not self.pixmap.isNull()) else log_sz.height()
         center_pt = QPointF(cw / 2.0, ch / 2.0)
         item = DraftStampItem(text=text, pos=center_pt)
         self.items.append(item)
@@ -9753,8 +9788,9 @@ class StudioCanvasWidget(QWidget):
 
     def get_composed_image(self):
         """현재 캔버스 원본 해상도로 주석 일체형 합성 QImage 생성"""
-        cw = self.pixmap.width() if (self.pixmap and not self.pixmap.isNull()) else (self.width() if self.width() > 0 else 960)
-        ch = self.pixmap.height() if (self.pixmap and not self.pixmap.isNull()) else (self.height() if self.height() > 0 else 540)
+        log_sz = self.get_logical_size()
+        cw = self.pixmap.width() if (self.pixmap and not self.pixmap.isNull()) else log_sz.width()
+        ch = self.pixmap.height() if (self.pixmap and not self.pixmap.isNull()) else log_sz.height()
         img = QImage(cw, ch, QImage.Format_ARGB32)
         if self.pixmap and not self.pixmap.isNull():
             img.fill(Qt.transparent)
@@ -10073,6 +10109,10 @@ class ExportEngine:
                 act.Execute(pset)
 
             hwp.HAction.Run("Paste")
+            try:
+                hwp.HAction.Run("ParagraphShapeAlignCenter")
+            except Exception:
+                pass
             hwp.HAction.Run("BreakPara")
 
             try:
@@ -10100,9 +10140,12 @@ class ExportEngine:
         return Image.frombytes("RGBA", (width, height), arr)
 
     @staticmethod
-    def resize_to_target_width(pil_img: Image.Image, target_width: int) -> Image.Image:
+    def resize_to_target_width(pil_img: Image.Image, target_width: int, allow_upscale: bool = False) -> Image.Image:
         orig_w, orig_h = pil_img.size
         if target_width <= 0 or orig_w == target_width:
+            return pil_img
+        # 업스케일링 금지: 원본 크기가 목표 너비보다 작을 때는 원본 해상도와 선명도를 100% 보존
+        if not allow_upscale and orig_w < target_width:
             return pil_img
         # Lanczos 고품질 비율 유지 리샘플링
         ratio = target_width / float(orig_w)
@@ -10180,18 +10223,39 @@ class ExportEngine:
             new_slide = pres.Slides.Add(curr_idx + 1, 12)
 
             layout_cfg = ppt_layout or {}
-            ppt_left = float(layout_cfg.get("left", 50))
-            ppt_top = float(layout_cfg.get("top", 80))
-            ppt_scale = float(layout_cfg.get("scale", 90)) / 100.0
             include_title = bool(layout_cfg.get("include_title", True))
+            align_center = bool(layout_cfg.get("align_center", True)) # 전사 표준: 대상 미디어 중심 기준 중앙 균등배치
 
             img_w, img_h = pil_img.size
+            ppt_scale = float(layout_cfg.get("scale", 90)) / 100.0
 
-            # 사용자 지정 배율 적용 크기 (pt)
-            target_w = img_w * ppt_scale
-            target_h = img_h * ppt_scale
-            left = max(0.0, ppt_left)
-            top = max(0.0, ppt_top)
+            if align_center:
+                # 최종 대상 미디어(PPT 슬라이드)의 중심점을 기준으로 중앙 균등배치
+                center_x = slide_width / 2.0
+                title_top = float(layout_cfg.get("title_top", 15.0))
+                title_h = float(layout_cfg.get("title_height", 35.0))
+                title_bottom = (title_top + title_h + 10.0) if include_title else 0.0
+
+                avail_top = title_bottom if include_title else 25.0
+                avail_bottom = slide_height - 25.0
+                avail_h = max(100.0, avail_bottom - avail_top)
+                avail_w = max(100.0, slide_width - 60.0)
+                center_y = avail_top + (avail_h / 2.0)
+
+                # 슬라이드 가용 영역을 초과하지 않도록 자동 배율 한계 산정 (업스케일링은 방지)
+                fit_scale = min(1.0, avail_w / float(img_w), avail_h / float(img_h))
+                final_scale = min(fit_scale, ppt_scale)
+
+                target_w = img_w * final_scale
+                target_h = img_h * final_scale
+
+                left = max(0.0, center_x - (target_w / 2.0))
+                top = max(0.0, center_y - (target_h / 2.0))
+            else:
+                target_w = img_w * ppt_scale
+                target_h = img_h * ppt_scale
+                left = max(0.0, float(layout_cfg.get("left", 50)))
+                top = max(0.0, float(layout_cfg.get("top", 80)))
 
             # 이미지 삽입
             new_slide.Shapes.AddPicture(
@@ -10206,10 +10270,16 @@ class ExportEngine:
 
             # 상단 단계 제목 상자 (사용자 지정 위치, 크기, 폰트, 색상, 템플릿 적용)
             if include_title:
-                t_left = float(layout_cfg.get("title_left", left))
-                t_top = float(layout_cfg.get("title_top", 15.0 if top < 50.0 else max(15.0, top - 45.0)))
-                t_w = float(layout_cfg.get("title_width", max(target_w, 400.0)))
-                t_h = float(layout_cfg.get("title_height", 35.0))
+                if align_center:
+                    t_w = max(target_w, 400.0)
+                    t_left = max(0.0, (slide_width - t_w) / 2.0)
+                    t_top = 15.0
+                    t_h = float(layout_cfg.get("title_height", 35.0))
+                else:
+                    t_left = float(layout_cfg.get("title_left", left))
+                    t_top = float(layout_cfg.get("title_top", 15.0 if top < 50.0 else max(15.0, top - 45.0)))
+                    t_w = float(layout_cfg.get("title_width", max(target_w, 400.0)))
+                    t_h = float(layout_cfg.get("title_height", 35.0))
 
                 title_box = new_slide.Shapes.AddTextbox(1, t_left, t_top, t_w, t_h) # 1 = msoTextOrientationHorizontal
                 tf = title_box.TextFrame
@@ -15796,16 +15866,40 @@ class ManualStudioWindow(QMainWindow):
 
     def open_image_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "이미지 파일 열기", "", "이미지 파일 (*.png *.jpg *.jpeg *.bmp *.webp);;모든 파일 (*.*)"
+            self, tr("btn_open_file", "이미지 파일 열기"), "", "이미지 파일 (*.png *.jpg *.jpeg *.bmp *.webp);;모든 파일 (*.*)"
         )
-        if file_path and os.path.exists(file_path):
-            pixmap = QPixmap(file_path)
-            if not pixmap.isNull():
-                self.on_capture_completed(pixmap)
-                self.show_toast(f"이미지 로드 완료: {os.path.basename(file_path)}")
+        if not file_path or not os.path.exists(file_path):
+            return
+        pixmap = QPixmap(file_path)
+        if pixmap.isNull():
+            self.show_toast(tr("err_invalid_image", "유효하지 않은 이미지 파일입니다."))
+            return
+
+        # F8(부분캡처) 연동 원칙:
+        # 현재 슬라이드에 이미 베이스 이미지가 있거나 주석이 작성되어 있다면
+        # 현재 슬라이드를 덮어쓰지 않고 F8(부분캡처)처럼 캔버스 중앙에 부분 이미지(ImageOverlayItem)로 안착!
+        has_content = (self.canvas.pixmap is not None and not self.canvas.pixmap.isNull()) or len(self.canvas.items) > 0
+        if has_content:
+            self.canvas.add_image_overlay(pixmap)
+            self._sync_canvas_to_current_step()
+            w = pixmap.width()
+            h = pixmap.height()
+            self.show_toast(f"외부 이미지를 부분 이미지({w}×{h}px)로 추가했습니다. 마우스로 이동 및 크기를 조절하세요.")
+        else:
+            # 빈 슬라이드인 경우: 해당 슬라이드 고유 규격의 베이스 캔버스 배경으로 설정
+            self.canvas.set_pixmap(pixmap)
+            self.canvas.items.clear()
+            self.canvas.history.clear()
+            self.canvas.update_fit_size()
+            self._sync_canvas_to_current_step()
+            w = pixmap.width()
+            h = pixmap.height()
+            self.show_toast(f"슬라이드 배경 이미지 로드 완료 ({w}×{h}px)")
 
     def _sync_canvas_to_current_step(self):
         """현재 캔버스 작업 내용을 스토리보드 활성 슬라이드에 완전 동기화"""
+        log_sz = self.canvas.get_logical_size()
+        sz_list = [log_sz.width(), log_sz.height()]
         if len(self.storyboard_steps) == 0:
             if self.canvas.pixmap is not None or len(self.canvas.items) > 0:
                 self.storyboard_steps.append({
@@ -15816,7 +15910,8 @@ class ManualStudioWindow(QMainWindow):
                     "thumbnail": self.canvas.pixmap.copy() if self.canvas.pixmap else None,
                     "items": [it.clone() for it in self.canvas.items],
                     "next_stamp_index": self.canvas.next_stamp_index,
-                    "uia_elements": list(getattr(self.canvas, "uia_elements", []))
+                    "uia_elements": list(getattr(self.canvas, "uia_elements", [])),
+                    "canvas_size": sz_list
                 })
                 self.current_step_idx = 0
                 if hasattr(self, "filmstrip"):
@@ -15828,6 +15923,7 @@ class ManualStudioWindow(QMainWindow):
             curr["items"] = [it.clone() for it in self.canvas.items]
             curr["next_stamp_index"] = self.canvas.next_stamp_index
             curr["uia_elements"] = list(getattr(self.canvas, "uia_elements", []))
+            curr["canvas_size"] = sz_list
             comp = self.canvas.get_composed_image()
             if comp:
                 curr["thumbnail"] = QPixmap.fromImage(comp)
@@ -17406,6 +17502,8 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.history.clear()
 
         # 스토리보드 동기화 (새 캡처 반영)
+        w = pixmap.width()
+        h = pixmap.height()
         if len(self.storyboard_steps) == 0:
             self.storyboard_steps.append({
                 "step_num": 1,
@@ -17413,7 +17511,9 @@ class ManualStudioWindow(QMainWindow):
                 "raw_pixmap": pixmap.copy(),
                 "items": [],
                 "next_stamp_index": 1,
-                "thumbnail": pixmap.copy()
+                "thumbnail": pixmap.copy(),
+                "canvas_size": [w, h],
+                "uia_elements": []
             })
             self.current_step_idx = 0
         else:
@@ -17422,6 +17522,7 @@ class ManualStudioWindow(QMainWindow):
                 step["raw_pixmap"] = pixmap.copy()
                 step["items"] = []
                 step["thumbnail"] = pixmap.copy()
+                step["canvas_size"] = [w, h]
         if hasattr(self, "filmstrip"):
             self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
 
@@ -18390,14 +18491,21 @@ class ManualStudioWindow(QMainWindow):
         raw_px = target_step.get("raw_pixmap")
         if raw_px and not raw_px.isNull():
             self.canvas.pixmap = raw_px.copy()
+            self.canvas.default_canvas_size = raw_px.size()
         else:
             self.canvas.pixmap = None
+            step_sz = target_step.get("canvas_size")
+            if step_sz and len(step_sz) == 2:
+                self.canvas.default_canvas_size = QSize(step_sz[0], step_sz[1])
+            else:
+                self.canvas.default_canvas_size = QSize(960, 540)
 
         self.canvas.items = [item.clone() for item in target_step.get("items", [])]
         self.canvas.next_stamp_index = target_step.get("next_stamp_index", 1)
         self.canvas.selected_item = None
         self.canvas.history.clear()
         self.canvas.uia_elements = list(target_step.get("uia_elements", []))
+        self.canvas.update_fit_size()
         self.canvas.update()
 
     def on_filmstrip_step_selected(self, target_idx: int):
@@ -18433,6 +18541,7 @@ class ManualStudioWindow(QMainWindow):
             "items": [],
             "next_stamp_index": 1,
             "thumbnail": None,
+            "canvas_size": [960, 540],
             "uia_elements": []
         }
         self.storyboard_steps.append(new_step)
@@ -18443,6 +18552,8 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.next_stamp_index = 1
         self.canvas.history.clear()
         self.canvas.uia_elements = []
+        self.canvas.default_canvas_size = QSize(960, 540)
+        self.canvas.update_fit_size()
         self.canvas.update()
 
         if hasattr(self, "filmstrip"):
@@ -18511,7 +18622,8 @@ class ManualStudioWindow(QMainWindow):
                     "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                     "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
                     "next_stamp_index": orig.get("next_stamp_index", 1),
-                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])]
+                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])],
+                    "canvas_size": list(orig.get("canvas_size", [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [960, 540]))
                 }
                 new_steps.append(dup)
                 new_selected.add(len(new_steps) - 1)
@@ -18546,7 +18658,8 @@ class ManualStudioWindow(QMainWindow):
                     "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                     "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
                     "next_stamp_index": orig.get("next_stamp_index", 1),
-                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])]
+                    "uia_elements": [dict(el) for el in orig.get("uia_elements", [])],
+                    "canvas_size": list(orig.get("canvas_size", [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [960, 540]))
                 }
                 self._clipboard_slide_buffer.append(copied)
         self.show_toast(f"슬라이드 {len(self._clipboard_slide_buffer)}개 복사 완료")
@@ -18579,7 +18692,8 @@ class ManualStudioWindow(QMainWindow):
                 "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                 "items": [it.clone() for it in item.get("items", []) if hasattr(it, "clone")],
                 "next_stamp_index": item.get("next_stamp_index", 1),
-                "uia_elements": [dict(el) for el in item.get("uia_elements", [])]
+                "uia_elements": [dict(el) for el in item.get("uia_elements", [])],
+                "canvas_size": list(item.get("canvas_size", [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [960, 540]))
             }
             new_steps.append(dup)
             pasted_indices.add(len(new_steps) - 1)
@@ -18696,7 +18810,8 @@ class ManualStudioWindow(QMainWindow):
                 "thumbnail": thumb_px.copy() if thumb_px and not thumb_px.isNull() else None,
                 "items": [it.clone() for it in src_step.get("items", []) if hasattr(it, "clone")],
                 "next_stamp_index": src_step.get("next_stamp_index", 1),
-                "uia_elements": [dict(el) for el in src_step.get("uia_elements", [])]
+                "uia_elements": [dict(el) for el in src_step.get("uia_elements", [])],
+                "canvas_size": list(src_step.get("canvas_size", [raw_px.width(), raw_px.height()] if raw_px and not raw_px.isNull() else [960, 540]))
             }
             self.storyboard_steps.insert(dup_idx + 1, new_step)
             for i, s in enumerate(self.storyboard_steps):
@@ -18729,18 +18844,21 @@ class ManualStudioWindow(QMainWindow):
         s_title = step.get("title", f"Step {step_num}")
 
         if raw_px is None or raw_px.isNull():
-            # 빈 슬라이드 Fallback: 1920x1080 백색 캔버스에 단계 타이틀 렌더링
-            raw_px = QPixmap(1920, 1080)
+            # 빈 슬라이드 Fallback: step의 고유 canvas_size(기본 1920x1080) 백색 캔버스에 단계 타이틀 렌더링
+            c_sz = step.get("canvas_size")
+            fb_w = int(c_sz[0]) if c_sz and len(c_sz) >= 2 and c_sz[0] > 0 else 1920
+            fb_h = int(c_sz[1]) if c_sz and len(c_sz) >= 2 and c_sz[1] > 0 else 1080
+            raw_px = QPixmap(fb_w, fb_h)
             raw_px.fill(Qt.white)
             p = QPainter(raw_px)
             p.setRenderHint(QPainter.Antialiasing, True)
             p.setPen(QPen(QColor("#E2E8F0"), 3, Qt.DashLine))
-            p.drawRect(40, 40, 1840, 1000)
+            p.drawRect(40, 40, max(10, fb_w - 80), max(10, fb_h - 80))
             font = QFont("Malgun Gothic", 28)
             font.setBold(True)
             p.setFont(font)
             p.setPen(QColor("#64748B"))
-            p.drawText(QRect(60, 60, 1800, 960), Qt.AlignCenter, f"{s_title}\n\n[{tr('slide_empty', '빈 슬라이드')}]")
+            p.drawText(QRect(60, 60, max(10, fb_w - 120), max(10, fb_h - 120)), Qt.AlignCenter, f"{s_title}\n\n[{tr('slide_empty', '빈 슬라이드')}]")
             p.end()
 
         # 주석 렌더링을 위한 합성 QImage 생성
