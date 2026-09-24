@@ -8610,10 +8610,18 @@ class StudioCanvasWidget(QWidget):
                 # 등록된 아이템이 전혀 없을 때만 은은한 가이드 텍스트 표시
                 if not self.items:
                     painter.setPen(QColor(148, 163, 184))
-                    f_guide = QFont("Malgun Gothic", 11)
+                    font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+                    f_guide = QFont(font_family, 11)
                     f_guide.setBold(True)
                     painter.setFont(f_guide)
-                    painter.drawText(r, Qt.AlignCenter, "투명 캔버스 (16:9)\nF8 부분캡처 또는 플로우차트/텍스트/도형을 자유롭게 배치하세요.")
+                    g_title = tr("canvas_guide_title", "투명 캔버스 (16:9)")
+                    g_step1 = tr("canvas_guide_step1", "Shift + F9 로 고정 캡처 영역을 지정하세요")
+                    g_step2 = tr("canvas_guide_step2", "F9 를 눌러서 지정된 영역을 캡처하세요")
+                    g_step3 = tr("canvas_guide_step3", "F8 부분캡처를 사용해서 팝업들을 가져오세요")
+                    g_step4 = tr("canvas_guide_step4", "텍스트 박스/OCR 기능/다양한 스탬프 등을 활용해보세요")
+                    g_step5 = tr("canvas_guide_step5", "당신의 고통스러운 매뉴얼 작업을 쉽고 빠르게 끝내세요")
+                    guide_text = f"{g_title}\n\n{g_step1}\n{g_step2}\n{g_step3}\n{g_step4}\n\n{g_step5}"
+                    painter.drawText(r, Qt.AlignCenter, guide_text)
 
             # 2. 모든 주석 렌더링 (블러는 원본 픽셀맵 합성)
             for item in self.items:
@@ -14020,6 +14028,8 @@ class ManualStudioWindow(QMainWindow):
             self.filmstrip.retranslate_ui()
         if hasattr(self, "init_monitor_combos"):
             self.init_monitor_combos()
+        if hasattr(self, "canvas") and self.canvas:
+            self.canvas.update()
 
     def retranslate_menu_bar(self):
         if hasattr(self, "menu_file"):
