@@ -12837,16 +12837,24 @@ class VerticalToolGroupWidget(QFrame):
 
 
 class ToolHoverFilter(QObject):
-    """툴바 버튼 호버 시 하단 상태바에 즉각 명칭 표출"""
+    """툴바/리본 버튼 호버 시 하단 상태바에 즉각 명칭 표출"""
     def __init__(self, tooltip_text, main_window, parent=None):
         super().__init__(parent or main_window)
-        self.tooltip_text = tooltip_text
+        if tooltip_text:
+            self.tooltip_text = tooltip_text.split("\n")[0].strip()
+        else:
+            self.tooltip_text = ""
         self.main_window = main_window
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Enter:
             if hasattr(self.main_window, "status_label") and self.main_window.status_label:
-                self.main_window.status_label.setText(self.tooltip_text)
+                text_to_show = self.tooltip_text
+                if not text_to_show:
+                    raw = (watched.toolTip() if hasattr(watched, "toolTip") else "") or (watched.text() if hasattr(watched, "text") else "")
+                    text_to_show = raw.split("\n")[0].strip() if raw else ""
+                if text_to_show:
+                    self.main_window.status_label.setText(text_to_show)
         elif event.type() == QEvent.Leave:
             if hasattr(self.main_window, "status_label") and self.main_window.status_label:
                 self.main_window.status_label.setText(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"))
@@ -13096,6 +13104,7 @@ class ManualStudioWindow(QMainWindow):
         ribbon_frame = QFrame(self)
         self.ribbon_frame = ribbon_frame
         ribbon_frame.setObjectName("RibbonPanel")
+        ribbon_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         ribbon_frame.setStyleSheet("""
             QFrame#RibbonPanel {
                 background-color: #F8FAFC;
@@ -14466,15 +14475,20 @@ class ManualStudioWindow(QMainWindow):
 
         # 3. 하단 상태바
         status_bar_widget = QWidget(self)
+        self.status_bar_widget = status_bar_widget
+        status_bar_widget.setFixedHeight(24)
+        status_bar_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         status_layout = QHBoxLayout(status_bar_widget)
-        status_layout.setContentsMargins(4, 2, 6, 2)
+        status_layout.setContentsMargins(4, 0, 6, 0)
         status_layout.setSpacing(8)
 
         if hasattr(self, "lbl_active_mode") and self.lbl_active_mode:
             status_layout.addWidget(self.lbl_active_mode)
 
         self.status_label = QLabel(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"), self)
-        self.status_label.setStyleSheet("color: #666666; font-size: 11px; padding: 2px 4px;")
+        self.status_label.setStyleSheet("color: #666666; font-size: 11px; padding: 2px 4px; white-space: nowrap;")
+        self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.status_label.setMinimumWidth(0)
         status_layout.addWidget(self.status_label, 1)
 
         # 하단 우측 개발사 정보 및 Contact
@@ -14485,7 +14499,7 @@ class ManualStudioWindow(QMainWindow):
         status_layout.addWidget(lbl_bot_ci)
 
         self.lbl_bottom_dev = QLabel("(주)드래곤알피에이 (DragonRPA Co.) | 평가판 (~2026.12.31) | 77.victor.lee@gmail.com", status_bar_widget)
-        self.lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500;")
+        self.lbl_bottom_dev.setStyleSheet("color: #94A3B8; font-size: 10.5px; font-weight: 500; white-space: nowrap;")
         status_layout.addWidget(self.lbl_bottom_dev)
 
         main_layout.addWidget(status_bar_widget)
@@ -15625,8 +15639,12 @@ class ManualStudioWindow(QMainWindow):
 
                 # 마우스오버 시 즉각적인 하단 상태바 텍스트 및 툴팁 연동
                 if not getattr(btn, "_has_hover_filter", False):
-                    tt = btn.toolTip() or tr(text_key, def_text)
-                    filt = ToolHoverFilter(tt, self, btn)
+                    btn_name = tr(text_key, def_text)
+                    tt_raw = btn.toolTip() or ""
+                    import re
+                    m = re.search(r"\[([^\]]+)\]", tt_raw.split("\n")[0])
+                    btn_label = f"{btn_name} [{m.group(1)}]" if m else btn_name
+                    filt = ToolHoverFilter(btn_label, self, btn)
                     btn.installEventFilter(filt)
                     btn._has_hover_filter = True
 
