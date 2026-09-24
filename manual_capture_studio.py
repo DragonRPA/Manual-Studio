@@ -2903,17 +2903,11 @@ class OcrWorkerThread(QThread):
             # 외곽 패딩 여백 추가 (글자 획이 이미지 외곽선과 닿아 노이즈로 필터링되는 현상 방지)
             padded = ImageOps.expand(img_rgb, border=pad, fill=bg_color)
 
-            # 적응형 배율 계산 (이미지가 작을수록 업스케일)
-            eff_scale = scale
-            if h >= 120 and w >= 240:
-                eff_scale = 1.0
-            elif h >= 60 and w >= 120:
-                eff_scale = min(eff_scale, 1.5)
-
-            if eff_scale > 1.0:
-                nw, nh = int(padded.width * eff_scale), int(padded.height * eff_scale)
-                padded = padded.resize((nw, nh), Image.Resampling.LANCZOS)
-                padded = ImageEnhance.Sharpness(padded).enhance(1.2)
+            # 사장님 지침 표준: 원본 크기를 메모리 상에서 가로*세로 2배(scale=2.0)로 고품질 확대하여 OCR 신경망에 전달
+            eff_scale = max(2.0, float(scale))
+            nw, nh = int(padded.width * eff_scale), int(padded.height * eff_scale)
+            padded = padded.resize((nw, nh), Image.Resampling.LANCZOS)
+            padded = ImageEnhance.Sharpness(padded).enhance(1.25)
 
             if contrast_boost:
                 padded = ImageEnhance.Contrast(padded).enhance(1.5)
@@ -4411,6 +4405,23 @@ class FlowchartRoutingEngine:
         return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
 
     @staticmethod
+    def segments_overlap(p1, p2, p3, p4, tolerance=2.0):
+        """두 직교 선분이 평행하면서 동일 축 상에서 겹쳐 달리는지 검사 (선 중첩 장애물 판정)"""
+        # 수평 선분 검사
+        if abs(p1.y() - p2.y()) < tolerance and abs(p3.y() - p4.y()) < tolerance:
+            if abs(p1.y() - p3.y()) < tolerance:
+                min1, max1 = min(p1.x(), p2.x()), max(p1.x(), p2.x())
+                min2, max2 = min(p3.x(), p4.x()), max(p3.x(), p4.x())
+                return max(min1, min2) < min(max1, max2) - tolerance
+        # 수직 선분 검사
+        if abs(p1.x() - p2.x()) < tolerance and abs(p3.x() - p4.x()) < tolerance:
+            if abs(p1.x() - p3.x()) < tolerance:
+                min1, max1 = min(p1.y(), p2.y()), max(p1.y(), p2.y())
+                min2, max2 = min(p3.y(), p4.y()), max(p3.y(), p4.y())
+                return max(min1, min2) < min(max1, max2) - tolerance
+        return False
+
+    @staticmethod
     def count_collisions(points, obstacles, src_node=None, dst_node=None, margin=6.0, routed_segments=None):
         """경로의 모든 선분과 장애물(및 출발/도착 노드) 간의 충돌 횟수, 그리고 기배치된 선들과의 교차 횟수 계산 반환: (node_hits, line_crossings)"""
         node_hits = 0
@@ -4437,11 +4448,12 @@ class FlowchartRoutingEngine:
                     
             if routed_segments:
                 for seg in routed_segments:
-                    # 완벽히 직교 교차하거나 겹치는 경우
+                    # 1. 완벽히 직교 교차하는 경우 (X자 교차)
                     if FlowchartRoutingEngine.segments_intersect(p1, p2, seg[0], seg[1]):
-                        # 단, 시작점/도착점이 같아서 교차로 판정되는 경우는 제외 (연결된 선)
-                        # 여기서는 노드가 다르므로 선분 교차가 맞음
                         line_crossings += 1
+                    # 2. 동일 선상에서 나란히 겹쳐 달리는 경우 (선 중첩 장애물 충돌)
+                    elif FlowchartRoutingEngine.segments_overlap(p1, p2, seg[0], seg[1]):
+                        line_crossings += 2
                         
         class CollisionResult(tuple):
             def __new__(cls, node_hits, line_crossings):
@@ -4560,7 +4572,7 @@ class FlowchartRoutingEngine:
         # 3-3. 포트 방향을 완벽히 존중하기 위한 확장 2번 꺾임 및 3번 꺾임 (HVHV, VHVH) 추가
         # 로컬 고정 확장 채널 (사용자 요청에 따라 기본 여백은 24px 유지)
         channels = []
-        for ext in [margin + 10.0, margin + 25.0, 40.0]:
+        for ext in [margin + 10.0, margin + 24.0, 38.0]:
             channels.append({
                 "p1_t": p1.y() - ext, "p1_b": p1.y() + ext, "p1_l": p1.x() - ext, "p1_r": p1.x() + ext,
                 "p2_t": p2.y() - ext, "p2_b": p2.y() + ext, "p2_l": p2.x() - ext, "p2_r": p2.x() + ext
@@ -4578,8 +4590,8 @@ class FlowchartRoutingEngine:
             if hasattr(obs, 'rect'):
                 g_max_x, g_min_x = max(g_max_x, obs.rect.right()), min(g_min_x, obs.rect.left())
                 g_max_y, g_min_y = max(g_max_y, obs.rect.bottom()), min(g_min_y, obs.rect.top())
-        obs_count = len(obstacles) if obstacles else 0
-        dynamic_gap = max(24.0, obs_count * 24.0)
+        # 사장님 지침: 모든 장애물을 회피한 상태에서의 추가 이격을 24pt로 엄격히 제한
+        dynamic_gap = 24.0
         safe_margin = margin + dynamic_gap
         channels.append({
             "p1_t": g_min_y - safe_margin, "p1_b": g_max_y + safe_margin, "p1_l": g_min_x - safe_margin, "p1_r": g_max_x + safe_margin,
@@ -4800,9 +4812,8 @@ class FlowchartRoutingEngine:
             else:
                 dst_ports = ["left", "right", "top", "bottom"] if dx >= 0 else ["right", "left", "top", "bottom"]
 
-        best_result = None
-        min_total_cost = float('inf')
-
+        valid_candidates = []
+        all_candidates = []
         lane_offset = 0.0
 
         for sp in src_ports:
@@ -4828,19 +4839,47 @@ class FlowchartRoutingEngine:
                     if dp in dst_map["out"]: occupancy_penalty += 1000000.0
 
                 cost = (node_hits * 1000000.0) + (line_crossings * 500.0) + occupancy_penalty + (bends * 400.0) + (path_len * 1.0)
+                cand = {
+                    "start_pos": p1,
+                    "end_pos": p2,
+                    "src_port": sp,
+                    "dst_port": dp,
+                    "route_mode": mode,
+                    "custom_corners": corners,
+                    "node_hits": node_hits,
+                    "line_crossings": line_crossings,
+                    "occupancy_penalty": occupancy_penalty,
+                    "bends": bends,
+                    "path_len": path_len,
+                    "total_cost": cost
+                }
+                all_candidates.append(cand)
+                # 사장님 지침: 충돌/관통(node_hits == 0) 및 입출력 관계 중첩(occupancy_penalty == 0) 원천 배제
+                if node_hits == 0 and occupancy_penalty == 0:
+                    valid_candidates.append(cand)
 
-                if cost < min_total_cost:
-                    min_total_cost = cost
-                    best_result = {
-                        "start_pos": p1,
-                        "end_pos": p2,
-                        "src_port": sp,
-                        "dst_port": dp,
-                        "route_mode": mode,
-                        "custom_corners": corners
-                    }
+        # 16가지 경우의 수 중 충돌/관통/포트중첩을 배제하고 남은 경우의 수 중 연결선 거리(path_len)가 가장 짧은 연결 채택
+        if valid_candidates:
+            # 선 교차(line_crossings)가 0인 후보가 우선
+            no_cross = [c for c in valid_candidates if c["line_crossings"] == 0]
+            pool = no_cross if no_cross else valid_candidates
+            pool.sort(key=lambda c: (c["path_len"], c["bends"]))
+            best_cand = pool[0]
+        else:
+            # 16가지 모두 충돌/중복이 발생하는 경우 기존 최저 비용 채택
+            all_candidates.sort(key=lambda c: c["total_cost"])
+            best_cand = all_candidates[0] if all_candidates else None
 
-        if best_result is None:
+        if best_cand:
+            best_result = {
+                "start_pos": best_cand["start_pos"],
+                "end_pos": best_cand["end_pos"],
+                "src_port": best_cand["src_port"],
+                "dst_port": best_cand["dst_port"],
+                "route_mode": best_cand["route_mode"],
+                "custom_corners": best_cand["custom_corners"]
+            }
+        else:
             sp = src_ports[0]
             dp = dst_ports[0]
             best_result = {
@@ -6962,7 +7001,9 @@ class StudioCanvasWidget(QWidget):
 
         scale_w = vw / float(pw)
         scale_h = vh / float(ph)
-        self.zoom_scale = min(scale_w, scale_h)
+        # 사장님 지침: 캔버스 크기는 고정영역 크기와 동일(1.0)하거나 비율을 유지한 채 작아질 수만 있고,
+        # 고정영역보다 크게 확대(Upscale)하지 않음으로써 픽셀 뭉개짐을 원천 방지 (최대 배율 1.0 제한)
+        self.zoom_scale = min(1.0, min(scale_w, scale_h))
 
         new_w = max(100, int(pw * self.zoom_scale))
         new_h = max(100, int(ph * self.zoom_scale))
@@ -10607,7 +10648,7 @@ class StepCardWidget(QFrame):
             self.lbl_thumb.setPixmap(thumb_pix.scaled(98, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             self.lbl_thumb.setText(tr("slide_empty", "빈 슬라이드"))
-            self.lbl_thumb.setStyleSheet("color: #94A3B8; font-size: 10px;")
+            self.lbl_thumb.setStyleSheet("color: #64748B; font-size: 10px;")
 
         vbox.addLayout(top_bar)
         vbox.addWidget(self.lbl_thumb)
@@ -10627,17 +10668,17 @@ class StepCardWidget(QFrame):
             self.lbl_check.setStyleSheet("background-color: #2563EB; color: #FFFFFF; border-radius: 6px; font-size: 8.5px; font-weight: bold;")
         else:
             self.lbl_check.setText("")
-            self.lbl_check.setStyleSheet("border: 1.5px solid #94A3B8; border-radius: 6px; background-color: #FFFFFF;")
+            self.lbl_check.setStyleSheet("border: 1.5px solid #475569; border-radius: 6px; background-color: #0F172A;")
 
         if self.is_selected:
             self.setStyleSheet("""
                 QFrame {
-                    background-color: #EFF6FF;
-                    border: 2px solid #2563EB;
+                    background-color: #1E3A8A;
+                    border: 2px solid #60A5FA;
                     border-radius: 6px;
                 }
                 QLabel {
-                    color: #1D4ED8;
+                    color: #93C5FD;
                     font-size: 11px;
                     font-weight: bold;
                 }
@@ -10645,12 +10686,16 @@ class StepCardWidget(QFrame):
         elif self.is_checked:
             self.setStyleSheet("""
                 QFrame {
-                    background-color: #F8FAFC;
-                    border: 1.5px solid #60A5FA;
+                    background-color: #0F172A;
+                    border: 1.5px solid #334155;
                     border-radius: 6px;
                 }
+                QFrame:hover {
+                    background-color: #1E293B;
+                    border-color: #60A5FA;
+                }
                 QLabel {
-                    color: #1E40AF;
+                    color: #E2E8F0;
                     font-size: 10.5px;
                     font-weight: 500;
                 }
@@ -10658,18 +10703,18 @@ class StepCardWidget(QFrame):
         else:
             self.setStyleSheet("""
                 QFrame {
-                    background-color: #FFFFFF;
-                    border: 1.5px solid #94A3B8;
+                    background-color: #090D16;
+                    border: 1.5px dashed #334155;
                     border-radius: 6px;
                 }
                 QFrame:hover {
                     border-color: #475569;
-                    background-color: #F8FAFC;
+                    background-color: #0F172A;
                 }
                 QLabel {
-                    color: #475569;
+                    color: #64748B;
                     font-size: 10.5px;
-                    font-weight: 600;
+                    font-weight: 500;
                 }
             """)
 
@@ -11038,6 +11083,7 @@ class FilmstripDockWidget(QWidget):
         super().keyPressEvent(event)
 
     def init_ui(self):
+        self.setStyleSheet("FilmstripDockWidget { background-color: #1E293B; }")
         root_lay = QVBoxLayout(self)
         root_lay.setContentsMargins(4, 3, 4, 3)
         root_lay.setSpacing(3)
@@ -11050,9 +11096,9 @@ class FilmstripDockWidget(QWidget):
             QLabel {
                 font-weight: bold;
                 font-size: 11px;
-                color: #334155;
-                background-color: #F1F5F9;
-                border: 1px solid #CBD5E1;
+                color: #E2E8F0;
+                background-color: #0F172A;
+                border: 1px solid #334155;
                 border-radius: 3px;
                 padding: 1px 4px;
                 white-space: nowrap;
@@ -11140,13 +11186,30 @@ class FilmstripDockWidget(QWidget):
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll.setStyleSheet("""
             QScrollArea {
-                background-color: #F8FAFC;
-                border: 1px solid #E2E8F0;
+                background-color: #1E293B;
+                border: 1px solid #334155;
                 border-radius: 4px;
+            }
+            QScrollBar:vertical {
+                width: 4px;
+                background: transparent;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #475569;
+                min-height: 16px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #64748B;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
             }
         """)
 
         self.cards_container = QWidget()
+        self.cards_container.setStyleSheet("background: transparent;")
         self.cards_container.setAcceptDrops(True)
         self.cards_container.dragEnterEvent = self._on_container_drag_enter
         self.cards_container.dragMoveEvent = self._on_container_drag_move
@@ -11342,9 +11405,9 @@ class StoryboardToggleBar(QFrame):
         self.setFixedHeight(22)
         self.setStyleSheet("""
             StoryboardToggleBar {
-                background-color: #E2E8F0;
-                border-top: 1px solid #CBD5E1;
-                border-bottom: 1px solid #CBD5E1;
+                background-color: #1E293B;
+                border-top: 1px solid #334155;
+                border-bottom: 1px solid #334155;
             }
         """)
         lay = QHBoxLayout(self)
@@ -11356,18 +11419,18 @@ class StoryboardToggleBar(QFrame):
         self.btn_toggle.setFixedHeight(18)
         self.btn_toggle.setStyleSheet("""
             QPushButton {
-                background-color: #F1F5F9;
-                color: #334155;
+                background-color: #0F172A;
+                color: #E2E8F0;
                 font-size: 10px;
                 font-weight: bold;
-                border: 1px solid #94A3B8;
+                border: 1px solid #334155;
                 border-radius: 3px;
                 padding: 0 12px;
             }
             QPushButton:hover {
-                background-color: #DBEAFE;
-                color: #1D4ED8;
-                border-color: #3B82F6;
+                background-color: #1D4ED8;
+                color: #FFFFFF;
+                border-color: #7DD3FC;
             }
         """)
         self.btn_toggle.clicked.connect(self._on_clicked)
@@ -13380,6 +13443,7 @@ class ManualStudioWindow(QMainWindow):
         content_layout.addWidget(self.main_splitter, 1)
         
         self.left_panel = QWidget()
+        self.left_panel.setStyleSheet("background-color: #1E293B; border-right: 1px solid #334155;")
         self.left_layout = QVBoxLayout(self.left_panel)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.setSpacing(0)
