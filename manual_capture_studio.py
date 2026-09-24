@@ -6965,6 +6965,9 @@ class StudioCanvasWidget(QWidget):
         self.drawing_blur = False
         self.blur_start = QPoint()
         self.blur_end = QPoint()
+        self.drawing_spotlight = False
+        self.spotlight_start = QPoint()
+        self.spotlight_end = QPoint()
         self.drawing_ocr = False
         self.ocr_start = QPoint()
         self.ocr_end = QPoint()
@@ -7808,6 +7811,11 @@ class StudioCanvasWidget(QWidget):
                 self.blur_start = pt
                 self.blur_end = pt
 
+            elif self.current_mode == "SPOTLIGHT":
+                self.drawing_spotlight = True
+                self.spotlight_start = pt
+                self.spotlight_end = pt
+
             elif self.current_mode in ("OCR", "OCR_LABEL"):
                 self.drawing_ocr = True
                 self.ocr_is_label_mode = (self.current_mode == "OCR_LABEL")
@@ -8612,6 +8620,9 @@ class StudioCanvasWidget(QWidget):
         elif self.drawing_blur:
             self.blur_end = pt
             self.update()
+        elif getattr(self, "drawing_spotlight", False):
+            self.spotlight_end = pt
+            self.update()
         elif self.drawing_ocr:
             self.ocr_end = pt
             self.update()
@@ -8849,6 +8860,16 @@ class StudioCanvasWidget(QWidget):
                     self.push_undo()
                     blur_st = dict(self.config.get("blur_style", DEFAULT_CONFIG["blur_style"]))
                     self.items.append(BlurMosaicItem(r, blur_st))
+                    self.update()
+                    self.sig_content_changed.emit()
+                # Sticky Mode: 도구 선택 유지
+            elif getattr(self, "drawing_spotlight", False):
+                self.drawing_spotlight = False
+                r = QRect(self.spotlight_start, self.spotlight_end).normalized()
+                if r.width() > 8 and r.height() > 8:
+                    self.push_undo()
+                    spot_st = dict(self.config.get("spotlight_style", {"border_color": "#007AFF", "border_width": 2, "dim_opacity": 160}))
+                    self.items.append(SpotlightMaskItem(r, spot_st))
                     self.update()
                     self.sig_content_changed.emit()
                 # Sticky Mode: 도구 선택 유지
@@ -9562,6 +9583,13 @@ class StudioCanvasWidget(QWidget):
                 blur_st = dict(self.config.get("blur_style", DEFAULT_CONFIG["blur_style"]))
                 temp_blur = BlurMosaicItem(r, blur_st)
                 temp_blur.render_mosaic(painter, self.pixmap)
+                painter.restore()
+
+            elif getattr(self, "drawing_spotlight", False) and self.pixmap and not self.pixmap.isNull():
+                painter.save()
+                r = QRect(self.spotlight_start, self.spotlight_end).normalized()
+                temp_spot = SpotlightMaskItem(r, {"border_color": "#007AFF", "border_width": 2, "dim_opacity": 160})
+                temp_spot.render_spotlight(painter, self.pixmap.width(), self.pixmap.height())
                 painter.restore()
 
             elif self.drawing_eraser:
@@ -11249,6 +11277,18 @@ class RibbonIconProvider:
         "dialog_launcher": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m8 8 8 8"/><path d="M12 16h4v-4"/>',
         "bring_front": '<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>',
         "send_back": '<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>',
+
+        # 전사 통합 도구 표준 아이콘 (QAT / 리본 / 툴박스 단일 통일)
+        "redo": '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"/>',
+        "add_step": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/>',
+        "del_step": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/>',
+        "flow_auto_number": '<line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+        "spotlight": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+        "ribbon_toggle": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+        "export_md": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 3 3 3-3"/><path d="M12 12v6"/>',
+        "export_html": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+        "select_all": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10v10H7z"/>',
+        "check": '<polyline points="20 6 9 17 4 12"/>',
     }
 
     @classmethod
@@ -12236,45 +12276,45 @@ class StoryboardToggleBar(QFrame):
 class QATEditDialog(QDialog):
     """빠른 실행 도구 모음(QAT)에 배치할 명령을 편집하는 다이얼로그."""
 
-    # 전체 등록 가능 명령 목록 (cmd_id, 표시명, 이모지 아이콘)
+    # 전체 등록 가능 명령 목록 (cmd_id, 표시명, canonical icon_key)
     ALL_COMMANDS = [
-        ("capture",      "고정 캡처",      "📷"),
-        ("drag_capture", "영역 지정",      "✂️"),
-        ("sub_capture",  "부분 캡처",      "🔲"),
-        ("scroll_stitch","스크롤 캡처",    "📜"),
-        ("flowchart",    "플로우차트",     "🔷"),
-        ("doc_dock",     "문서 참조",      "📄"),
-        ("new_project",  "새 프로젝트",    "🆕"),
-        ("open_project", "열기",           "📂"),
-        ("save_project", "저장",           "💾"),
-        ("merge_project","병합",           "🔗"),
-        ("undo",         "실행 취소",      "↩️"),
-        ("redo",         "다시 실행",      "↪️"),
-        ("delete",       "삭제",           "🗑️"),
-        ("select_all",   "전체 선택",      "⬛"),
-        ("add_step",     "슬라이드 추가",  "➕"),
-        ("del_step",     "슬라이드 삭제",  "➖"),
-        ("export_ppt",   "PowerPoint",     "📊"),
-        ("export_hwp",   "HWP",            "📝"),
-        ("send_slides",  "Google Slides",  "🎞️"),
-        ("export_md",    "Markdown",       "⬇️"),
-        ("export_html",  "HTML",           "🌐"),
-        ("mode_select",  "선택 도구",      "↖️"),
-        ("mode_stamp",   "스탬프",         "🔵"),
-        ("mode_box",     "박스",           "⬜"),
-        ("mode_arrow",   "화살표",         "➡️"),
-        ("mode_elbow",   "꺾임 화살표",    "↪"),
-        ("mode_text",    "텍스트",         "T"),
-        ("mode_callout", "말풍선",         "💬"),
-        ("mode_blur",    "블러",           "〰️"),
-        ("mode_eraser",  "지우개",         "🧹"),
-        ("align_flow",   "자동정렬",       "⚡"),
-        ("renumber",     "번호 재정렬",    "🔢"),
-        ("mobile_link",  "모바일 연결",    "📱"),
-        ("ocr",          "텍스트 인식",    "🔍"),
-        ("spotlight",    "스포트라이트",   "🔆"),
-        ("dimension",    "치수선",         "📐"),
-        ("ribbon_edit",  "리본 편집",      "⚙️"),
+        ("capture",      "고정 캡처",      "capture_fixed"),
+        ("drag_capture", "영역 지정",      "capture_area"),
+        ("sub_capture",  "부분 캡처",      "capture_sub"),
+        ("scroll_stitch","스크롤 캡처",    "scroll_stitch"),
+        ("flowchart",    "플로우차트",     "flowchart"),
+        ("doc_dock",     "문서 참조",      "doc_ref"),
+        ("new_project",  "새 프로젝트",    "new_project"),
+        ("open_project", "열기",           "open_project"),
+        ("save_project", "저장",           "save_project"),
+        ("merge_project","프로젝트 병합",  "merge_project"),
+        ("undo",         "실행 취소",      "undo"),
+        ("redo",         "다시 실행",      "redo"),
+        ("delete",       "삭제",           "clear"),
+        ("select_all",   "전체 선택",      "select_all"),
+        ("add_step",     "슬라이드 추가",  "add_step"),
+        ("del_step",     "슬라이드 삭제",  "del_step"),
+        ("export_ppt",   "PowerPoint",     "ppt_export"),
+        ("export_hwp",   "HWP",            "export_hwp"),
+        ("send_slides",  "Google Slides",  "slides_export"),
+        ("export_md",    "Markdown",       "export_md"),
+        ("export_html",  "HTML",           "export_html"),
+        ("mode_select",  "선택 도구",      "select"),
+        ("mode_stamp",   "스탬프",         "stamp"),
+        ("mode_box",     "박스",           "box"),
+        ("mode_arrow",   "화살표",         "arrow"),
+        ("mode_elbow",   "꺾임 화살표",    "elbow"),
+        ("mode_text",    "텍스트",         "text"),
+        ("mode_callout", "말풍선",         "callout"),
+        ("mode_blur",    "블러",           "blur"),
+        ("mode_eraser",  "지우개",         "eraser"),
+        ("align_flow",   "자동정렬",       "flow_align"),
+        ("renumber",     "번호 재정렬",    "ppt_renumber"),
+        ("mobile_link",  "모바일 연결",    "mobile_link"),
+        ("ocr",          "텍스트 인식",    "ocr"),
+        ("spotlight",    "스포트라이트",   "spotlight"),
+        ("dimension",    "치수선",         "dimension"),
+        ("ribbon_edit",  "리본 편집",      "settings"),
     ]
     DEFAULT_QAT = ["capture", "drag_capture", "add_step", "undo", "redo", "export_ppt"]
 
@@ -12341,10 +12381,12 @@ class QATEditDialog(QDialog):
         lbl_left.setObjectName("col_lbl")
         left_col.addWidget(lbl_left)
         self.list_avail = QListWidget()
+        self.list_avail.setIconSize(QSize(16, 16))
         self.list_avail.setSelectionMode(QListWidget.SingleSelection)
-        for cmd_id, name, icon in self.ALL_COMMANDS:
+        for cmd_id, name, icon_key in self.ALL_COMMANDS:
             if cmd_id not in in_qat:
-                item = QListWidgetItem(f"{icon}  {name}")
+                ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+                item = QListWidgetItem(ico, f"  {name}")
                 item.setData(Qt.UserRole, cmd_id)
                 self.list_avail.addItem(item)
         left_col.addWidget(self.list_avail)
@@ -12372,12 +12414,14 @@ class QATEditDialog(QDialog):
         lbl_right.setObjectName("col_lbl")
         right_col.addWidget(lbl_right)
         self.list_qat = QListWidget()
+        self.list_qat.setIconSize(QSize(16, 16))
         self.list_qat.setSelectionMode(QListWidget.SingleSelection)
         self.list_qat.currentRowChanged.connect(self._on_qat_row_changed)
         for cmd_id in current_ids:
             if cmd_id in cmd_map:
-                cid, name, icon = cmd_map[cmd_id]
-                item = QListWidgetItem(f"{icon}  {name}")
+                cid, name, icon_key = cmd_map[cmd_id]
+                ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+                item = QListWidgetItem(ico, f"  {name}")
                 item.setData(Qt.UserRole, cmd_id)
                 self.list_qat.addItem(item)
         right_col.addWidget(self.list_qat)
@@ -12430,8 +12474,9 @@ class QATEditDialog(QDialog):
             return
         cmd_id = item.data(Qt.UserRole)
         if cmd_id in self._cmd_map:
-            cid, name, icon = self._cmd_map[cmd_id]
-            new_item = QListWidgetItem(f"{icon}  {name}")
+            cid, name, icon_key = self._cmd_map[cmd_id]
+            ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+            new_item = QListWidgetItem(ico, f"  {name}")
             new_item.setData(Qt.UserRole, cmd_id)
             self.list_qat.addItem(new_item)
         self.list_avail.takeItem(self.list_avail.row(item))
@@ -12442,8 +12487,9 @@ class QATEditDialog(QDialog):
             return
         cmd_id = item.data(Qt.UserRole)
         if cmd_id in self._cmd_map:
-            cid, name, icon = self._cmd_map[cmd_id]
-            new_item = QListWidgetItem(f"{icon}  {name}")
+            cid, name, icon_key = self._cmd_map[cmd_id]
+            ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+            new_item = QListWidgetItem(ico, f"  {name}")
             new_item.setData(Qt.UserRole, cmd_id)
             self.list_avail.addItem(new_item)
         self.list_qat.takeItem(self.list_qat.row(item))
@@ -12470,13 +12516,15 @@ class QATEditDialog(QDialog):
         self.list_avail.clear()
         for cmd_id in self.DEFAULT_QAT:
             if cmd_id in cmd_map:
-                cid, name, icon = cmd_map[cmd_id]
-                item = QListWidgetItem(f"{icon}  {name}")
+                cid, name, icon_key = cmd_map[cmd_id]
+                ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+                item = QListWidgetItem(ico, f"  {name}")
                 item.setData(Qt.UserRole, cmd_id)
                 self.list_qat.addItem(item)
-        for cmd_id, name, icon in self.ALL_COMMANDS:
+        for cmd_id, name, icon_key in self.ALL_COMMANDS:
             if cmd_id not in self.DEFAULT_QAT:
-                item = QListWidgetItem(f"{icon}  {name}")
+                ico = RibbonIconProvider.get_icon(icon_key, 16, "#334155")
+                item = QListWidgetItem(ico, f"  {name}")
                 item.setData(Qt.UserRole, cmd_id)
                 self.list_avail.addItem(item)
 
@@ -14293,9 +14341,13 @@ class ManualStudioWindow(QMainWindow):
         self.qat_lay.setSpacing(2)
         self.qat_lay.addStretch(1)
         # 편집 버튼 (항상 우측 고정)
-        self.btn_qat_edit = QPushButton("⚙", self.qat_bar)
+        self.btn_qat_edit = QPushButton(self.qat_bar)
+        self.btn_qat_edit.setIcon(RibbonIconProvider.get_icon("settings", 14, "#64748B"))
+        self.btn_qat_edit.setIconSize(QSize(14, 14))
         self.btn_qat_edit.setFixedSize(22, 22)
         self.btn_qat_edit.setToolTip("빠른 실행 도구 모음 편집")
+        self.btn_qat_edit.setStatusTip("빠른 실행 도구 모음 편집")
+        self.btn_qat_edit.installEventFilter(ToolHoverFilter("빠른 실행 도구 모음 편집", self, self.btn_qat_edit))
         self.btn_qat_edit.setStyleSheet("""
             QPushButton {
                 background: transparent; border: 1px solid #CBD5E1;
@@ -14442,7 +14494,8 @@ class ManualStudioWindow(QMainWindow):
             vt = self.vertical_toolbar
             # 1. 스타일 전환 & 뷰 & 프로젝트
             vt.add_group("project", tr("grp_project", "프로젝트"), self.open_project_settings_dialog)
-            vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환 (Ctrl+M)", lambda: self.set_ui_style_mode("ribbon"))
+            vt.add_action_tool("ribbon_toggle", "리본 메뉴 스타일로 전환 (Ctrl+M)", lambda: self.set_ui_style_mode("ribbon"))
+            vt.add_action_tool("merge_project", "프로젝트 병합 (Ctrl+Shift+M)", self.action_merge_project)
             vt.add_action_tool("filmstrip", "스토리보드 패널 표시/숨김 (Ctrl+B)", self.on_toggle_filmstrip)
             vt.add_action_tool("new_project", "새 프로젝트 (Ctrl+N)", self.action_new_project)
             vt.add_action_tool("open_project", "프로젝트 열기 (Ctrl+O)", self.action_open_project)
@@ -14461,6 +14514,7 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("select", "선택 도구 (V / ESC)", lambda: self.switch_mode("SELECT"), is_check=True, mode_key="SELECT")
             vt.add_action_tool("reset_index", "스탬프 1번 초기화", self.reset_stamp_index)
             vt.add_action_tool("undo", "실행 취소 (Ctrl+Z)", self.action_undo)
+            vt.add_action_tool("redo", "다시 실행 (Ctrl+Y)", lambda: self.canvas.redo() if hasattr(self, "canvas") else None)
             vt.add_action_tool("clear", "캔버스 전체 삭제", self.action_clear, color="#F87171")
             vt.add_action_tool("ppt_renumber", "순번 재정렬", self.action_renumber_powerpoint_steps)
             vt.add_action_tool("draft", "Draft 스탬프 추가", self.action_add_draft_stamp)
@@ -14485,6 +14539,7 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("blur", "모자이크/블러 (M)", lambda: self.switch_mode("BLUR"), is_check=True, mode_key="BLUR")
             vt.add_action_tool("auto_pii", "개인정보 자동 마스킹", self.action_auto_pii, color="#60A5FA")
             vt.add_action_tool("eraser", "스마트 배경 지우개 (X)", lambda: self.switch_mode("ERASER"), is_check=True, mode_key="ERASER")
+            vt.add_action_tool("spotlight", "스포트라이트 초점 (G)", lambda: self.switch_mode("SPOTLIGHT"), is_check=True, mode_key="SPOTLIGHT")
             vt.add_action_tool("ppt_autofit", "배율 맞춤", self.auto_fit_ppt_scale)
             vt.add_action_tool("ocr", "OCR 텍스트 추출 (O)", lambda: self.switch_mode("OCR"), is_check=True, mode_key="OCR")
             vt.add_action_tool("ocr_label", "OCR 라벨 생성 (Shift+O)", lambda: self.switch_mode("OCR_LABEL"), is_check=True, mode_key="OCR_LABEL")
@@ -14511,6 +14566,8 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("ppt_export", "PowerPoint 슬라이드 전송 (F10)", self.export_to_ppt_and_clipboard, color="#FB923C")
             vt.add_action_tool("export_hwp", "한컴 한글 전송 (Shift+F10 / F12)", self.action_export_all_hwp, color="#38BDF8")
             vt.add_action_tool("slides_export", "Google Slides 전송 (F11)", self.action_export_all_slides, color="#FBBF24")
+            vt.add_action_tool("export_md", "Markdown 파일 내보내기", self.action_export_markdown, color="#94A3B8")
+            vt.add_action_tool("export_html", "HTML 웹북 출판", self.action_export_webbook, color="#38BDF8")
             vt.add_action_tool("settings", "환경 설정...", self.open_settings_dialog)
             vt.set_active_mode("SELECT")
         self.update_status_bar()
@@ -14841,47 +14898,47 @@ class ManualStudioWindow(QMainWindow):
     # ── QAT 빠른 실행 도구 모음 메서드 ────────────────────────────────────
     _QAT_DEFAULT = ["capture", "drag_capture", "add_step", "undo", "redo", "export_ppt"]
 
-    # cmd_id → (이모지, 툴팁, callable)
+    # cmd_id → (icon_name, 툴팁, callable)
     def _get_qat_action(self, cmd_id):
-        """cmd_id에 해당하는 (이모지 아이콘 텍스트, 툴팁, 실행 함수) 반환."""
+        """cmd_id에 해당하는 (RibbonIconProvider 아이콘 키, 툴팁, 실행 함수) 반환."""
         m = {
-            "capture":       ("📷", "고정 캡처 (F9)",          self.handle_hotkey_capture),
-            "drag_capture":  ("✂️",  "영역 지정 (Shift+F9)",   self.start_capture),
-            "sub_capture":   ("🔲", "부분 캡처 (F8)",           self.start_sub_capture),
-            "scroll_stitch": ("📜", "스크롤 캡처",              self.action_scroll_stitch),
-            "flowchart":     ("🔷", "플로우차트",               self.open_flowchart_studio),
-            "doc_dock":      ("📄", "문서 참조 패널",           self.toggle_document_dock),
-            "new_project":   ("🆕", "새 프로젝트 (Ctrl+N)",     self.action_new_project),
-            "open_project":  ("📂", "열기 (Ctrl+O)",            self.action_open_project),
-            "save_project":  ("💾", "저장 (Ctrl+S)",            self.action_save_project),
-            "merge_project": ("🔗", "프로젝트 병합",            self.action_merge_project),
-            "undo":          ("↩️",  "실행 취소 (Ctrl+Z)",      self.action_undo),
-            "redo":          ("↪️",  "다시 실행 (Ctrl+Y)",      self._qat_redo),
-            "delete":        ("🗑️", "삭제",                    self._qat_delete),
-            "select_all":    ("⬛", "전체 선택 (Ctrl+A)",       self._qat_select_all),
-            "add_step":      ("➕", "슬라이드 추가 (F10)",      self._qat_add_step),
-            "del_step":      ("➖", "슬라이드 삭제",            self._qat_del_step),
-            "export_ppt":    ("📊", "PowerPoint 내보내기 (F10)",self._qat_export_ppt),
-            "export_hwp":    ("📝", "HWP 내보내기",             self.action_export_all_hwp),
-            "send_slides":   ("🎞️", "Google Slides 전송",      self.action_send_to_google_slides),
-            "export_md":     ("⬇️",  "Markdown 내보내기",       self._qat_export_md),
-            "export_html":   ("🌐", "HTML 내보내기",            self._qat_export_html),
-            "mode_select":   ("↖️",  "선택 도구 (V)",           lambda: self.switch_mode("select")),
-            "mode_stamp":    ("🔵", "스탬프 (S)",               lambda: self.switch_mode("stamp")),
-            "mode_box":      ("⬜", "박스 (B)",                 lambda: self.switch_mode("box")),
-            "mode_arrow":    ("➡️",  "화살표 (A)",              lambda: self.switch_mode("arrow")),
-            "mode_elbow":    ("↪",  "꺾임 화살표 (E)",          lambda: self.switch_mode("elbow")),
-            "mode_text":     ("T",   "텍스트 (T)",              lambda: self.switch_mode("text")),
-            "mode_callout":  ("💬", "말풍선 (C)",               lambda: self.switch_mode("callout")),
-            "mode_blur":     ("〰️", "블러 (M)",                lambda: self.switch_mode("blur")),
-            "mode_eraser":   ("🧹", "지우개 (X)",               lambda: self.switch_mode("eraser")),
-            "align_flow":    ("⚡", "자동정렬",                  self.action_auto_align_flowchart),
-            "renumber":      ("🔢", "번호 재정렬",               self.action_renumber_powerpoint_steps),
-            "mobile_link":   ("📱", "모바일 연결",              self.action_open_mobile_link),
-            "ocr":           ("🔍", "텍스트 인식",              self._qat_ocr),
-            "spotlight":     ("🔆", "스포트라이트",             lambda: self.switch_mode("spotlight")),
-            "dimension":     ("📐", "치수선",                   lambda: self.switch_mode("dimension")),
-            "ribbon_edit":   ("⚙️", "리본 편집",               self.open_ribbon_customize),
+            "capture":       ("capture_fixed", "고정 캡처 (F9)",          self.handle_hotkey_capture),
+            "drag_capture":  ("capture_area",  "영역 지정 (Shift+F9)",   self.start_capture),
+            "sub_capture":   ("capture_sub",   "부분 캡처 (F8)",           self.start_sub_capture),
+            "scroll_stitch": ("scroll_stitch", "스크롤 캡처",              self.action_scroll_stitch),
+            "flowchart":     ("flowchart",     "플로우차트",               self.open_flowchart_studio),
+            "doc_dock":      ("doc_ref",       "문서 참조 패널",           self.toggle_document_dock),
+            "new_project":   ("new_project",   "새 프로젝트 (Ctrl+N)",     self.action_new_project),
+            "open_project":  ("open_project",  "열기 (Ctrl+O)",            self.action_open_project),
+            "save_project":  ("save_project",  "저장 (Ctrl+S)",            self.action_save_project),
+            "merge_project": ("merge_project", "프로젝트 병합 (Ctrl+Shift+M)", self.action_merge_project),
+            "undo":          ("undo",          "실행 취소 (Ctrl+Z)",      self.action_undo),
+            "redo":          ("redo",          "다시 실행 (Ctrl+Y)",      self._qat_redo),
+            "delete":        ("clear",         "삭제",                    self._qat_delete),
+            "select_all":    ("select_all",    "전체 선택 (Ctrl+A)",       self._qat_select_all),
+            "add_step":      ("add_step",      "슬라이드 추가 (F10)",      self._qat_add_step),
+            "del_step":      ("del_step",      "슬라이드 삭제",            self._qat_del_step),
+            "export_ppt":    ("ppt_export",    "PowerPoint 내보내기 (F10)",self._qat_export_ppt),
+            "export_hwp":    ("export_hwp",    "HWP 내보내기",             self.action_export_all_hwp),
+            "send_slides":   ("slides_export", "Google Slides 전송 (F11)", self.action_send_to_google_slides),
+            "export_md":     ("export_md",     "Markdown 내보내기",       self._qat_export_md),
+            "export_html":   ("export_html",   "HTML 내보내기",            self._qat_export_html),
+            "mode_select":   ("select",        "선택 도구 (V)",           lambda: self.switch_mode("select")),
+            "mode_stamp":    ("stamp",         "스탬프 (S)",               lambda: self.switch_mode("stamp")),
+            "mode_box":      ("box",           "박스 (B)",                 lambda: self.switch_mode("box")),
+            "mode_arrow":    ("arrow",         "화살표 (A)",              lambda: self.switch_mode("arrow")),
+            "mode_elbow":    ("elbow",         "꺾임 화살표 (E)",          lambda: self.switch_mode("elbow")),
+            "mode_text":     ("text",          "텍스트 (T)",              lambda: self.switch_mode("text")),
+            "mode_callout":  ("callout",       "말풍선 (C)",               lambda: self.switch_mode("callout")),
+            "mode_blur":     ("blur",          "블러 (M)",                lambda: self.switch_mode("blur")),
+            "mode_eraser":   ("eraser",        "지우개 (X)",               lambda: self.switch_mode("eraser")),
+            "align_flow":    ("flow_align",    "자동정렬",                  self.action_auto_align_flowchart),
+            "renumber":      ("ppt_renumber",  "번호 재정렬",               self.action_renumber_powerpoint_steps),
+            "mobile_link":   ("mobile_link",   "모바일 연결",              self.action_open_mobile_link),
+            "ocr":           ("ocr",           "텍스트 인식 (O)",          self._qat_ocr),
+            "spotlight":     ("spotlight",     "스포트라이트 (G)",         lambda: self.switch_mode("spotlight")),
+            "dimension":     ("dimension",     "치수선 (D)",               lambda: self.switch_mode("dimension")),
+            "ribbon_edit":   ("settings",      "리본 편집",               self.open_ribbon_customize),
         }
         return m.get(cmd_id, None)
 
@@ -14904,11 +14961,9 @@ class ManualStudioWindow(QMainWindow):
         if hasattr(self, "btn_export_ppt"):
             self.btn_export_ppt.click()
     def _qat_export_md(self):
-        if hasattr(self, "btn_export_md"):
-            self.btn_export_md.click()
+        self.action_export_markdown()
     def _qat_export_html(self):
-        if hasattr(self, "btn_export_html"):
-            self.btn_export_html.click()
+        self.action_export_webbook()
     def _qat_ocr(self):
         if hasattr(self, "btn_ocr"):
             self.btn_ocr.click()
@@ -14921,11 +14976,12 @@ class ManualStudioWindow(QMainWindow):
         """config의 qat_items를 읽어 qat_bar를 동적으로 재구성."""
         if not hasattr(self, "qat_lay") or not hasattr(self, "btn_qat_edit"):
             return
-        # 기존 버튼 전부 제거 (btn_qat_edit 제외)
+        # 기존 버튼 및 스페이서 전부 제거 (btn_qat_edit 제외)
         while self.qat_lay.count() > 0:
             item = self.qat_lay.takeAt(0)
-            if item.widget() and item.widget() is not self.btn_qat_edit:
-                item.widget().deleteLater()
+            w = item.widget()
+            if w and w is not self.btn_qat_edit:
+                w.deleteLater()
 
         cmd_ids = self.config.get("qat_items", self._QAT_DEFAULT[:])
 
@@ -14933,11 +14989,15 @@ class ManualStudioWindow(QMainWindow):
             info = self._get_qat_action(cmd_id)
             if info is None:
                 continue
-            icon_text, tooltip, callback = info
+            icon_name, tooltip, callback = info
             btn = QToolButton(self.qat_bar)
-            btn.setText(icon_text)
+            btn.setIcon(RibbonIconProvider.get_icon(icon_name, 16, "#334155"))
+            btn.setIconSize(QSize(16, 16))
             btn.setToolTip(tooltip)
+            btn.setStatusTip(tooltip)
             btn.setFixedSize(28, 28)
+            filt = ToolHoverFilter(tooltip, self, btn)
+            btn.installEventFilter(filt)
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda pos, cid=cmd_id, b=btn: self._qat_btn_context_menu(b, cid)
@@ -15556,6 +15616,13 @@ class ManualStudioWindow(QMainWindow):
                 else:
                     btn.setIcon(QIcon())
                     btn.setText(tr(text_key, def_text))
+
+                # 마우스오버 시 즉각적인 하단 상태바 텍스트 및 툴팁 연동
+                if not getattr(btn, "_has_hover_filter", False):
+                    tt = btn.toolTip() or tr(text_key, def_text)
+                    filt = ToolHoverFilter(tt, self, btn)
+                    btn.installEventFilter(filt)
+                    btn._has_hover_filter = True
 
         mode_name_kr = "아이콘 모드" if new_mode == "icon" else "텍스트 모드"
         if mode is None:
@@ -18969,6 +19036,47 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.update()
         pct = int(opacity * 100)
         self.show_toast(f"스탬프 투명도 {pct}% 적용 완료")
+
+    def action_export_markdown(self):
+        self._sync_canvas_to_current_step()
+        target_steps = self.get_export_target_steps()
+        if not target_steps:
+            self.show_toast("내보낼 슬라이드가 없습니다.")
+            return
+
+        default_name = os.path.join(os.path.expanduser("~"), "Desktop", "manual_guide.md")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("menu_export_markdown", "마크다운 문서 저장"),
+            default_name,
+            "Markdown 파일 (*.md);;모든 파일 (*.*)"
+        )
+        if not file_path:
+            return
+
+        enable_frame = self.config.get("enable_window_frame", True)
+        frame_cfg = self.config.get("window_frame_style", {})
+
+        out_dir = os.path.dirname(os.path.abspath(file_path))
+        img_dir = os.path.join(out_dir, "images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        steps_payload = []
+        for idx, step in target_steps:
+            pil_img = self._prepare_export_step_image(step, target_w=1280, auto_resize=True, enable_frame=enable_frame, frame_cfg=frame_cfg)
+            img_rel_name = f"step_{idx + 1:03d}.png"
+            img_abs_path = os.path.join(img_dir, img_rel_name)
+            pil_img.save(img_abs_path, format="PNG")
+            steps_payload.append({
+                "step_num": idx + 1,
+                "title": step.get("title", f"Step {idx + 1}"),
+                "description": step.get("description", ""),
+                "image_file": img_abs_path,
+            })
+
+        proj_title = self.project_data.get("project_title", "Manual Studio Documentation") if hasattr(self, "project_data") and isinstance(self.project_data, dict) else "Manual Studio Documentation"
+        export_to_markdown(steps_payload, file_path, title=proj_title)
+        self.show_toast(f"마크다운 내보내기 완료: {file_path}")
 
     def action_export_webbook(self):
         self._sync_canvas_to_current_step()
