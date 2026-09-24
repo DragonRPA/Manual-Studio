@@ -93,10 +93,10 @@
   "target_monitor": 0,
   "fixed_rect_enabled": true,
   "fixed_rect": {
-    "x": 100,
-    "y": 100,
-    "width": 960,
-    "height": 540
+    "x": 263,
+    "y": 147,
+    "width": 1651,
+    "height": 879
   },
   "ppt_auto_slide": true,
   "ppt_layout": {

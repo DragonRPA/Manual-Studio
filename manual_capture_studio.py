@@ -6455,8 +6455,14 @@ class CaptureOverlayWidget(QWidget):
         self.resizing_handle = None
         self.moving_rect = False
         self.start_pos = QPoint()
-        self.end_pos = QPoint()
-        self.selected_rect = QRect()
+        if self.last_rect and hasattr(self.last_rect, "isEmpty") and not self.last_rect.isEmpty() and not self.is_sub_capture:
+            if self.target_monitor == -1 and self.virtual_rect.x() != 0:
+                lr = self.last_rect
+                self.selected_rect = QRect(lr.x() - self.virtual_rect.x(), lr.y() - self.virtual_rect.y(), lr.width(), lr.height())
+            else:
+                self.selected_rect = QRect(self.last_rect)
+        else:
+            self.selected_rect = QRect()
         self.magnet_rect = QRect()
         self.snap_enabled = True
         self.snapped_rect = QRect()
@@ -10569,6 +10575,7 @@ class RibbonIconProvider:
         "window_frame": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
         "filmstrip": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
         "settings": '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+        "dialog_launcher": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m8 8 8 8"/><path d="M12 16h4v-4"/>',
         "bring_front": '<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>',
         "send_back": '<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>',
     }
@@ -12025,16 +12032,87 @@ class RibbonCustomizeDialog(QDialog):
 
 
 
+class VerticalToolGroupWidget(QFrame):
+    """세로 툴바 내 메뉴 그룹 카드 박스 (테두리 박스 + 그룹명 + 속성 런처 버튼 + 2열 격자)"""
+    def __init__(self, title_text, launcher_callback=None, parent=None):
+        super().__init__(parent)
+        self.setObjectName("VerticalToolGroup")
+        self.setStyleSheet("""
+            QFrame#VerticalToolGroup {
+                background-color: #0F172A;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 1px;
+                margin: 1px 0px;
+            }
+            QFrame#VerticalToolGroup:hover {
+                border-color: #475569;
+            }
+        """)
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(2, 2, 2, 3)
+        vbox.setSpacing(2)
+
+        # Header: Group Title + Property Launcher Button
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(2, 0, 1, 0)
+        hdr.setSpacing(1)
+
+        self.lbl_title = QLabel(title_text, self)
+        self.lbl_title.setStyleSheet("font-size: 8.5px; color: #94A3B8; font-weight: bold; border: none; background: transparent; padding: 0px; margin: 0px; white-space: nowrap;")
+        hdr.addWidget(self.lbl_title, 1)
+
+        self.btn_prop = None
+        if launcher_callback:
+            self.btn_prop = QToolButton(self)
+            self.btn_prop.setFixedSize(12, 12)
+            self.btn_prop.setIcon(RibbonIconProvider.get_icon("dialog_launcher", 8, "#94A3B8"))
+            self.btn_prop.setIconSize(QSize(8, 8))
+            self.btn_prop.setToolTip(f"{title_text} {tr('lbl_settings', '설정')}...")
+            self.btn_prop.setStyleSheet("""
+                QToolButton {
+                    background: transparent;
+                    border: none;
+                    border-radius: 2px;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QToolButton:hover {
+                    background-color: #334155;
+                }
+            """)
+            self.btn_prop.clicked.connect(launcher_callback)
+            hdr.addWidget(self.btn_prop)
+
+        vbox.addLayout(hdr)
+
+        self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(2)
+        vbox.addLayout(self.grid)
+
+        self._cur_row = 0
+        self._cur_col = 0
+
+    def add_tool_button(self, btn):
+        self.grid.addWidget(btn, self._cur_row, self._cur_col)
+        if self._cur_col == 1:
+            self._cur_col = 0
+            self._cur_row += 1
+        else:
+            self._cur_col = 1
+
+
 class VerticalToolBarWidget(QFrame):
-    """캔버스 좌측 고밀도 전문 2열 세로 툴바 (RibbonIconProvider 벡터 아이콘 연동)"""
+    """캔버스 좌측 고밀도 전문 2열 세로 툴바 (메뉴 그룹 카드 박스 & 속성 런처 연동)"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("VerticalToolBarWidget")
-        self.setFixedWidth(62)
+        self.setFixedWidth(66)
         self.main_window = parent
         self.mode_buttons = {}
-        self._cur_row = 0
-        self._cur_col = 0
+        self.groups = {}
+        self._current_group_id = None
         self.setStyleSheet("""
             QFrame#VerticalToolBarWidget {
                 background-color: #1E293B;
@@ -12083,7 +12161,7 @@ class VerticalToolBarWidget(QFrame):
         """)
         
         self.vlayout = QVBoxLayout(self)
-        self.vlayout.setContentsMargins(2, 4, 2, 4)
+        self.vlayout.setContentsMargins(1, 2, 1, 2)
         self.vlayout.setSpacing(2)
         
         self.scroll = QScrollArea(self)
@@ -12094,17 +12172,30 @@ class VerticalToolBarWidget(QFrame):
         
         self.scroll_content = QWidget()
         self.scroll_content.setStyleSheet("background: transparent;")
-        self.grid_layout = QGridLayout(self.scroll_content)
-        self.grid_layout.setContentsMargins(0, 0, 0, 0)
-        self.grid_layout.setSpacing(2)
-        self.grid_layout.setHorizontalSpacing(2)
-        self.grid_layout.setVerticalSpacing(2)
+        self.groups_layout = QVBoxLayout(self.scroll_content)
+        self.groups_layout.setContentsMargins(1, 2, 1, 2)
+        self.groups_layout.setSpacing(4)
+        self.groups_layout.addStretch(1)
         
         self.scroll.setWidget(self.scroll_content)
         self.vlayout.addWidget(self.scroll)
 
-    def add_action_tool(self, icon_name, tooltip, callback, is_check=False, mode_key=None, color=None):
-        btn = QToolButton(self)
+    def add_group(self, group_id, title_text, launcher_callback=None):
+        grp = VerticalToolGroupWidget(title_text, launcher_callback, self.scroll_content)
+        self.groups[group_id] = grp
+        self._current_group_id = group_id
+        self.groups_layout.insertWidget(self.groups_layout.count() - 1, grp)
+        return grp
+
+    def add_action_tool(self, icon_name, tooltip, callback, is_check=False, mode_key=None, color=None, group_id=None):
+        target_gid = group_id or self._current_group_id
+        if not target_gid or target_gid not in self.groups:
+            if "_default" not in self.groups:
+                self.add_group("_default", "")
+            target_gid = "_default"
+
+        grp = self.groups[target_gid]
+        btn = QToolButton(grp)
         icon_color = color if color else "#F8FAFC"
         icon = RibbonIconProvider.get_icon(icon_name, 16, icon_color)
         btn.setIcon(icon)
@@ -12115,25 +12206,12 @@ class VerticalToolBarWidget(QFrame):
             if mode_key:
                 self.mode_buttons[mode_key] = btn
         btn.clicked.connect(callback)
-        self.grid_layout.addWidget(btn, self._cur_row, self._cur_col)
-        if self._cur_col == 1:
-            self._cur_col = 0
-            self._cur_row += 1
-        else:
-            self._cur_col = 1
+        grp.add_tool_button(btn)
         return btn
 
     def add_separator(self):
-        if self._cur_col == 1:
-            self._cur_col = 0
-            self._cur_row += 1
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet("background-color: #334155; margin: 3px 1px;")
-        line.setFixedHeight(1)
-        self.grid_layout.addWidget(line, self._cur_row, 0, 1, 2)
-        self._cur_row += 1
+        # 카드 박스 자체가 그룹 경계를 형성하므로 공백 구분 유지
+        pass
 
     def set_active_mode(self, mode):
         mode_upper = str(mode).upper() if mode else "SELECT"
@@ -12143,12 +12221,34 @@ class VerticalToolBarWidget(QFrame):
             else:
                 btn.setChecked(k == mode_upper)
 
+    def retranslate_ui(self):
+        titles = {
+            "project": tr("grp_project", "프로젝트"),
+            "capture": tr("grp_capture", "캡처"),
+            "edit": tr("grp_select_edit", "편집"),
+            "annotation": tr("grp_step_flow", "주석·흐름"),
+            "security": tr("grp_highlight_security", "보안·인식"),
+            "flowchart": tr("grp_flowchart", "플로우차트"),
+            "export": tr("grp_slide_options", "전송·내보내기"),
+        }
+        for gid, grp in self.groups.items():
+            if gid in titles and hasattr(grp, "lbl_title") and grp.lbl_title:
+                t = titles[gid]
+                grp.lbl_title.setText(t)
+                if hasattr(grp, "btn_prop") and grp.btn_prop:
+                    grp.btn_prop.setToolTip(f"{t} {tr('lbl_settings', '설정')}...")
+
 class ManualStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = load_config()
         self.current_project_path = None
-        self.last_capture_rect = None
+        # 저장된 고정 영역으로 last_capture_rect 복원 (프로그램 재시작 시에도 영역 지정 보존)
+        fr = self.config.get("fixed_rect")
+        if fr and isinstance(fr, dict) and fr.get("width", 0) >= 10 and fr.get("height", 0) >= 10:
+            self.last_capture_rect = QRect(fr.get("x", 100), fr.get("y", 100), fr.get("width", 960), fr.get("height", 540))
+        else:
+            self.last_capture_rect = None
         self.overlay_window = None
         self.current_target_monitor = self.config.get("target_monitor", -1)
         self.storyboard_steps = []
@@ -12465,7 +12565,7 @@ class ManualStudioWindow(QMainWindow):
         cap_grid.addWidget(self.btn_scroll_stitch, 1, 1)
         if not hasattr(self, "_ribbon_group_widgets"):
             self._ribbon_group_widgets = {}
-        _g = self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture")
+        _g = self.create_ribbon_group(tr("grp_capture", "캡처"), cap_grid, "grp_capture", launcher_callback=self.open_capture_settings_dialog)
         self._ribbon_group_widgets["grp_capture"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets.setdefault("_sep_grp_capture", _sep); tools_layout.addWidget(_sep)
@@ -12570,7 +12670,7 @@ class ManualStudioWindow(QMainWindow):
         flow_grid.addWidget(self.btn_flow_document, 1, 5)
         flow_grid.addWidget(self.btn_mobile_link, 1, 6)
 
-        _g = self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart")
+        _g = self.create_ribbon_group(tr("grp_flowchart", "플로우차트"), flow_grid, "grp_flowchart", launcher_callback=self.open_flowchart_settings_dialog)
         self._ribbon_group_widgets["grp_flowchart"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_flowchart"] = _sep; tools_layout.addWidget(_sep)
@@ -12638,7 +12738,7 @@ class ManualStudioWindow(QMainWindow):
         proj_grid.addWidget(self.btn_merge_project, 1, 0)
         proj_grid.addWidget(self.btn_open_file, 1, 1)
         proj_grid.addWidget(self.btn_copy_image, 1, 2)
-        _g = self.create_ribbon_group(tr("grp_project", "프로젝트"), proj_grid, "grp_project")
+        _g = self.create_ribbon_group(tr("grp_project", "프로젝트"), proj_grid, "grp_project", launcher_callback=self.open_project_settings_dialog)
         self._ribbon_group_widgets["grp_project"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_project"] = _sep; tools_layout.addWidget(_sep)
@@ -12697,7 +12797,7 @@ class ManualStudioWindow(QMainWindow):
         step_grid.addWidget(self.btn_mode_step_arrow, 0, 1)
         step_grid.addWidget(self.btn_mode_elbow, 1, 0)
         step_grid.addWidget(self.btn_mode_arrow, 1, 1)
-        _g = self.create_ribbon_group(tr("grp_step_flow", "단계·흐름"), step_grid, "grp_step_flow")
+        _g = self.create_ribbon_group(tr("grp_step_flow", "단계·흐름"), step_grid, "grp_step_flow", launcher_callback=self.open_annotation_settings_dialog)
         self._ribbon_group_widgets["grp_step_flow"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_step_flow"] = _sep; tools_layout.addWidget(_sep)
@@ -12735,7 +12835,7 @@ class ManualStudioWindow(QMainWindow):
         box_grid.addWidget(self.btn_mode_eraser, 0, 1)
         box_grid.addWidget(self.btn_auto_pii, 1, 1)
         box_grid.addWidget(self.btn_draft_stamp, 0, 2, 2, 1)
-        _g = self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security")
+        _g = self.create_ribbon_group(tr("grp_highlight_security", "강조·보안"), box_grid, "grp_highlight_security", launcher_callback=self.action_auto_pii)
         self._ribbon_group_widgets["grp_highlight_security"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_highlight_security"] = _sep; tools_layout.addWidget(_sep)
@@ -12810,7 +12910,7 @@ class ManualStudioWindow(QMainWindow):
         text_grid.addWidget(self.btn_mode_text, 0, 1)
         text_grid.addWidget(self.btn_mode_hotkey, 1, 0)
         text_grid.addWidget(self.btn_mode_wordart, 1, 1)
-        _g = self.create_ribbon_group(tr("grp_text_wordart", "텍스트·워드아트"), text_grid, "grp_text_wordart")
+        _g = self.create_ribbon_group(tr("grp_text_wordart", "텍스트·워드아트"), text_grid, "grp_text_wordart", launcher_callback=self.open_annotation_settings_dialog)
         self._ribbon_group_widgets["grp_text_wordart"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_text_wordart"] = _sep; tools_layout.addWidget(_sep)
@@ -12855,7 +12955,7 @@ class ManualStudioWindow(QMainWindow):
         ppt_grid.addWidget(self.btn_toggle_window_frame, 0, 0)
         ppt_grid.addWidget(self.btn_ppt_fit, 0, 1)
         ppt_grid.addWidget(self.chk_ppt_title, 1, 0, 1, 2)
-        _g = self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options")
+        _g = self.create_ribbon_group(tr("grp_slide_options", "슬라이드 옵션"), ppt_grid, "grp_slide_options", launcher_callback=self.open_export_settings_dialog)
         self._ribbon_group_widgets["grp_slide_options"] = _g
         tools_layout.addWidget(_g)
 
@@ -13631,31 +13731,32 @@ class ManualStudioWindow(QMainWindow):
         if hasattr(self, 'vertical_toolbar'):
             vt = self.vertical_toolbar
             # 1. 스타일 전환 & 뷰 & 프로젝트
+            vt.add_group("project", tr("grp_project", "프로젝트"), self.open_project_settings_dialog)
             vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환 (Ctrl+M)", lambda: self.set_ui_style_mode("ribbon"))
             vt.add_action_tool("filmstrip", "스토리보드 패널 표시/숨김 (Ctrl+B)", self.on_toggle_filmstrip)
             vt.add_action_tool("new_project", "새 프로젝트 (Ctrl+N)", self.action_new_project)
             vt.add_action_tool("open_project", "프로젝트 열기 (Ctrl+O)", self.action_open_project)
             vt.add_action_tool("save_project", "프로젝트 저장 (Ctrl+S)", self.action_save_project)
             vt.add_action_tool("autosave", "자동 저장 토글 (Alt+A)", self.on_autosave_toggle_clicked, is_check=True)
-            vt.add_separator()
 
             # 2. 캡처 도구
+            vt.add_group("capture", tr("grp_capture", "캡처"), self.open_capture_settings_dialog)
             vt.add_action_tool("capture_fixed", "고정 캡처 (F9)", self.handle_hotkey_capture)
             vt.add_action_tool("capture_area", "영역 지정 캡처 (Shift+F9)", self.start_capture)
             vt.add_action_tool("capture_sub", "부분 캡처 (F8)", self.start_sub_capture)
             vt.add_action_tool("scroll_stitch", "스크롤 스티칭 캡처", self.action_scroll_stitch)
-            vt.add_separator()
 
             # 3. 편집 및 실행 취소
+            vt.add_group("edit", tr("grp_select_edit", "편집"), self.open_annotation_settings_dialog)
             vt.add_action_tool("select", "선택 도구 (V / ESC)", lambda: self.switch_mode("SELECT"), is_check=True, mode_key="SELECT")
             vt.add_action_tool("reset_index", "스탬프 1번 초기화", self.reset_stamp_index)
             vt.add_action_tool("undo", "실행 취소 (Ctrl+Z)", self.action_undo)
             vt.add_action_tool("clear", "캔버스 전체 삭제", self.action_clear, color="#F87171")
             vt.add_action_tool("ppt_renumber", "순번 재정렬", self.action_renumber_powerpoint_steps)
             vt.add_action_tool("draft", "Draft 스탬프 추가", self.action_add_draft_stamp)
-            vt.add_separator()
 
             # 4. 주석 및 그래픽 도구
+            vt.add_group("annotation", tr("grp_step_flow", "주석·흐름"), self.open_annotation_settings_dialog)
             vt.add_action_tool("stamp", "번호 스탬프 (S)", lambda: self.switch_mode("STAMP"), is_check=True, mode_key="STAMP")
             vt.add_action_tool("step_arrow", "순번 화살표", lambda: self.switch_mode("STEP_ARROW"), is_check=True, mode_key="STEP_ARROW")
             vt.add_action_tool("elbow", "직각 화살표 (E)", lambda: self.switch_mode("ELBOW"), is_check=True, mode_key="ELBOW")
@@ -13666,9 +13767,9 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("wordart", "워드아트 텍스트", lambda: self.switch_mode("WORDART"), is_check=True, mode_key="WORDART")
             vt.add_action_tool("hotkey", "단축키 키캡 배지 (K)", lambda: self.switch_mode("HOTKEY"), is_check=True, mode_key="HOTKEY")
             vt.add_action_tool("window_frame", "창틀 프레임 토글", self.on_toggle_window_frame)
-            vt.add_separator()
 
             # 5. 보안 & 측정 & 텍스트 인식
+            vt.add_group("security", tr("grp_highlight_security", "보안·인식"), self.action_auto_pii)
             vt.add_action_tool("dimension", "선 치수선 (D)", lambda: self.switch_mode("DIMENSION"), is_check=True, mode_key="DIMENSION")
             vt.add_action_tool("box_dimension", "영역 치수 박스", lambda: self.switch_mode("BOX_DIMENSION"), is_check=True, mode_key="BOX_DIMENSION")
             vt.add_action_tool("blur", "모자이크/블러 (M)", lambda: self.switch_mode("BLUR"), is_check=True, mode_key="BLUR")
@@ -13677,9 +13778,9 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("ppt_autofit", "배율 맞춤", self.auto_fit_ppt_scale)
             vt.add_action_tool("ocr", "OCR 텍스트 추출 (O)", lambda: self.switch_mode("OCR"), is_check=True, mode_key="OCR")
             vt.add_action_tool("ocr_label", "OCR 라벨 생성 (Shift+O)", lambda: self.switch_mode("OCR_LABEL"), is_check=True, mode_key="OCR_LABEL")
-            vt.add_separator()
 
             # 6. 플로우차트 도구
+            vt.add_group("flowchart", tr("grp_flowchart", "플로우차트"), self.open_flowchart_settings_dialog)
             vt.add_action_tool("flowchart", "플로우차트 빌더", self.open_flowchart_studio, color="#4ADE80")
             vt.add_action_tool("flow_line", "지능형 연결선", lambda: self.switch_mode("FLOW_CONNECT_LINE"), is_check=True, mode_key="FLOW_CONNECT_LINE")
             vt.add_action_tool("flow_terminal", "시작/종료 노드", lambda: self.switch_mode("FLOW_TERMINAL"), is_check=True, mode_key="FLOW_TERMINAL")
@@ -13691,20 +13792,16 @@ class ManualStudioWindow(QMainWindow):
             vt.add_action_tool("flow_auto_number", "자동 번호 스탬프 부착", self.action_auto_number_flowchart, color="#F87171")
             vt.add_action_tool("flow_align", "노드 자동정렬 (TD)", lambda: self.action_auto_align_flowchart("TD"))
             vt.add_action_tool("mobile_link", "모바일 손그림 연동", self.action_open_mobile_link)
-            vt.add_separator()
 
-            # 7. MarkItDown (문서 참조)
+            # 7. 참조 & 슬라이드 전송
+            vt.add_group("export", tr("grp_slide_options", "전송·내보내기"), self.open_export_settings_dialog)
             vt.add_action_tool("doc_ref", "문서 참조 패널 토글", self.toggle_document_dock, color="#C084FC")
             vt.add_action_tool("flow_document", "외부 파일 변환 (MarkItDown)", self.action_markitdown_convert, color="#C084FC")
-            vt.add_separator()
-
-            # 8. 슬라이드 관리 & 내보내기 & 설정
             vt.add_action_tool("add_step", "새 슬라이드 추가", self.action_add_new_slide)
             vt.add_action_tool("ppt_export", "PowerPoint 슬라이드 전송 (F10)", self.export_to_ppt_and_clipboard, color="#FB923C")
             vt.add_action_tool("export_hwp", "한컴 한글 전송 (Shift+F10 / F12)", self.action_export_all_hwp, color="#38BDF8")
             vt.add_action_tool("slides_export", "Google Slides 전송 (F11)", self.action_export_all_slides, color="#FBBF24")
             vt.add_action_tool("settings", "환경 설정...", self.open_settings_dialog)
-            vt.grid_layout.setRowStretch(vt._cur_row + 1, 1)
             vt.set_active_mode("SELECT")
         self.update_status_bar()
         self.sync_ui_from_config()
@@ -14220,7 +14317,7 @@ class ManualStudioWindow(QMainWindow):
             else:
                 widget.setVisible(visible_map.get(gid, True))
 
-    def create_ribbon_group(self, title_text, layout_content, group_id=None):
+    def create_ribbon_group(self, title_text, layout_content, group_id=None, launcher_callback=None):
         group = QFrame(self)
         group.setObjectName("RibbonGroup")
         group.setStyleSheet("""
@@ -14238,10 +14335,43 @@ class ManualStudioWindow(QMainWindow):
         gl.setSpacing(2)
         gl.addLayout(layout_content)
         gl.addStretch(1)
+
+        bottom_bar = QHBoxLayout()
+        bottom_bar.setContentsMargins(0, 0, 0, 0)
+        bottom_bar.setSpacing(1)
+
+        if launcher_callback:
+            bottom_bar.addSpacing(14)
+        bottom_bar.addStretch(1)
+
         lbl = QLabel(title_text, group)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet("font-size: 9px; color: #64748B; font-weight: bold; border: none; background: transparent; padding: 0px; margin: 0px; white-space: nowrap;")
-        gl.addWidget(lbl)
+        bottom_bar.addWidget(lbl)
+        bottom_bar.addStretch(1)
+
+        if launcher_callback:
+            btn_launch = QToolButton(group)
+            btn_launch.setFixedSize(14, 14)
+            btn_launch.setIcon(RibbonIconProvider.get_icon("dialog_launcher", 10, "#64748B"))
+            btn_launch.setIconSize(QSize(10, 10))
+            btn_launch.setToolTip(f"{title_text} {tr('lbl_settings', '설정')}...")
+            btn_launch.setStyleSheet("""
+                QToolButton {
+                    background: transparent;
+                    border: none;
+                    border-radius: 2px;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QToolButton:hover {
+                    background-color: #E2E8F0;
+                }
+            """)
+            btn_launch.clicked.connect(launcher_callback)
+            bottom_bar.addWidget(btn_launch)
+
+        gl.addLayout(bottom_bar)
         if group_id:
             if not hasattr(self, "_ribbon_groups"):
                 self._ribbon_groups = {}
@@ -14281,6 +14411,8 @@ class ManualStudioWindow(QMainWindow):
             self.storyboard_toggle_bar.retranslate_ui()
         if hasattr(self, "filmstrip") and hasattr(self.filmstrip, "retranslate_ui"):
             self.filmstrip.retranslate_ui()
+        if hasattr(self, "vertical_toolbar") and hasattr(self.vertical_toolbar, "retranslate_ui"):
+            self.vertical_toolbar.retranslate_ui()
         if hasattr(self, "init_monitor_combos"):
             self.init_monitor_combos()
         if hasattr(self, "canvas") and self.canvas:
@@ -14975,7 +15107,11 @@ class ManualStudioWindow(QMainWindow):
             self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
 
         self.current_project_path = file_path
-        self.last_capture_rect = None
+        fr = self.config.get("fixed_rect")
+        if fr and isinstance(fr, dict) and fr.get("width", 0) >= 10 and fr.get("height", 0) >= 10:
+            self.last_capture_rect = QRect(fr.get("x", 100), fr.get("y", 100), fr.get("width", 960), fr.get("height", 540))
+        else:
+            self.last_capture_rect = None
         base_name = os.path.basename(file_path)
         self.update_window_title()
         self.show_toast(f"프로젝트 로드 완료: {base_name} (슬라이드 {len(steps)}개)")
@@ -17288,6 +17424,29 @@ class ManualStudioWindow(QMainWindow):
             self.update_status_bar()
             self.update_autosave_timer()
             self.show_toast(tr("settings_toast_saved", "설정이 저장되었습니다."))
+
+    def open_capture_settings_dialog(self):
+        dlg = CaptureSettingsDialog(self.config, self)
+        dlg.exec()
+
+    def open_annotation_settings_dialog(self):
+        dlg = AnnotationSettingsDialog(self.config, self)
+        dlg.exec()
+
+    def open_export_settings_dialog(self):
+        dlg = ExportSettingsDialog(self.config, self)
+        dlg.exec()
+
+    def open_project_settings_dialog(self):
+        dlg = ProjectSettingsDialog(self.config, self)
+        dlg.exec()
+
+    def open_flowchart_settings_dialog(self):
+        dlg = FlowchartSettingsDialog(self.config, self)
+        dlg.exec()
+
+    def open_security_settings_dialog(self):
+        self.action_auto_pii()
 
     def closeEvent(self, event):
         if hasattr(self, "mobile_server") and self.mobile_server:
@@ -20662,6 +20821,574 @@ class AboutDialog(QDialog):
         cb = QApplication.clipboard()
         cb.setText("77.victor.lee@gmail.com")
         QMessageBox.information(self, tr("title_copy_email", "클립보드 복사"), tr("about_email_copied", "이메일 주소(77.victor.lee@gmail.com)가 클립보드에 복사되었습니다."))
+
+
+# ==============================================================================
+# 8-9. 메뉴 그룹별 전담 설정 다이얼로그 (Focused Group Settings Dialogs)
+# ==============================================================================
+
+class CaptureSettingsDialog(QDialog):
+    """캡처 그룹 전용 설정 다이얼로그 (고정 영역 좌표, 대상 모니터, 창틀 프레임 효과)"""
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_capture_settings", "캡처 설정"))
+        self.resize(380, 320)
+        self.config = config
+        self.main_win = parent
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # 1. 고정 영역 사용 여부
+        self.chk_fixed = QCheckBox(tr("chk_use_fixed_rect", "고정 영역 캡처 모드 사용 (F9 즉시 캡처)"), self)
+        self.chk_fixed.setChecked(self.config.get("fixed_rect_enabled", True))
+        layout.addWidget(self.chk_fixed)
+
+        # 2. 고정 영역 좌표 (X, Y, W, H)
+        fr_box = QGroupBox(tr("grp_fixed_rect_coords", "고정 영역 좌표 (픽셀)"), self)
+        fr_grid = QGridLayout(fr_box)
+        fr_grid.setContentsMargins(10, 10, 10, 10)
+        fr_grid.setSpacing(8)
+
+        fr = self.config.get("fixed_rect", {"x": 100, "y": 100, "width": 960, "height": 540})
+        
+        self.spin_x = QSpinBox(self)
+        self.spin_x.setRange(-9999, 9999)
+        self.spin_x.setValue(fr.get("x", 100))
+        fr_grid.addWidget(QLabel("X:"), 0, 0)
+        fr_grid.addWidget(self.spin_x, 0, 1)
+
+        self.spin_y = QSpinBox(self)
+        self.spin_y.setRange(-9999, 9999)
+        self.spin_y.setValue(fr.get("y", 100))
+        fr_grid.addWidget(QLabel("Y:"), 0, 2)
+        fr_grid.addWidget(self.spin_y, 0, 3)
+
+        self.spin_w = QSpinBox(self)
+        self.spin_w.setRange(10, 7680)
+        self.spin_w.setValue(fr.get("width", 960))
+        fr_grid.addWidget(QLabel("W:"), 1, 0)
+        fr_grid.addWidget(self.spin_w, 1, 1)
+
+        self.spin_h = QSpinBox(self)
+        self.spin_h.setRange(10, 4320)
+        self.spin_h.setValue(fr.get("height", 540))
+        fr_grid.addWidget(QLabel("H:"), 1, 2)
+        fr_grid.addWidget(self.spin_h, 1, 3)
+
+        self.btn_load_current = QPushButton(tr("btn_load_current_rect", "현재 화면/캔버스 크기 가져오기"), self)
+        self.btn_load_current.clicked.connect(self._on_load_current_canvas)
+        fr_grid.addWidget(self.btn_load_current, 2, 0, 1, 4)
+
+        layout.addWidget(fr_box)
+
+        # 3. 대상 모니터
+        mon_box = QHBoxLayout()
+        mon_box.addWidget(QLabel(tr("lbl_target_monitor", "대상 모니터:"), self))
+        self.combo_mon = QComboBox(self)
+        self.combo_mon.addItem(tr("mon_virtual_desktop", "전체 가상화면"), -1)
+        screens = MultiMonitorManager.get_screens()
+        for idx, scr in enumerate(screens):
+            geo = scr.geometry()
+            self.combo_mon.addItem(f"모니터 {idx + 1} ({geo.width()}×{geo.height()})", idx)
+        cur_mon = self.config.get("target_monitor", -1)
+        idx_found = self.combo_mon.findData(cur_mon)
+        if idx_found >= 0:
+            self.combo_mon.setCurrentIndex(idx_found)
+        mon_box.addWidget(self.combo_mon)
+        layout.addLayout(mon_box)
+
+        # 4. 창틀 & 섀도우 효과
+        self.chk_frame = QCheckBox(tr("chk_enable_window_frame", "캡처 이미지 액자 창틀 & 그림자 효과"), self)
+        self.chk_frame.setChecked(self.config.get("enable_window_frame", False))
+        layout.addWidget(self.chk_frame)
+
+        layout.addStretch(1)
+
+        # 버튼 박스
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton(tr("btn_save", "저장"), self)
+        btn_ok.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px;")
+        btn_ok.clicked.connect(self.save_and_accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        layout.addLayout(btn_box)
+
+    def _on_load_current_canvas(self):
+        if self.main_win and hasattr(self.main_win, "canvas") and self.main_win.canvas.pixmap:
+            px = self.main_win.canvas.pixmap
+            self.spin_w.setValue(px.width())
+            self.spin_h.setValue(px.height())
+
+    def save_and_accept(self):
+        self.config["fixed_rect_enabled"] = self.chk_fixed.isChecked()
+        self.config["fixed_rect"] = {
+            "x": self.spin_x.value(),
+            "y": self.spin_y.value(),
+            "width": self.spin_w.value(),
+            "height": self.spin_h.value()
+        }
+        self.config["target_monitor"] = self.combo_mon.currentData()
+        self.config["enable_window_frame"] = self.chk_frame.isChecked()
+        save_config(self.config)
+        if self.main_win:
+            if hasattr(self.main_win, "chk_fixed_rect"):
+                self.main_win.chk_fixed_rect.setChecked(self.chk_fixed.isChecked())
+            if hasattr(self.main_win, "spin_fx"):
+                self.main_win.spin_fx.setValue(self.spin_x.value())
+                self.main_win.spin_fy.setValue(self.spin_y.value())
+                self.main_win.spin_fw.setValue(self.spin_w.value())
+                self.main_win.spin_fh.setValue(self.spin_h.value())
+            if hasattr(self.main_win, "last_capture_rect"):
+                self.main_win.last_capture_rect = QRect(
+                    self.spin_x.value(), self.spin_y.value(),
+                    self.spin_w.value(), self.spin_h.value()
+                )
+            if hasattr(self.main_win, "btn_toggle_window_frame"):
+                self.main_win.btn_toggle_window_frame.setChecked(self.chk_frame.isChecked())
+            self.main_win.show_toast(tr("toast_capture_settings_saved", "캡처 설정이 저장되었습니다."))
+        self.accept()
+
+
+class AnnotationSettingsDialog(QDialog):
+    """주석·서식 그룹 전용 설정 다이얼로그 (스탬프, 강조박스, 화살표, 말풍선)"""
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_annotation_settings", "주석·서식 설정"))
+        self.resize(440, 480)
+        self.config = config
+        self.main_win = parent
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        # 1. 스탬프 서식
+        grp_st = QGroupBox(tr("grp_stamp_settings", "번호 스탬프 서식"), self)
+        l_st = QGridLayout(grp_st)
+        st_cfg = self.config.get("stamp_style", {})
+        
+        l_st.addWidget(QLabel(tr("lbl_size", "크기:")), 0, 0)
+        self.spin_stamp_size = QSpinBox(self)
+        self.spin_stamp_size.setRange(16, 64)
+        self.spin_stamp_size.setValue(st_cfg.get("size", 32))
+        l_st.addWidget(self.spin_stamp_size, 0, 1)
+
+        self.btn_stamp_bg = QPushButton(st_cfg.get("bg_color", "#E53935"), self)
+        self.btn_stamp_bg.setStyleSheet(f"background-color: {st_cfg.get('bg_color', '#E53935')}; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_stamp_bg.clicked.connect(lambda: self._pick_color(self.btn_stamp_bg))
+        l_st.addWidget(QLabel(tr("lbl_bg_color", "배경색:")), 0, 2)
+        l_st.addWidget(self.btn_stamp_bg, 0, 3)
+
+        self.btn_stamp_fg = QPushButton(st_cfg.get("text_color", "#FFFFFF"), self)
+        self.btn_stamp_fg.setStyleSheet(f"background-color: {st_cfg.get('text_color', '#FFFFFF')}; color: black; font-weight: bold; border: 1px solid #CBD5E1; border-radius: 3px;")
+        self.btn_stamp_fg.clicked.connect(lambda: self._pick_color(self.btn_stamp_fg))
+        l_st.addWidget(QLabel(tr("lbl_text_color", "글자색:")), 1, 2)
+        l_st.addWidget(self.btn_stamp_fg, 1, 3)
+        layout.addWidget(grp_st)
+
+        # 2. 강조 박스 서식
+        grp_box = QGroupBox(tr("grp_box_settings", "강조 박스 서식"), self)
+        l_bx = QGridLayout(grp_box)
+        bx_cfg = self.config.get("highlight_box_style", {})
+
+        l_bx.addWidget(QLabel(tr("lbl_border_width", "두께:")), 0, 0)
+        self.spin_box_width = QSpinBox(self)
+        self.spin_box_width.setRange(1, 10)
+        self.spin_box_width.setValue(bx_cfg.get("border_width", 3))
+        l_bx.addWidget(self.spin_box_width, 0, 1)
+
+        self.btn_box_color = QPushButton(bx_cfg.get("color", "#E53935"), self)
+        self.btn_box_color.setStyleSheet(f"background-color: {bx_cfg.get('color', '#E53935')}; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_box_color.clicked.connect(lambda: self._pick_color(self.btn_box_color))
+        l_bx.addWidget(QLabel(tr("lbl_color", "색상:")), 0, 2)
+        l_bx.addWidget(self.btn_box_color, 0, 3)
+
+        self.chk_box_fill = QCheckBox(tr("chk_box_fill", "반투명 하이라이트 채우기"), self)
+        self.chk_box_fill.setChecked(bx_cfg.get("fill", False))
+        l_bx.addWidget(self.chk_box_fill, 1, 0, 1, 4)
+        layout.addWidget(grp_box)
+
+        # 3. 화살표 & 꺾임선 서식
+        grp_arr = QGroupBox(tr("grp_arrow_settings", "화살표 & 꺾임선 서식"), self)
+        l_arr = QGridLayout(grp_arr)
+        arr_cfg = self.config.get("arrow_style", {})
+
+        l_arr.addWidget(QLabel(tr("lbl_width", "두께:")), 0, 0)
+        self.spin_arrow_width = QSpinBox(self)
+        self.spin_arrow_width.setRange(1, 10)
+        self.spin_arrow_width.setValue(arr_cfg.get("width", 3))
+        l_arr.addWidget(self.spin_arrow_width, 0, 1)
+
+        self.btn_arrow_color = QPushButton(arr_cfg.get("color", "#E53935"), self)
+        self.btn_arrow_color.setStyleSheet(f"background-color: {arr_cfg.get('color', '#E53935')}; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_arrow_color.clicked.connect(lambda: self._pick_color(self.btn_arrow_color))
+        l_arr.addWidget(QLabel(tr("lbl_color", "색상:")), 0, 2)
+        l_arr.addWidget(self.btn_arrow_color, 0, 3)
+
+        l_arr.addWidget(QLabel(tr("lbl_head_size", "머리 크기:")), 1, 0)
+        self.spin_arrow_head = QSpinBox(self)
+        self.spin_arrow_head.setRange(6, 30)
+        self.spin_arrow_head.setValue(arr_cfg.get("head_size", 14))
+        l_arr.addWidget(self.spin_arrow_head, 1, 1)
+        layout.addWidget(grp_arr)
+
+        # 4. 말풍선 서식
+        grp_cal = QGroupBox(tr("grp_callout_settings", "설명 말풍선 서식"), self)
+        l_cal = QGridLayout(grp_cal)
+        cal_cfg = self.config.get("callout_style", {})
+
+        l_cal.addWidget(QLabel(tr("lbl_border_width", "두께:")), 0, 0)
+        self.spin_cal_width = QSpinBox(self)
+        self.spin_cal_width.setRange(1, 6)
+        self.spin_cal_width.setValue(cal_cfg.get("border_width", 2))
+        l_cal.addWidget(self.spin_cal_width, 0, 1)
+
+        self.btn_cal_color = QPushButton(cal_cfg.get("border_color", "#E53935"), self)
+        self.btn_cal_color.setStyleSheet(f"background-color: {cal_cfg.get('border_color', '#E53935')}; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_cal_color.clicked.connect(lambda: self._pick_color(self.btn_cal_color))
+        l_cal.addWidget(QLabel(tr("lbl_color", "색상:")), 0, 2)
+        l_cal.addWidget(self.btn_cal_color, 0, 3)
+        layout.addWidget(grp_cal)
+
+        layout.addStretch(1)
+
+        # 버튼 박스
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton(tr("btn_save", "저장"), self)
+        btn_ok.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px;")
+        btn_ok.clicked.connect(self.save_and_accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        layout.addLayout(btn_box)
+
+    def _pick_color(self, btn):
+        cur_hex = btn.text()
+        col = QColorDialog.getColor(QColor(cur_hex), self, "색상 선택")
+        if col.isValid():
+            btn.setText(col.name())
+            fg = "#FFFFFF" if col.lightness() < 128 else "#000000"
+            btn.setStyleSheet(f"background-color: {col.name()}; color: {fg}; font-weight: bold; border-radius: 3px;")
+
+    def save_and_accept(self):
+        self.config.setdefault("stamp_style", {})["size"] = self.spin_stamp_size.value()
+        self.config["stamp_style"]["bg_color"] = self.btn_stamp_bg.text()
+        self.config["stamp_style"]["text_color"] = self.btn_stamp_fg.text()
+
+        self.config.setdefault("highlight_box_style", {})["border_width"] = self.spin_box_width.value()
+        self.config["highlight_box_style"]["color"] = self.btn_box_color.text()
+        self.config["highlight_box_style"]["fill"] = self.chk_box_fill.isChecked()
+
+        self.config.setdefault("arrow_style", {})["width"] = self.spin_arrow_width.value()
+        self.config["arrow_style"]["color"] = self.btn_arrow_color.text()
+        self.config["arrow_style"]["head_size"] = self.spin_arrow_head.value()
+
+        self.config.setdefault("callout_style", {})["border_width"] = self.spin_cal_width.value()
+        self.config["callout_style"]["border_color"] = self.btn_cal_color.text()
+
+        save_config(self.config)
+        if self.main_win:
+            if hasattr(self.main_win, "canvas"):
+                self.main_win.canvas.set_config(self.config)
+                self.main_win.canvas.current_box_color = self.btn_box_color.text()
+                self.main_win.canvas.current_box_width = self.spin_box_width.value()
+                self.main_win.canvas.current_box_fill = self.chk_box_fill.isChecked()
+                self.main_win.canvas.current_arrow_color = self.btn_arrow_color.text()
+                self.main_win.canvas.current_arrow_width = self.spin_arrow_width.value()
+                self.main_win.canvas.current_arrow_head_size = self.spin_arrow_head.value()
+            self.main_win.show_toast(tr("toast_annotation_settings_saved", "주석 서식 설정이 저장되었습니다."))
+        self.accept()
+
+
+class ExportSettingsDialog(QDialog):
+    """슬라이드 내보내기 그룹 전용 설정 다이얼로그 (PPT 규격 너비, 제목 템플릿, 폰트/크기/색상, 여백)"""
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_export_settings", "슬라이드 내보내기 설정"))
+        self.resize(440, 420)
+        self.config = config
+        self.main_win = parent
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        # 1. PPT 기본 규격
+        grp_ppt = QGroupBox(tr("grp_ppt_slide_spec", "PowerPoint 규격화 설정"), self)
+        l_ppt = QGridLayout(grp_ppt)
+
+        l_ppt.addWidget(QLabel(tr("lbl_target_width", "목표 가로 너비(px):")), 0, 0)
+        self.spin_tw = QSpinBox(self)
+        self.spin_tw.setRange(400, 3840)
+        self.spin_tw.setValue(self.config.get("target_width", 960))
+        l_ppt.addWidget(self.spin_tw, 0, 1)
+
+        self.chk_autoresize = QCheckBox(tr("chk_autoresize", "내보내기 시 자동 리사이징"), self)
+        self.chk_autoresize.setChecked(self.config.get("auto_resize", True))
+        l_ppt.addWidget(self.chk_autoresize, 0, 2)
+
+        self.chk_auto_slide = QCheckBox(tr("chk_ppt_auto_slide", "전송 시 새 슬라이드 자동 생성"), self)
+        self.chk_auto_slide.setChecked(self.config.get("ppt_auto_slide", True))
+        l_ppt.addWidget(self.chk_auto_slide, 1, 0, 1, 3)
+        layout.addWidget(grp_ppt)
+
+        # 2. 슬라이드 제목 서식
+        grp_title = QGroupBox(tr("grp_slide_title", "슬라이드 제목 서식"), self)
+        l_ttl = QGridLayout(grp_title)
+        ppt_l = self.config.get("ppt_layout", {})
+
+        self.chk_include_title = QCheckBox(tr("chk_include_title", "슬라이드 제목 포함"), self)
+        self.chk_include_title.setChecked(ppt_l.get("include_title", True))
+        l_ttl.addWidget(self.chk_include_title, 0, 0, 1, 2)
+
+        l_ttl.addWidget(QLabel(tr("lbl_template", "제목 서식:")), 1, 0)
+        self.edit_template = QLineEdit(ppt_l.get("title_template", "Step {n}. [단계명 입력]"), self)
+        l_ttl.addWidget(self.edit_template, 1, 1, 1, 3)
+
+        l_ttl.addWidget(QLabel(tr("lbl_font", "글꼴:")), 2, 0)
+        self.combo_font = QFontComboBox(self)
+        self.combo_font.setCurrentFont(QFont(ppt_l.get("title_font_family", "Malgun Gothic")))
+        l_ttl.addWidget(self.combo_font, 2, 1)
+
+        l_ttl.addWidget(QLabel(tr("lbl_font_size", "크기:")), 2, 2)
+        self.spin_font_size = QSpinBox(self)
+        self.spin_font_size.setRange(10, 48)
+        self.spin_font_size.setValue(ppt_l.get("title_font_size", 18))
+        l_ttl.addWidget(self.spin_font_size, 2, 3)
+
+        l_ttl.addWidget(QLabel(tr("lbl_font_color", "색상:")), 3, 0)
+        self.btn_title_color = QPushButton(ppt_l.get("title_font_color", "#000000"), self)
+        self.btn_title_color.setStyleSheet(f"background-color: {ppt_l.get('title_font_color', '#000000')}; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_title_color.clicked.connect(self._pick_title_color)
+        l_ttl.addWidget(self.btn_title_color, 3, 1)
+
+        self.chk_bold = QCheckBox(tr("chk_bold", "굵게"), self)
+        self.chk_bold.setChecked(ppt_l.get("title_font_bold", True))
+        l_ttl.addWidget(self.chk_bold, 3, 2)
+        layout.addWidget(grp_title)
+
+        # 3. 한글 & Google Slides
+        grp_hwp = QGroupBox(tr("grp_doc_export", "문서 연동 (한글 / Google Slides)"), self)
+        l_hwp = QVBoxLayout(grp_hwp)
+        self.chk_hwp_new_page = QCheckBox(tr("chk_hwp_new_page", "한컴 한글 내보내기 시 새 페이지로 분할"), self)
+        self.chk_hwp_new_page.setChecked(self.config.get("hwp_new_page", False))
+        l_hwp.addWidget(self.chk_hwp_new_page)
+        layout.addWidget(grp_hwp)
+
+        layout.addStretch(1)
+
+        # 버튼 박스
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton(tr("btn_save", "저장"), self)
+        btn_ok.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px;")
+        btn_ok.clicked.connect(self.save_and_accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        layout.addLayout(btn_box)
+
+    def _pick_title_color(self):
+        cur_hex = self.btn_title_color.text()
+        col = QColorDialog.getColor(QColor(cur_hex), self, "제목 색상 선택")
+        if col.isValid():
+            self.btn_title_color.setText(col.name())
+            fg = "#FFFFFF" if col.lightness() < 128 else "#000000"
+            self.btn_title_color.setStyleSheet(f"background-color: {col.name()}; color: {fg}; font-weight: bold; border-radius: 3px;")
+
+    def save_and_accept(self):
+        self.config["target_width"] = self.spin_tw.value()
+        self.config["auto_resize"] = self.chk_autoresize.isChecked()
+        self.config["ppt_auto_slide"] = self.chk_auto_slide.isChecked()
+
+        ppt_l = self.config.setdefault("ppt_layout", {})
+        ppt_l["include_title"] = self.chk_include_title.isChecked()
+        ppt_l["title_template"] = self.edit_template.text()
+        ppt_l["title_font_family"] = self.combo_font.currentFont().family()
+        ppt_l["title_font_size"] = self.spin_font_size.value()
+        ppt_l["title_font_color"] = self.btn_title_color.text()
+        ppt_l["title_font_bold"] = self.chk_bold.isChecked()
+        self.config["hwp_new_page"] = self.chk_hwp_new_page.isChecked()
+
+        save_config(self.config)
+        if self.main_win:
+            self.main_win.show_toast(tr("toast_export_settings_saved", "내보내기 설정이 저장되었습니다."))
+        self.accept()
+
+
+class ProjectSettingsDialog(QDialog):
+    """프로젝트 & 시스템 설정 다이얼로그 (자동 저장 간격, 시스템 언어, UI 테마 스타일)"""
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_project_settings", "프로젝트 & 시스템 설정"))
+        self.resize(380, 280)
+        self.config = config
+        self.main_win = parent
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # 1. 자동 저장
+        grp_as = QGroupBox(tr("grp_autosave", "자동 저장 설정"), self)
+        l_as = QHBoxLayout(grp_as)
+        self.chk_autosave = QCheckBox(tr("chk_autosave_enable", "자동 저장 활성화"), self)
+        self.chk_autosave.setChecked(self.config.get("auto_save_enabled", True))
+        l_as.addWidget(self.chk_autosave)
+
+        l_as.addWidget(QLabel(tr("lbl_interval", "주기:")))
+        self.spin_interval = QSpinBox(self)
+        self.spin_interval.setRange(1, 60)
+        self.spin_interval.setSuffix(" " + tr("unit_min", "분"))
+        self.spin_interval.setValue(self.config.get("auto_save_interval_min", 5))
+        l_as.addWidget(self.spin_interval)
+        layout.addWidget(grp_as)
+
+        # 2. 언어 설정
+        grp_lang = QGroupBox(tr("settings_group_lang", "시스템 언어 설정"), self)
+        l_lang = QHBoxLayout(grp_lang)
+        self.combo_lang = QComboBox(self)
+        for code, name in I18nManager.instance().get_supported_locales().items():
+            self.combo_lang.addItem(name, code)
+        cur_loc = self.config.get("locale", I18nManager.instance().current_locale)
+        idx_loc = self.combo_lang.findData(cur_loc)
+        if idx_loc >= 0:
+            self.combo_lang.setCurrentIndex(idx_loc)
+        l_lang.addWidget(QLabel(tr("settings_lbl_lang", "언어:")))
+        l_lang.addWidget(self.combo_lang)
+        layout.addWidget(grp_lang)
+
+        # 3. 테마 & 스타일
+        grp_theme = QGroupBox(tr("settings_group_ui_theme", "UI 테마 스타일"), self)
+        l_theme = QGridLayout(grp_theme)
+        self.combo_theme = QComboBox(self)
+        self.combo_theme.addItem(tr("settings_ui_style_auto", "자동 감지"), "auto")
+        self.combo_theme.addItem(tr("ui_style_windows", "Windows 스타일 (Fluent)"), "windows")
+        self.combo_theme.addItem(tr("ui_style_macos", "macOS 스타일 (Cupertino)"), "macos")
+        cur_th = self.config.get("ui_style", "auto")
+        idx_th = self.combo_theme.findData(cur_th)
+        if idx_th >= 0:
+            self.combo_theme.setCurrentIndex(idx_th)
+        l_theme.addWidget(QLabel(tr("settings_lbl_ui_style", "디자인:")), 0, 0)
+        l_theme.addWidget(self.combo_theme, 0, 1)
+
+        layout.addWidget(grp_theme)
+        layout.addStretch(1)
+
+        # 버튼 박스
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton(tr("btn_save", "저장"), self)
+        btn_ok.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px;")
+        btn_ok.clicked.connect(self.save_and_accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        layout.addLayout(btn_box)
+
+    def save_and_accept(self):
+        self.config["auto_save_enabled"] = self.chk_autosave.isChecked()
+        self.config["auto_save_interval_min"] = self.spin_interval.value()
+        new_loc = self.combo_lang.currentData()
+        old_loc = self.config.get("locale")
+        self.config["locale"] = new_loc
+        self.config["ui_style"] = self.combo_theme.currentData()
+        save_config(self.config)
+
+        if self.main_win:
+            if hasattr(self.main_win, "apply_ui_theme"):
+                self.main_win.apply_ui_theme(self.config["ui_style"])
+            if new_loc != old_loc:
+                I18nManager.instance().set_locale(new_loc)
+                self.main_win.retranslate_ui()
+            self.main_win.show_toast(tr("toast_system_settings_saved", "시스템 설정이 저장되었습니다."))
+        self.accept()
+
+
+class FlowchartSettingsDialog(QDialog):
+    """플로우차트 그룹 전용 설정 다이얼로그 (장애물 회피 간격, 마그넷 자석 반경, 기본 라우팅)"""
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg_flowchart_settings", "플로우차트 설정"))
+        self.resize(380, 260)
+        self.config = config
+        self.main_win = parent
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        grp_flow = QGroupBox(tr("grp_routing_engine", "지능형 라우팅 엔진 옵션"), self)
+        l_flow = QGridLayout(grp_flow)
+        l_flow.setContentsMargins(10, 10, 10, 10)
+        l_flow.setSpacing(8)
+
+        l_flow.addWidget(QLabel(tr("lbl_route_gap", "장애물 추가 이격 거리:")), 0, 0)
+        self.spin_gap = QSpinBox(self)
+        self.spin_gap.setRange(8, 64)
+        self.spin_gap.setSuffix(" pt")
+        self.spin_gap.setValue(int(self.config.get("flowchart_routing_gap", 24)))
+        l_flow.addWidget(self.spin_gap, 0, 1)
+
+        l_flow.addWidget(QLabel(tr("lbl_magnet_radius", "노드 마그넷 감지 반경:")), 1, 0)
+        self.spin_radius = QSpinBox(self)
+        self.spin_radius.setRange(10, 50)
+        self.spin_radius.setSuffix(" px")
+        self.spin_radius.setValue(int(self.config.get("flowchart_magnet_radius", 22)))
+        l_flow.addWidget(self.spin_radius, 1, 1)
+
+        l_flow.addWidget(QLabel(tr("lbl_default_route_mode", "기본 축 라우팅:")), 2, 0)
+        self.combo_mode = QComboBox(self)
+        self.combo_mode.addItem(tr("opt_route_auto_shortest", "16-경우의 수 최단거리 자동채택"), "AUTO")
+        self.combo_mode.addItem(tr("opt_route_hv", "수평 우선 (HV)"), "HV")
+        self.combo_mode.addItem(tr("opt_route_vh", "수직 우선 (VH)"), "VH")
+        cur_m = self.config.get("flowchart_default_route", "AUTO")
+        idx_m = self.combo_mode.findData(cur_m)
+        if idx_m >= 0:
+            self.combo_mode.setCurrentIndex(idx_m)
+        l_flow.addWidget(self.combo_mode, 2, 1)
+
+        layout.addWidget(grp_flow)
+        layout.addStretch(1)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_cancel = QPushButton(tr("btn_cancel", "취소"), self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton(tr("btn_save", "저장"), self)
+        btn_ok.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px;")
+        btn_ok.clicked.connect(self.save_and_accept)
+        btn_box.addWidget(btn_cancel)
+        btn_box.addWidget(btn_ok)
+        layout.addLayout(btn_box)
+
+    def save_and_accept(self):
+        self.config["flowchart_routing_gap"] = self.spin_gap.value()
+        self.config["flowchart_magnet_radius"] = self.spin_radius.value()
+        self.config["flowchart_default_route"] = self.combo_mode.currentData()
+        save_config(self.config)
+        if self.main_win:
+            self.main_win.show_toast(tr("toast_flowchart_settings_saved", "플로우차트 설정이 저장되었습니다."))
+        self.accept()
 
 
 # ==============================================================================
