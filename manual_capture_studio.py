@@ -1123,6 +1123,9 @@ class StampItem:
     def render(self, painter: QPainter):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
+        opacity = float(self.style.get("opacity", 1.0))
+        if opacity < 1.0:
+            painter.setOpacity(max(0.1, min(1.0, opacity)))
         size = self.style.get("size", 32)
         r = size / 2.0
         bg_col = QColor(self.style.get("bg_color", "#E53935"))
@@ -3588,6 +3591,15 @@ SpotlightItem = SpotlightMaskItem
 MagnifierItem = MagnifierZoomItem
 ClickItem = ClickRippleItem
 
+FLOW_SHAPE_THEMES = {
+    "terminal": {"bg_color": "#ECFDF5", "border_color": "#059669"},
+    "process":  {"bg_color": "#EFF6FF", "border_color": "#2563EB"},
+    "decision": {"bg_color": "#FFFBEB", "border_color": "#D97706"},
+    "database": {"bg_color": "#FAF5FF", "border_color": "#7C3AED"},
+    "io":       {"bg_color": "#F0FDF4", "border_color": "#16A34A"},
+    "document": {"bg_color": "#FFF1F2", "border_color": "#E11D48"},
+}
+
 class FlowchartNodeItem:
     """플로우차트 노드 도형 객체 (상하좌우 4개 마그넷 포인트 지원)"""
     def __init__(self, text="Process", x=100, y=100, w=75, h=32, shape_type="process", style=None):
@@ -3595,9 +3607,10 @@ class FlowchartNodeItem:
         self.rect = QRectF(float(x), float(y), float(w), float(h))
         self.shape_type = str(shape_type).lower()
         if style is None:
+            theme = FLOW_SHAPE_THEMES.get(self.shape_type, {"bg_color": "#EFF6FF", "border_color": "#2563EB"})
             self.style = {
-                "bg_color": "#EFF6FF",
-                "border_color": "#2563EB",
+                "bg_color": theme["bg_color"],
+                "border_color": theme["border_color"],
                 "border_width": 1.5,
                 "text_color": "#1E293B",
                 "font_size": 7,
@@ -4246,24 +4259,10 @@ class MermaidLayoutEngine:
                     y = base_y + offset_y + idx * y_step
 
                 shape = info.get("shape", "process")
-                bg_col = "#EFF6FF"
-                border_col = "#2563EB"
-                if shape == "terminal":
-                    bg_col = "#ECFDF5"
-                    border_col = "#059669"
-                elif shape == "decision":
-                    bg_col = "#FFFBEB"
-                    border_col = "#D97706"
-                elif shape == "database":
-                    bg_col = "#FAF5FF"
-                    border_col = "#7C3AED"
-                elif shape == "io":
-                    bg_col = "#F0FDF4"
-                    border_col = "#16A34A"
-
+                theme = FLOW_SHAPE_THEMES.get(shape, {"bg_color": "#EFF6FF", "border_color": "#2563EB"})
                 style = {
-                    "bg_color": bg_col,
-                    "border_color": border_col,
+                    "bg_color": theme["bg_color"],
+                    "border_color": theme["border_color"],
                     "border_width": 1.5,
                     "text_color": "#1E293B",
                     "font_size": 7,
@@ -7041,8 +7040,6 @@ class StudioCanvasWidget(QWidget):
                 obstacles = [n for n in self.items if isinstance(n, FlowchartNodeItem) and n not in (src_n, dst_n)]
                 
                 lane_offset = 0.0
-                if src_n and dst_n:
-                    lane_offset = (hash((id(src_n), id(dst_n))) % 5) * 8.0
 
                 best_mode, best_corners = FlowchartRoutingEngine.calculate_optimal_route(
                     it.start_pos, it.end_pos, src_port=src_port, dst_port=dst_port, obstacles=obstacles,
@@ -7468,8 +7465,11 @@ class StudioCanvasWidget(QWidget):
 
             if self.current_mode == "STAMP":
                 self.push_undo()
+                snap = getattr(self, "_active_uia_snap", None)
+                sx = snap[0] if snap else pt.x()
+                sy = snap[1] if snap else pt.y()
                 stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
-                stamp = StampItem(self.next_stamp_index, pt.x(), pt.y(), stamp_style)
+                stamp = StampItem(self.next_stamp_index, sx, sy, stamp_style)
                 self.items.append(stamp)
                 self.next_stamp_index += 1
                 self.update()
@@ -7923,11 +7923,25 @@ class StudioCanvasWidget(QWidget):
             self.flow_node_end = QPointF(pt)
             self.update()
         else:
+            # UIA 스냅 감지 (스탬프 모드)
+            old_snap = getattr(self, "_active_uia_snap", None)
+            self._active_uia_snap = None
+            self._active_uia_rect = None
+            if self.current_mode == "STAMP" and getattr(self, "uia_elements", None):
+                for el in self.uia_elements:
+                    rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+                    if rx - 8 <= pt.x() <= rx + rw + 8 and ry - 8 <= pt.y() <= ry + rh + 8:
+                        self._active_uia_snap = (rx + 4, ry + 4)
+                        self._active_uia_rect = QRectF(rx, ry, rw, rh)
+                        break
+            if bool(old_snap) != bool(self._active_uia_snap):
+                self.update()
+
             # 유휴 마우스 이동 시 플로우차트 노드 마그넷 포인트 호버 및 자석 십자 커서 실시간 반응
             hovered_node = None
             hovered_key = None
             hovered_pt = None
-            if self.current_mode != "SELECT":
+            if self.current_mode in ("ARROW", "ELBOW", "FLOW_CONNECT_LINE", "FLOW_CONNECT_ELBOW", "FLOW_CONNECT"):
                 for it in reversed(self.items):
                     if isinstance(it, FlowchartNodeItem):
                         k, p = it.get_closest_magnet_point(pt, 22.0)
@@ -7997,7 +8011,34 @@ class StudioCanvasWidget(QWidget):
                         "width": self.current_arrow_width,
                         "head_size": self.current_arrow_head_size
                     }
-                    self.items.append(ArrowItem(self.arrow_start, self.arrow_end, arrow_style))
+                    src_node, src_port = None, None
+                    dst_node, dst_port = None, None
+                    for it in self.items:
+                        if isinstance(it, FlowchartNodeItem):
+                            if src_node is None:
+                                k, p = it.get_closest_magnet_point(self.arrow_start, 22.0)
+                                if p:
+                                    src_node, src_port = it, k
+                            if dst_node is None:
+                                k, p = it.get_closest_magnet_point(self.arrow_end, 22.0)
+                                if p:
+                                    dst_node, dst_port = it, k
+
+                    if src_node and dst_node and src_node != dst_node:
+                        route_info = FlowchartRoutingEngine.find_optimal_connector(
+                            src_node, dst_node, self.items,
+                            fixed_src_port=src_port, fixed_dst_port=dst_port
+                        )
+                        elbow_item = ElbowArrowItem(
+                            route_info["start_pos"],
+                            route_info["end_pos"],
+                            arrow_style,
+                            route_mode=route_info["route_mode"],
+                            custom_corners=route_info.get("custom_corners")
+                        )
+                        self.items.append(elbow_item)
+                    else:
+                        self.items.append(ArrowItem(self.arrow_start, self.arrow_end, arrow_style))
                     self.update()
                     self.sig_content_changed.emit()
                 # Sticky Mode: 도구 선택 유지
@@ -8176,9 +8217,10 @@ class StudioCanvasWidget(QWidget):
                 else:
                     node_rect = r
                 self.push_undo()
+                theme = FLOW_SHAPE_THEMES.get(shape_type, {"bg_color": "#EFF6FF", "border_color": "#2563EB"})
                 node_style = {
-                    "bg_color": "#EFF6FF",
-                    "border_color": "#2563EB",
+                    "bg_color": theme["bg_color"],
+                    "border_color": theme["border_color"],
                     "border_width": 1.5,
                     "text_color": "#1E293B",
                     "font_size": 7,
@@ -8569,7 +8611,19 @@ class StudioCanvasWidget(QWidget):
                     else:
                         item.render(painter)
                 except Exception as e:
-                    print(f"[주석 렌더링 예외]: {e}")
+                    pass
+            # 2.5. UIA 객체 스냅 하이라이트 (스탬프 모드)
+            if self.current_mode == "STAMP" and getattr(self, "_active_uia_rect", None):
+                painter.save()
+                painter.setPen(QPen(QColor("#2563EB"), 1.5, Qt.DashLine))
+                painter.setBrush(QColor(37, 99, 235, 30))
+                painter.drawRect(self._active_uia_rect)
+                snap_pt = getattr(self, "_active_uia_snap", None)
+                if snap_pt:
+                    painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+                    painter.setBrush(QColor(229, 57, 53, 180))
+                    painter.drawEllipse(QPointF(snap_pt[0], snap_pt[1]), 8, 8)
+                painter.restore()
 
             # 3. 실시간 드로잉 프리뷰
             if self.drawing_box:
@@ -10482,7 +10536,17 @@ class StepCardWidget(QFrame):
         self.is_checked = is_checked
         self.setFixedSize(110, 78)
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.init_ui()
+
+    def keyPressEvent(self, event):
+        p = self.parent()
+        while p and not isinstance(p, FilmstripDockWidget):
+            p = p.parent()
+        if p:
+            p.keyPressEvent(event)
+        else:
+            super().keyPressEvent(event)
 
     def init_ui(self):
         vbox = QVBoxLayout(self)
@@ -10903,6 +10967,9 @@ class FilmstripDockWidget(QWidget):
     sig_export_word = Signal()
     sig_export_notion = Signal()
     sig_export_confluence = Signal()
+    sig_copy_selected = Signal()
+    sig_cut_selected = Signal()
+    sig_paste = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -10911,7 +10978,29 @@ class FilmstripDockWidget(QWidget):
         self.selected_indices = set()
         self.hover_preview_enabled = True
         self.setFixedWidth(140)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.init_ui()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        modifiers = event.modifiers()
+        if key == Qt.Key_Delete:
+            self.request_delete_selected()
+            event.accept()
+            return
+        elif (modifiers & Qt.ControlModifier) and key == Qt.Key_C:
+            self.sig_copy_selected.emit()
+            event.accept()
+            return
+        elif (modifiers & Qt.ControlModifier) and key == Qt.Key_X:
+            self.sig_cut_selected.emit()
+            event.accept()
+            return
+        elif (modifiers & Qt.ControlModifier) and key == Qt.Key_V:
+            self.sig_paste.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def init_ui(self):
         root_lay = QVBoxLayout(self)
@@ -12134,15 +12223,17 @@ class ManualStudioWindow(QMainWindow):
         self.btn_flow_document.setCheckable(True)
         self.btn_flow_document.clicked.connect(lambda: self.switch_mode("FLOW_DOCUMENT"))
 
-        self.btn_flow_line = QPushButton(tr("btn_flow_line", "직선 연결"), self)
-        self.btn_flow_line.setToolTip(tr("tip_flow_line", "노드의 마그넷 포인트를 잇는 직선 연결선을 그립니다."))
+        self.btn_flow_line = QPushButton(tr("btn_flow_line", "연결선"), self)
+        self.btn_flow_line.setToolTip(tr("tip_flow_line", "노드의 마그넷 포인트를 잇는 지능형 장애물 회피 연결선을 그립니다."))
         self.btn_flow_line.setCheckable(True)
         self.btn_flow_line.clicked.connect(lambda: self.switch_mode("FLOW_CONNECT_LINE"))
 
-        self.btn_flow_elbow = QPushButton(tr("btn_flow_elbow", "직각 연결"), self)
-        self.btn_flow_elbow.setToolTip(tr("tip_flow_elbow", "노드의 마그넷 포인트를 잇는 꺾인 직각 연결선을 그립니다. (Tab/Space로 방향 전환)"))
-        self.btn_flow_elbow.setCheckable(True)
-        self.btn_flow_elbow.clicked.connect(lambda: self.switch_mode("FLOW_CONNECT_ELBOW"))
+        self.btn_flow_auto_number = QPushButton(tr("btn_flow_auto_number", "자동 번호"), self)
+        self.btn_flow_auto_number.setToolTip(tr("tip_flow_auto_number", "플로우차트 다이어그램 흐름에 따라 순서대로 번호 스탬프를 자동 부착합니다. (Yes 분기 우선)"))
+        self.btn_flow_auto_number.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border-color: #FECACA; font-weight: bold;")
+        self.btn_flow_auto_number.clicked.connect(self.action_auto_number_flowchart)
+
+        self.btn_flow_elbow = self.btn_flow_line
 
         self.btn_flow_term = self.btn_flow_terminal
         self.btn_flow_proc = self.btn_flow_process
@@ -12186,7 +12277,7 @@ class ManualStudioWindow(QMainWindow):
         flow_grid.setSpacing(2)
         flow_grid.addWidget(self.btn_flowchart, 0, 0, 1, 2)
         flow_grid.addWidget(self.btn_flow_line, 0, 2)
-        flow_grid.addWidget(self.btn_flow_elbow, 0, 3)
+        flow_grid.addWidget(self.btn_flow_auto_number, 0, 3)
         flow_grid.addWidget(self.btn_toggle_doc_dock, 0, 4, 1, 2)
         flow_grid.addWidget(self.btn_flow_align, 0, 6)
         flow_grid.addWidget(self.btn_flow_terminal, 1, 0)
@@ -13164,6 +13255,9 @@ class ManualStudioWindow(QMainWindow):
         self.filmstrip.sig_delete_steps.connect(self.on_filmstrip_delete_selected)
         self.filmstrip.sig_duplicate_step.connect(self.on_filmstrip_duplicate_step)
         self.filmstrip.sig_duplicate_selected.connect(self.on_filmstrip_duplicate_selected)
+        self.filmstrip.sig_copy_selected.connect(self.on_filmstrip_copy_selected)
+        self.filmstrip.sig_cut_selected.connect(self.on_filmstrip_cut_selected)
+        self.filmstrip.sig_paste.connect(self.on_filmstrip_paste)
         self.filmstrip.sig_move_selected.connect(self.on_filmstrip_move_selected)
         self.filmstrip.sig_toggle_hover_preview.connect(self.on_filmstrip_toggle_hover_preview)
         self.filmstrip.sig_move_step.connect(self.on_filmstrip_move_step)
@@ -13338,6 +13432,9 @@ class ManualStudioWindow(QMainWindow):
         self.act_export_hwp.triggered.connect(self.action_send_to_hwp)
         self.act_export_webbook = self.menu_file.addAction("웹북(HTML) 매뉴얼 출판...")
         self.act_export_webbook.triggered.connect(self.action_export_webbook)
+        self.act_export_rich_clipboard = self.menu_file.addAction("클립보드로 HTML 복사 (Ctrl+Shift+C)")
+        self.act_export_rich_clipboard.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self.act_export_rich_clipboard.triggered.connect(self.action_export_rich_clipboard)
         self.act_export_gif = self.menu_file.addAction("애니메이션 GIF 생성...")
         self.act_export_gif.triggered.connect(self.action_export_gif)
         self.menu_file.addSeparator()
@@ -13389,6 +13486,16 @@ class ManualStudioWindow(QMainWindow):
         self.act_watermark.triggered.connect(self.show_watermark_dialog)
         self.act_lic = self.menu_settings.addAction("라이선스 등록(L)...")
         self.act_lic.triggered.connect(self.show_license_dialog)
+        self.menu_settings.addSeparator()
+        self.act_toggle_ui_style = self.menu_settings.addAction("툴바 스타일 전환 (리본 / 세로툴바)")
+        self.act_toggle_ui_style.triggered.connect(self.toggle_ui_style_mode)
+        self.act_ribbon_customize = self.menu_settings.addAction("리본 메뉴 그룹 편집...")
+        self.act_ribbon_customize.triggered.connect(self.open_ribbon_customize)
+        self.menu_settings.addSeparator()
+        self.act_stamp_opacity = self.menu_settings.addAction("스탬프 투명도 설정...")
+        self.act_stamp_opacity.triggered.connect(lambda: self.action_set_stamp_opacity())
+        self.act_auto_number = self.menu_settings.addAction("플로우차트 자동 번호 부여")
+        self.act_auto_number.triggered.connect(self.action_auto_number_flowchart)
 
         # 4.1 언어(Language) 메뉴
         self.menu_language = menubar.addMenu("언어(Language)")
@@ -14568,9 +14675,12 @@ class ManualStudioWindow(QMainWindow):
             self.btn_flow_database.setChecked(mode == "FLOW_DATABASE")
             self.btn_flow_document.setChecked(mode == "FLOW_DOCUMENT")
         if hasattr(self, "btn_flow_line") and self.btn_flow_line:
-            self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE"))
-        if hasattr(self, "btn_flow_elbow") and self.btn_flow_elbow:
-            self.btn_flow_elbow.setChecked(mode in ("ELBOW", "FLOW_CONNECT_ELBOW"))
+            if getattr(self, "btn_flow_elbow", None) is self.btn_flow_line:
+                self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE", "ELBOW", "FLOW_CONNECT_ELBOW"))
+            else:
+                self.btn_flow_line.setChecked(mode in ("ARROW", "FLOW_CONNECT_LINE"))
+                if hasattr(self, "btn_flow_elbow") and self.btn_flow_elbow:
+                    self.btn_flow_elbow.setChecked(mode in ("ELBOW", "FLOW_CONNECT_ELBOW"))
         self.update_mode_status_indicator(mode)
 
     def update_stamp_color_button(self):
@@ -16875,6 +16985,69 @@ class ManualStudioWindow(QMainWindow):
         self.load_step_to_canvas(self.current_step_idx)
         self.show_toast(f"슬라이드 {len(selected)}개 복제 완료")
 
+    def on_filmstrip_copy_selected(self):
+        """선택된 슬라이드 복사 (내부 클립보드 버퍼)"""
+        if not self.storyboard_steps:
+            return
+        self._sync_canvas_to_current_step()
+        selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
+        self._clipboard_slide_buffer = []
+        for idx in selected:
+            if 0 <= idx < len(self.storyboard_steps):
+                orig = self.storyboard_steps[idx]
+                copied = {
+                    "title": orig.get("title", ""),
+                    "desc": orig.get("desc", ""),
+                    "raw_pixmap": QPixmap(orig.get("raw_pixmap")) if orig.get("raw_pixmap") else None,
+                    "thumbnail": QPixmap(orig.get("thumbnail")) if orig.get("thumbnail") else None,
+                    "items": [it.clone() for it in orig.get("items", []) if hasattr(it, "clone")],
+                    "next_stamp_index": orig.get("next_stamp_index", 1)
+                }
+                self._clipboard_slide_buffer.append(copied)
+        self.show_toast(f"슬라이드 {len(self._clipboard_slide_buffer)}개 복사 완료")
+
+    def on_filmstrip_cut_selected(self):
+        """선택된 슬라이드 잘라내기"""
+        self.on_filmstrip_copy_selected()
+        selected = sorted(self.filmstrip.selected_indices) if hasattr(self.filmstrip, "selected_indices") and self.filmstrip.selected_indices else [self.current_step_idx]
+        self.on_filmstrip_delete_selected()
+        self.show_toast(f"슬라이드 {len(selected)}개 잘라내기 완료")
+
+    def on_filmstrip_paste(self):
+        """복사/잘라낸 슬라이드를 현재 슬라이드 뒤에 붙여넣기"""
+        buffer = getattr(self, "_clipboard_slide_buffer", None)
+        if not buffer:
+            return
+        self._sync_canvas_to_current_step()
+        insert_idx = self.current_step_idx + 1 if 0 <= self.current_step_idx < len(self.storyboard_steps) else len(self.storyboard_steps)
+
+        new_steps = list(self.storyboard_steps[:insert_idx])
+        pasted_indices = set()
+        for idx, item in enumerate(buffer):
+            dup = {
+                "step_num": len(new_steps) + 1,
+                "title": item.get("title", ""),
+                "desc": item.get("desc", ""),
+                "raw_pixmap": QPixmap(item.get("raw_pixmap")) if item.get("raw_pixmap") else None,
+                "thumbnail": QPixmap(item.get("thumbnail")) if item.get("thumbnail") else None,
+                "items": [it.clone() for it in item.get("items", []) if hasattr(it, "clone")],
+                "next_stamp_index": item.get("next_stamp_index", 1)
+            }
+            new_steps.append(dup)
+            pasted_indices.add(len(new_steps) - 1)
+
+        new_steps.extend(self.storyboard_steps[insert_idx:])
+        for i, s in enumerate(new_steps):
+            s["step_num"] = i + 1
+
+        self.storyboard_steps = new_steps
+        if pasted_indices:
+            self.current_step_idx = min(pasted_indices)
+            self.filmstrip.selected_indices = pasted_indices
+        self.filmstrip.set_steps(self.storyboard_steps, self.current_step_idx)
+        self.load_step_to_canvas(self.current_step_idx)
+        self.show_toast(f"슬라이드 {len(buffer)}개 붙여넣기 완료")
+
     def on_filmstrip_move_selected(self, direction: int):
         """선택된 슬라이드들을 앞(-1) 또는 뒤(+1)로 이동"""
         if not self.storyboard_steps:
@@ -17223,98 +17396,134 @@ class ManualStudioWindow(QMainWindow):
         mime.setHtml(html_content)
         QApplication.clipboard().setMimeData(mime)
         
-        self.show_toast("✅ HTML 클립보드 복사 완료! (슬랙/위키에 Ctrl+V 해보세요)")
+        self.show_toast("HTML 클립보드 복사 완료 (Confluence / Jira / Slack 붙여넣기 가능)")
 
     def action_auto_number_flowchart(self):
-        """플로우차트 다이어그램 흐름에 따라 스탬프를 자동 부착 (Yes 우선)"""
-        # 1. Gather flowchart nodes and edges
-        nodes = []
-        edges = []
-        for slide in self.project_manager.slides:
-            for item in slide.get("items", []):
-                if item.get("type") == "FlowchartNodeItem":
-                    nodes.append(item)
-                elif item.get("type") == "FlowchartLineItem":
-                    edges.append(item)
-        
+        """플로우차트 다이어그램 흐름 기반 스탬프 자동 부여 (Yes 분기 우선, 순환 방지)"""
+        nodes = [it for it in self.canvas.items if isinstance(it, FlowchartNodeItem)]
         if not nodes:
-            self.show_toast("플로우차트 노드가 없습니다.")
+            self.show_toast("플로우차트 노드 없음")
             return
 
-        # 2. Build adjacency list: node_id -> list of (dst_node_id, text)
-        adj = {n.get("id"): [] for n in nodes}
-        in_degree = {n.get("id"): 0 for n in nodes}
-        
-        for e in edges:
-            src = e.get("src_node")
-            dst = e.get("dst_node")
-            text = e.get("text", "").lower()
-            if src in adj and dst in adj:
-                adj[src].append((dst, text))
-                in_degree[dst] += 1
-                
-        # Sort edges: prioritize "yes", "y", "예"
+        connectors = [it for it in self.canvas.items if isinstance(it, (ElbowArrowItem, ArrowItem))]
+
+        # 2. 인접 리스트 구축: 각 연결선의 start_pos/end_pos 와 가장 가까운 노드 매핑
+        adj = {n: [] for n in nodes}
+        in_degree = {n: 0 for n in nodes}
+
+        for conn in connectors:
+            src_n, dst_n = None, None
+            for n in nodes:
+                if src_n is None:
+                    _, p = n.get_closest_magnet_point(conn.start_pos, 24.0)
+                    if p or n.rect.contains(conn.start_pos):
+                        src_n = n
+                if dst_n is None:
+                    _, p = n.get_closest_magnet_point(conn.end_pos, 24.0)
+                    if p or n.rect.contains(conn.end_pos):
+                        dst_n = n
+
+            if src_n and dst_n and src_n != dst_n:
+                label = (getattr(conn, "label_text", "") or getattr(conn, "text", "") or "").lower()
+                adj[src_n].append((dst_n, label))
+                in_degree[dst_n] += 1
+
+        # 3. 분기 우선순위 정렬: "yes", "y", "예" 포함 간선을 우선 탐색
         for src in adj:
-            adj[src].sort(key=lambda x: 0 if any(word in x[1] for word in ["yes", "y", "예"]) else 1)
-            
-        # 3. Find start nodes (in_degree == 0, or shape == "terminal")
-        start_nodes = [n.get("id") for n in nodes if in_degree[n.get("id")] == 0]
+            adj[src].sort(key=lambda item: 0 if any(k in item[1] for k in ["yes", "y", "예"]) else 1)
+
+        # 4. 시작 노드 결정 (진입 차수 in_degree == 0 우선, 없으면 terminal 또는 최상단 노드)
+        start_nodes = [n for n in nodes if in_degree[n] == 0]
         if not start_nodes:
-            # Graph has cycles with no entry, pick any terminal or first node
-            terminals = [n.get("id") for n in nodes if n.get("shape") == "terminal"]
-            start_nodes = terminals if terminals else [nodes[0].get("id")]
-            
-        # 4. DFS to assign numbers
+            terminals = [n for n in nodes if n.shape_type == "terminal"]
+            start_nodes = terminals if terminals else [min(nodes, key=lambda n: (n.rect.top(), n.rect.left()))]
+
+        # 5. DFS 순회 (visited set으로 순환 및 무한 루프 차단)
         visited = set()
-        order = []
-        
-        def dfs(node_id):
-            if node_id in visited:
+        traversal_order = []
+
+        def dfs(curr_node):
+            if curr_node in visited:
                 return
-            visited.add(node_id)
-            order.append(node_id)
-            for dst, _ in adj[node_id]:
-                dfs(dst)
-                
-        for start in start_nodes:
-            dfs(start)
-            
-        # 5. Apply StampItems to the slides
-        # We need to find the node's position and add a StampItem
-        nodes_dict = {n.get("id"): n for n in nodes}
-        current_num = 1
-        
-        for slide in self.project_manager.slides:
-            new_items = list(slide.get("items", []))
-            # Remove old auto-generated stamps if needed? Or just append
-            
-            for node_id in order:
-                n = nodes_dict[node_id]
-                # Is this node on this slide? (Assuming all are on current slide or we match by slide, but items are flattened here)
-                if n in new_items:
-                    # Create Stamp
-                    x = n.get("pos", [0,0])[0]
-                    y = n.get("pos", [0,0])[1]
-                    stamp = {
-                        "type": "StampItem",
-                        "index": current_num,
-                        "x": x - 10,
-                        "y": y - 10,
-                        "style": {
-                            "size": 24,
-                            "bg_color": "#E53935",
-                            "text_color": "#FFFFFF",
-                            "opacity": 0.8
-                        }
-                    }
-                    new_items.append(stamp)
-                    current_num += 1
-            
-            slide["items"] = new_items
-            
-        self.project_manager._emit_data_changed()
+            visited.add(curr_node)
+            traversal_order.append(curr_node)
+            for nxt_node, _ in adj.get(curr_node, []):
+                dfs(nxt_node)
+
+        for s in start_nodes:
+            dfs(s)
+
+        # 고립된 노드가 있을 경우 남은 노드들도 순서대로 추가
+        for n in sorted(nodes, key=lambda it: (it.rect.top(), it.rect.left())):
+            if n not in visited:
+                dfs(n)
+
+        # 6. 이전 자동 번호 스탬프 정리 후 신규 StampItem 생성
+        self.canvas.push_undo()
+
+        # 기존 자동 생성된 스탬프 제거 (노드 좌상단 24px 반경 내 스탬프)
+        remaining_items = []
+        for it in self.canvas.items:
+            if isinstance(it, StampItem):
+                is_node_stamp = any(math.hypot(it.pos.x() - (n.rect.left() + 8), it.pos.y() - (n.rect.top() + 8)) < 24.0 for n in nodes)
+                if is_node_stamp:
+                    continue
+            remaining_items.append(it)
+        self.canvas.items = remaining_items
+
+        # 스탬프 스타일 설정 (설정 투명도 반영)
+        stamp_cfg = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+        opacity = float(stamp_cfg.get("opacity", 0.85))
+
+        for idx, node in enumerate(traversal_order, 1):
+            st_style = stamp_cfg.copy()
+            st_style["opacity"] = opacity
+            st_style["size"] = min(28, max(20, int(node.rect.height() * 0.7)))
+            # 노드 좌상단 모서리 살짝 안쪽에 스탬프 배치
+            sx = node.rect.left() + 8.0
+            sy = node.rect.top() + 8.0
+            stamp_item = StampItem(idx, sx, sy, st_style)
+            self.canvas.items.append(stamp_item)
+
+        self.canvas.next_stamp_index = len(traversal_order) + 1
+        self._sync_canvas_to_current_step()
         self.canvas.update()
-        self.show_toast("플로우차트 자동 넘버링 완료!")
+        self.show_toast(f"플로우차트 자동 번호 부여 완료 ({len(traversal_order)}개)")
+
+    def action_set_stamp_opacity(self, opacity=None):
+        """프로젝트 전체 번호 스탬프 투명도 일괄 조절 (배경 가림 방지)"""
+        if opacity is None:
+            cur = float(self.config.get("stamp_style", {}).get("opacity", 1.0))
+            from PySide6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getDouble(
+                self, tr("title_stamp_opacity", "스탬프 투명도"),
+                tr("msg_stamp_opacity", "스탬프 투명도를 입력하세요 (0.1 ~ 1.0):"),
+                cur, 0.1, 1.0, 2
+            )
+            if not ok:
+                return
+            opacity = val
+        opacity = max(0.1, min(1.0, float(opacity)))
+        if "stamp_style" not in self.config:
+            self.config["stamp_style"] = {}
+        self.config["stamp_style"]["opacity"] = opacity
+        save_config(self.config)
+
+        # 현재 캔버스 및 전체 슬라이드 아이템의 StampItem 투명도 동기화
+        for it in self.canvas.items:
+            if isinstance(it, StampItem):
+                it.style["opacity"] = opacity
+
+        for slide in getattr(self, "storyboard_steps", []):
+            for it_data in slide.get("items", []):
+                if it_data.get("type") == "StampItem":
+                    if "style" not in it_data:
+                        it_data["style"] = {}
+                    it_data["style"]["opacity"] = opacity
+
+        self.canvas.update()
+        pct = int(opacity * 100)
+        self.show_toast(f"스탬프 투명도 {pct}% 적용 완료")
 
     def action_export_webbook(self):
         self._sync_canvas_to_current_step()
