@@ -8346,15 +8346,11 @@ class StudioCanvasWidget(QWidget):
 
         menu.addSeparator()
 
-        # 3. 클립보드 및 외부 내보내기
+        # 3. 클립보드 이미지 붙여넣기
         clipboard = QGuiApplication.clipboard()
         has_cb_img = bool(clipboard.mimeData() and clipboard.mimeData().hasImage())
         act_paste = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "클립보드 이미지 붙여넣기 (Ctrl+V)")
         act_paste.setEnabled(has_cb_img)
-
-        win = self.window()
-        act_ppt = menu.addAction(RibbonIconProvider.get_icon("ppt_export", 16, "#2563EB"), "PowerPoint 내보내기 (F10)")
-        act_hwp = menu.addAction(RibbonIconProvider.get_icon("export_hwp", 16, "#2563EB"), "한컴 한글(HWP) 내보내기 (Shift+F10)")
 
         menu.addSeparator()
 
@@ -8447,14 +8443,6 @@ class StudioCanvasWidget(QWidget):
                 self.update()
                 self.sig_content_changed.emit()
                 self.sig_request_toast.emit(f"이미지 붙여넣기 완료 ({pw}×{ph}px)")
-
-        elif chosen == act_ppt:
-            if win and hasattr(win, "action_export_all_ppt"):
-                win.action_export_all_ppt()
-
-        elif chosen == act_hwp:
-            if win and hasattr(win, "action_send_to_hwp"):
-                win.action_send_to_hwp()
 
         elif chosen == act_undo:
             self.undo()
