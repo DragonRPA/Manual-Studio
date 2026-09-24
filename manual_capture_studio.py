@@ -11665,13 +11665,14 @@ class RibbonCustomizeDialog(QDialog):
 
     # 기본 순서 및 표시 이름 (group_id → 표시명)
     _DEFAULT_ORDER = [
-        "grp_capture", "grp_flowchart", "grp_project", "grp_select_edit",
+        "grp_capture", "grp_flowchart", "grp_markitdown", "grp_project", "grp_select_edit",
         "grp_step_flow", "grp_highlight_security", "grp_ocr",
         "grp_dimension", "grp_text_wordart", "grp_slide_options",
     ]
     _DISPLAY_NAMES = {
         "grp_capture":            "캡처",
         "grp_flowchart":          "플로우차트",
+        "grp_markitdown":         "MarkItDown",
         "grp_project":            "프로젝트",
         "grp_select_edit":        "선택·편집",
         "grp_step_flow":          "단계·흐름",
@@ -12284,16 +12285,11 @@ class ManualStudioWindow(QMainWindow):
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets.setdefault("_sep_grp_capture", _sep); tools_layout.addWidget(_sep)
 
-        # 플로우차트 그룹 (상단: 빌더 + 문서참조, 하단: 흔히 사용하는 6대 도형)
+        # 플로우차트 그룹 (상단: 빌더 + 연결선 + 자동번호 + 자동정렬, 하단: 흔히 사용하는 6대 도형 + 모바일연동)
         self.btn_flowchart = QPushButton(tr("btn_flowchart_builder", "플로우차트"), self)
         self.btn_flowchart.setToolTip(tr("tip_flowchart_builder", "Mermaid 문법 및 수동 조작으로 플로우차트를 생성합니다."))
         self.btn_flowchart.setStyleSheet("background-color: #F0FDF4; color: #166534; border-color: #BBF7D0; font-weight: bold;")
         self.btn_flowchart.clicked.connect(self.open_flowchart_studio)
-
-        self.btn_toggle_doc_dock = QPushButton(tr("btn_toggle_doc_dock", "문서 참조"), self)
-        self.btn_toggle_doc_dock.setToolTip(tr("tip_toggle_doc_dock", "MarkItDown 외부 문서 변환 및 MD 원문 참조 패널을 토글합니다."))
-        self.btn_toggle_doc_dock.setStyleSheet("background-color: #FAF5FF; color: #6B21A8; border-color: #E9D5FF; font-weight: bold;")
-        self.btn_toggle_doc_dock.clicked.connect(self.toggle_document_dock)
 
         self.btn_flow_terminal = QPushButton(tr("btn_flow_terminal", "시작/종료"), self)
         self.btn_flow_terminal.setToolTip(tr("tip_flow_terminal", "타원형 시작/종료 터미널 노드를 캔버스에 배치합니다."))
@@ -12379,9 +12375,8 @@ class ManualStudioWindow(QMainWindow):
         flow_grid.setSpacing(2)
         flow_grid.addWidget(self.btn_flowchart, 0, 0, 1, 2)
         flow_grid.addWidget(self.btn_flow_line, 0, 2)
-        flow_grid.addWidget(self.btn_flow_auto_number, 0, 3)
-        flow_grid.addWidget(self.btn_toggle_doc_dock, 0, 4, 1, 2)
-        flow_grid.addWidget(self.btn_flow_align, 0, 6)
+        flow_grid.addWidget(self.btn_flow_auto_number, 0, 3, 1, 2)
+        flow_grid.addWidget(self.btn_flow_align, 0, 5, 1, 2)
         flow_grid.addWidget(self.btn_flow_terminal, 1, 0)
         flow_grid.addWidget(self.btn_flow_process, 1, 1)
         flow_grid.addWidget(self.btn_flow_decision, 1, 2)
@@ -12394,6 +12389,28 @@ class ManualStudioWindow(QMainWindow):
         self._ribbon_group_widgets["grp_flowchart"] = _g
         tools_layout.addWidget(_g)
         _sep = self.create_separator(); self._ribbon_group_widgets["_sep_grp_flowchart"] = _sep; tools_layout.addWidget(_sep)
+
+        # MarkItDown 그룹 (문서 참조 패널 토글 + 외부 파일 변환)
+        self.btn_toggle_doc_dock = QPushButton(tr("btn_toggle_doc_dock", "문서 참조"), self)
+        self.btn_toggle_doc_dock.setToolTip(tr("tip_toggle_doc_dock", "MarkItDown 외부 문서 변환 및 MD 원문 참조 패널을 토글합니다."))
+        self.btn_toggle_doc_dock.setStyleSheet("background-color: #FAF5FF; color: #6B21A8; border-color: #E9D5FF; font-weight: bold;")
+        self.btn_toggle_doc_dock.clicked.connect(self.toggle_document_dock)
+
+        self.btn_markitdown_convert = QPushButton(tr("btn_markitdown_convert", "외부 파일 변환"), self)
+        self.btn_markitdown_convert.setToolTip(tr("tip_convert_file", "PDF, Word, PPTX, Excel, HTML 등을 마크다운으로 변환합니다."))
+        self.btn_markitdown_convert.setStyleSheet("background-color: #FAF5FF; color: #6B21A8; border-color: #E9D5FF; font-weight: bold;")
+        self.btn_markitdown_convert.clicked.connect(self.action_markitdown_convert)
+
+        md_grid = QGridLayout()
+        md_grid.setContentsMargins(0, 0, 0, 0)
+        md_grid.setSpacing(2)
+        md_grid.addWidget(self.btn_toggle_doc_dock, 0, 0)
+        md_grid.addWidget(self.btn_markitdown_convert, 1, 0)
+
+        _g_md = self.create_ribbon_group(tr("grp_markitdown", "MarkItDown"), md_grid, "grp_markitdown")
+        self._ribbon_group_widgets["grp_markitdown"] = _g_md
+        tools_layout.addWidget(_g_md)
+        _sep_md = self.create_separator(); self._ribbon_group_widgets["_sep_grp_markitdown"] = _sep_md; tools_layout.addWidget(_sep_md)
 
         # 2) [프로젝트] 그룹
         self.btn_new_project = QPushButton(tr("btn_new_project", "새 프로젝트"), self)
@@ -13767,7 +13784,7 @@ class ManualStudioWindow(QMainWindow):
     # 리본 편집 (MS Office 스타일 그룹 표시/순서 사용자 지정)
     # ──────────────────────────────────────────────────────────────────────
     _RIBBON_DEFAULT_ORDER = [
-        "grp_capture", "grp_flowchart", "grp_project", "grp_select_edit",
+        "grp_capture", "grp_flowchart", "grp_markitdown", "grp_project", "grp_select_edit",
         "grp_step_flow", "grp_highlight_security", "grp_ocr",
         "grp_dimension", "grp_text_wordart", "grp_slide_options",
     ]
@@ -14135,6 +14152,7 @@ class ManualStudioWindow(QMainWindow):
         group_keys = {
             "grp_capture": ("grp_capture", "캡처"),
             "grp_flowchart": ("grp_flowchart", "플로우차트"),
+            "grp_markitdown": ("grp_markitdown", "MarkItDown"),
             "grp_project": ("grp_project", "프로젝트"),
             "grp_select_edit": ("grp_select_edit", "선택·편집"),
             "grp_step_flow": ("grp_step_flow", "단계·흐름"),
@@ -14246,6 +14264,8 @@ class ManualStudioWindow(QMainWindow):
             ("btn_flow_document", "btn_flow_document", "문서", "tip_flow_document"),
             ("btn_flow_line", "btn_flow_line", "직선 연결", "tip_flow_line"),
             ("btn_flow_elbow", "btn_flow_elbow", "직각 연결", "tip_flow_elbow"),
+            ("btn_toggle_doc_dock", "btn_toggle_doc_dock", "문서 참조", "tip_toggle_doc_dock"),
+            ("btn_markitdown_convert", "btn_markitdown_convert", "외부 파일 변환", "tip_convert_file"),
         ]
         for attr_name, text_key, def_text, tt_key in button_map:
             if hasattr(self, attr_name):
@@ -14419,6 +14439,8 @@ class ManualStudioWindow(QMainWindow):
             ("btn_flow_document", "flow_document", "btn_flow_document", "문서"),
             ("btn_flow_align", "flow_align", "btn_flow_align", "자동정렬"),
             ("btn_mobile_link", "mobile_link", "btn_mobile_link", "모바일 연동"),
+            ("btn_toggle_doc_dock", "doc_ref", "btn_toggle_doc_dock", "문서 참조"),
+            ("btn_markitdown_convert", "flow_document", "btn_markitdown_convert", "외부 파일 변환"),
             ("btn_export", "ppt_export", "btn_export", "슬라이드 삽입"),
             ("btn_export_hwp", "export_hwp", "btn_export_hwp", "한글 문서 삽입"),
             ("btn_send_slides", "slides_export", "btn_send_google_slides", "구글 슬라이드 전송"),
@@ -18613,6 +18635,15 @@ class ManualStudioWindow(QMainWindow):
             self.doc_dock.setVisible(is_vis)
             self.config["doc_dock_visible"] = is_vis
             save_config(self.config)
+
+    def action_markitdown_convert(self):
+        """리본 MarkItDown 그룹: 문서 참조 패널 표출 및 외부 파일 변환 실행"""
+        if hasattr(self, "doc_dock"):
+            if not self.doc_dock.isVisible():
+                self.doc_dock.setVisible(True)
+                self.config["doc_dock_visible"] = True
+                save_config(self.config)
+            self.doc_dock.action_convert_external_file()
 
     def on_doc_insert_text_to_canvas(self, text):
         """문서 참조 독 패널에서 선택 단락을 캔버스 텍스트박스로 즉시 삽입"""
