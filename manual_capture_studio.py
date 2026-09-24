@@ -68,7 +68,8 @@ except Exception:
 
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, Signal, Slot, QTimer, QCoreApplication,
-    QByteArray, QBuffer, QIODevice, QUrl, QMimeData, qInstallMessageHandler, QtMsgType, QMarginsF
+    QByteArray, QBuffer, QIODevice, QUrl, QMimeData, qInstallMessageHandler, QtMsgType, QMarginsF,
+    QObject, QEvent
 )
 # 하위 호환성 별칭 제공
 pyqtSignal = Signal
@@ -101,7 +102,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox, QRadioButton,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
     QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton, QSplitter,
-    QListWidget, QListWidgetItem, QInputDialog
+    QListWidget, QListWidgetItem, QInputDialog, QSizePolicy
 )
 
 from PySide6.QtSvg import QSvgRenderer
@@ -6989,6 +6990,23 @@ class StudioCanvasWidget(QWidget):
         self._active_uia_rect = None
         self._active_uia_el = None
 
+    def is_ctrl_down(self) -> bool:
+        """물리적 Ctrl 키의 실시간 눌림 상태를 운영체제 하드웨어 레벨에서 정확히 판정합니다."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                is_phys = bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+                if not is_phys:
+                    self._ctrl_pressed = False
+                return is_phys
+            except Exception:
+                pass
+        mods = QGuiApplication.keyboardModifiers()
+        is_down = bool(mods & Qt.ControlModifier)
+        if not is_down:
+            self._ctrl_pressed = False
+        return is_down
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Control:
             self._ctrl_pressed = True
@@ -7030,13 +7048,26 @@ class StudioCanvasWidget(QWidget):
             self.update()
         super().keyReleaseEvent(event)
 
+    def leaveEvent(self, event):
+        if not self.is_ctrl_down():
+            self._ctrl_pressed = False
+            self._active_uia_rect = None
+            self._active_uia_el = None
+            self.update()
+        super().leaveEvent(event)
+
+    def focusOutEvent(self, event):
+        self._ctrl_pressed = False
+        self._active_uia_rect = None
+        self._active_uia_el = None
+        self.update()
+        super().focusOutEvent(event)
+
     def _check_uia_hover(self, pt=None):
         if pt is None:
             cur_pos = QCursor.pos()
             pt = self.mapFromGlobal(cur_pos)
-        modifiers = QGuiApplication.keyboardModifiers()
-        is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
-        if not is_ctrl or not getattr(self, "uia_elements", None):
+        if not self.is_ctrl_down() or not getattr(self, "uia_elements", None):
             if self._active_uia_rect is not None or self._active_uia_el is not None:
                 self._active_uia_rect = None
                 self._active_uia_el = None
@@ -7918,8 +7949,7 @@ class StudioCanvasWidget(QWidget):
                 self.update()
 
         elif event.button() == Qt.RightButton:
-            modifiers = QGuiApplication.keyboardModifiers()
-            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+            is_ctrl = self.is_ctrl_down()
             global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
 
             # 1. Ctrl 키다운 상태에서 UIA 객체 우클릭 시: UIA 스마트 추천 메뉴
@@ -8002,7 +8032,14 @@ class StudioCanvasWidget(QWidget):
         del_label = f"선택 {num_sel}개 객체 일괄 삭제 (Del)" if num_sel > 1 else f"{tr('menu_item_delete', '삭제')} (Del)"
         act_del = menu.addAction(RibbonIconProvider.get_icon("clear", 16, "#DC2626"), del_label)
 
-        chosen = menu.exec_(global_pos)
+        try:
+            chosen = menu.exec_(global_pos)
+        finally:
+            self._ctrl_pressed = self.is_ctrl_down()
+            if not self._ctrl_pressed:
+                self._active_uia_rect = None
+                self._active_uia_el = None
+                self.update()
         if num_sel > 1 and chosen == act_align_x:
             self.align_selected_items_center_x()
         elif num_sel > 1 and chosen == act_align_y:
@@ -8143,9 +8180,15 @@ class StudioCanvasWidget(QWidget):
         # 4. 부가 기능 (OCR / 블러 / 메타데이터 복사)
         act_ocr = menu.addAction(RibbonIconProvider.get_icon("ocr", 16, "#2563EB"), "OCR 텍스트 추출 및 복사")
         act_blur = menu.addAction(RibbonIconProvider.get_icon("blur", 16, "#2563EB"), "블러 모자이크 처리")
-        act_copy_meta = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "UIA 메타데이터 복사")
+        try:
+            chosen = menu.exec_(global_pos)
+        finally:
+            self._ctrl_pressed = self.is_ctrl_down()
+            if not self._ctrl_pressed:
+                self._active_uia_rect = None
+                self._active_uia_el = None
+                self.update()
 
-        chosen = menu.exec_(global_pos)
         if not chosen:
             return
 
@@ -8357,9 +8400,15 @@ class StudioCanvasWidget(QWidget):
         # 4. 히스토리 & 스탬프 리셋
         act_undo = menu.addAction(RibbonIconProvider.get_icon("undo", 16, "#2563EB"), "실행 취소 (Ctrl+Z)")
         act_undo.setEnabled(len(self.history) > 0)
-        act_reset_stamp = menu.addAction(RibbonIconProvider.get_icon("reset_index", 16, "#2563EB"), "스탬프 번호 1 초기화")
+        try:
+            chosen = menu.exec_(global_pos)
+        finally:
+            self._ctrl_pressed = self.is_ctrl_down()
+            if not self._ctrl_pressed:
+                self._active_uia_rect = None
+                self._active_uia_el = None
+                self.update()
 
-        chosen = menu.exec_(global_pos)
         if not chosen:
             return
 
@@ -8589,8 +8638,7 @@ class StudioCanvasWidget(QWidget):
             self.update()
         else:
             # UIA 호버 감지 (Ctrl 키다운 상태에서만 수행)
-            modifiers = QGuiApplication.keyboardModifiers()
-            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
+            is_ctrl = self.is_ctrl_down()
             if is_ctrl:
                 self._check_uia_hover(pt)
             else:
@@ -9365,9 +9413,7 @@ class StudioCanvasWidget(QWidget):
                 except Exception as e:
                     pass
             # 2.5. UIA 객체 스냅 하이라이트 (스탬프 / 박스 / 콜아웃 모드)
-            modifiers = QGuiApplication.keyboardModifiers()
-            is_ctrl = bool(modifiers & Qt.ControlModifier) or getattr(self, "_ctrl_pressed", False)
-            if is_ctrl and getattr(self, "_active_uia_rect", None) and getattr(self, "_active_uia_el", None):
+            if self.is_ctrl_down() and getattr(self, "_active_uia_rect", None) and getattr(self, "_active_uia_el", None):
                 painter.save()
                 rect_f = self._active_uia_rect
                 painter.setPen(QPen(QColor("#2563EB"), 1.5, Qt.DashLine))
@@ -12675,22 +12721,25 @@ class VerticalToolGroupWidget(QFrame):
             }
         """)
         vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(2, 2, 2, 3)
+        vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
         # Header: Group Title + Property Launcher Button
         hdr = QHBoxLayout()
-        hdr.setContentsMargins(2, 0, 1, 0)
+        hdr.setContentsMargins(1, 0, 1, 0)
         hdr.setSpacing(1)
 
         self.lbl_title = QLabel(title_text, self)
-        self.lbl_title.setStyleSheet("font-size: 8.5px; color: #94A3B8; font-weight: bold; border: none; background: transparent; padding: 0px; margin: 0px; white-space: nowrap;")
+        self.lbl_title.setStyleSheet("font-size: 8px; color: #94A3B8; font-weight: bold; border: none; background: transparent; padding: 0px; margin: 0px; white-space: nowrap;")
+        self.lbl_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_title.setToolTip(title_text)
         hdr.addWidget(self.lbl_title, 1)
 
         self.btn_prop = None
         if launcher_callback:
             self.btn_prop = QToolButton(self)
             self.btn_prop.setFixedSize(12, 12)
+            self.btn_prop.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             self.btn_prop.setIcon(RibbonIconProvider.get_icon("dialog_launcher", 8, "#94A3B8"))
             self.btn_prop.setIconSize(QSize(8, 8))
             self.btn_prop.setToolTip(f"{title_text} {tr('lbl_settings', '설정')}...")
@@ -12701,6 +12750,10 @@ class VerticalToolGroupWidget(QFrame):
                     border-radius: 2px;
                     padding: 0px;
                     margin: 0px;
+                    min-width: 12px;
+                    max-width: 12px;
+                    min-height: 12px;
+                    max-height: 12px;
                 }
                 QToolButton:hover {
                     background-color: #334155;
@@ -12712,7 +12765,7 @@ class VerticalToolGroupWidget(QFrame):
         vbox.addLayout(hdr)
 
         self.grid = QGridLayout()
-        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setContentsMargins(1, 1, 1, 1)
         self.grid.setSpacing(2)
         vbox.addLayout(self.grid)
 
@@ -12720,6 +12773,7 @@ class VerticalToolGroupWidget(QFrame):
         self._cur_col = 0
 
     def add_tool_button(self, btn):
+        btn.setFixedSize(28, 28)
         self.grid.addWidget(btn, self._cur_row, self._cur_col)
         if self._cur_col == 1:
             self._cur_col = 0
@@ -12728,12 +12782,29 @@ class VerticalToolGroupWidget(QFrame):
             self._cur_col = 1
 
 
+class ToolHoverFilter(QObject):
+    """툴바 버튼 호버 시 하단 상태바에 즉각 명칭 표출"""
+    def __init__(self, tooltip_text, main_window, parent=None):
+        super().__init__(parent or main_window)
+        self.tooltip_text = tooltip_text
+        self.main_window = main_window
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Enter:
+            if hasattr(self.main_window, "status_label") and self.main_window.status_label:
+                self.main_window.status_label.setText(self.tooltip_text)
+        elif event.type() == QEvent.Leave:
+            if hasattr(self.main_window, "status_label") and self.main_window.status_label:
+                self.main_window.status_label.setText(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"))
+        return False
+
+
 class VerticalToolBarWidget(QFrame):
     """캔버스 좌측 고밀도 전문 2열 세로 툴바 (메뉴 그룹 카드 박스 & 속성 런처 연동)"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("VerticalToolBarWidget")
-        self.setFixedWidth(66)
+        self.setFixedWidth(76)
         self.main_window = parent
         self.mode_buttons = {}
         self.groups = {}
@@ -12747,12 +12818,8 @@ class VerticalToolBarWidget(QFrame):
                 background-color: transparent;
                 border: 1px solid transparent;
                 border-radius: 4px;
-                padding: 2px;
+                padding: 1px;
                 margin: 0px;
-                min-width: 25px;
-                min-height: 25px;
-                max-width: 25px;
-                max-height: 25px;
             }
             QToolButton:hover {
                 background-color: #334155;
@@ -12782,6 +12849,15 @@ class VerticalToolBarWidget(QFrame):
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
+            }
+            QToolTip {
+                background-color: #0F172A;
+                color: #F8FAFC;
+                border: 1px solid #38BDF8;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: 500;
             }
         """)
         
@@ -12821,11 +12897,20 @@ class VerticalToolBarWidget(QFrame):
 
         grp = self.groups[target_gid]
         btn = QToolButton(grp)
+        btn.setFixedSize(28, 28)
         icon_color = color if color else "#F8FAFC"
         icon = RibbonIconProvider.get_icon(icon_name, 16, icon_color)
         btn.setIcon(icon)
         btn.setIconSize(QSize(16, 16))
         btn.setToolTip(tooltip)
+        btn.setStatusTip(tooltip)
+
+        # 마우스오버 시 즉각적인 하단 상태바 텍스트 및 툴팁 연동
+        mw = self.main_window
+        if mw:
+            filt = ToolHoverFilter(tooltip, mw, btn)
+            btn.installEventFilter(filt)
+
         if is_check:
             btn.setCheckable(True)
             if mode_key:
