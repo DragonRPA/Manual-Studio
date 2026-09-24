@@ -68,7 +68,7 @@ except Exception:
 
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRect, QRectF, QSize, QThread, Signal, Slot, QTimer, QCoreApplication,
-    QByteArray, QBuffer, QIODevice, QUrl, QMimeData, qInstallMessageHandler, QtMsgType
+    QByteArray, QBuffer, QIODevice, QUrl, QMimeData, qInstallMessageHandler, QtMsgType, QMarginsF
 )
 # 하위 호환성 별칭 제공
 pyqtSignal = Signal
@@ -91,15 +91,17 @@ except Exception:
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QPixmap, QImage,
     QCursor, QPainterPath, QIcon, QFontMetrics, QPolygonF, QTransform, QDesktopServices,
-    QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence, QDrag
+    QFontDatabase, QGuiApplication, QScreen, QAction, QKeySequence, QDrag,
+    QPdfWriter, QPageSize, QPageLayout
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QDialog, QSpinBox, QColorDialog,
     QFileDialog, QMessageBox, QToolTip, QFrame, QScrollArea,
-    QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox,
+    QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu, QCheckBox, QRadioButton,
     QTabWidget, QTabBar, QGridLayout, QMenuBar, QTextEdit, QTextBrowser, QPlainTextEdit, QComboBox, QFontComboBox,
-    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton, QSplitter
+    QButtonGroup, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget, QSlider, QToolButton, QSplitter,
+    QListWidget, QListWidgetItem, QInputDialog
 )
 
 from PySide6.QtSvg import QSvgRenderer
@@ -12100,7 +12102,7 @@ class ManualStudioWindow(QMainWindow):
         ribbon_vlayout.setContentsMargins(4, 2, 4, 2)
         ribbon_vlayout.setSpacing(2)
 
-        # 1-0. 리본 접기/펼치기 토글 바
+        # 1-0. 리본 접기/펼치기 토글 바 (캔버스 최대 공간 확보를 위해 UI에서 숨김 처리, 리본 편집은 보기/설정 메뉴에 편입)
         toggle_bar = QWidget(ribbon_frame)
         toggle_bar.setFixedHeight(20)
         toggle_bar.setStyleSheet("background: transparent;")
@@ -12145,10 +12147,14 @@ class ManualStudioWindow(QMainWindow):
         self.btn_ribbon_customize.clicked.connect(self.open_ribbon_customize)
         toggle_bar_lay.addWidget(self.btn_ribbon_customize)
 
-        ribbon_vlayout.addWidget(toggle_bar)
+        self.toggle_bar = toggle_bar
+        toggle_bar.hide()  # 이미지 2: 상단 토글바 숨김 (캔버스 공간 확보)
 
-        # 1-1. 리본 탭 위젯 (2개 탭: '도구', '서식·설정')
+        # 1-1. 리본 탭 위젯 (단일 '도구' 탭 - 이미지 3: 탭 구분 제거하여 캔버스 공간 확보)
         self.ribbon_tabs = QTabWidget(self)
+        self.ribbon_tabs.tabBar().hide()
+        self.ribbon_tabs.setDocumentMode(True)
+        self.ribbon_tabs.setStyleSheet("QTabWidget::pane { border: none; background: transparent; }")
 
         # -------------------------------------------------------------
         # TAB 1: 도구 (Tools)
@@ -12583,7 +12589,7 @@ class ManualStudioWindow(QMainWindow):
         scroll_tools.setFrameShape(QFrame.NoFrame)
         scroll_tools.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll_tools.setWidget(tab_tools)
-        scroll_tools.setFixedHeight(96)
+        scroll_tools.setFixedHeight(86)
         self.ribbon_tabs.addTab(scroll_tools, tr("tab_tools", "도구"))
 
         # -------------------------------------------------------------
@@ -12975,7 +12981,7 @@ class ManualStudioWindow(QMainWindow):
 
         # scroll_format removed (no orphaned widget)
         
-        self.ribbon_tabs.setFixedHeight(144)
+        self.ribbon_tabs.setFixedHeight(88)
 
         # 리본 표시 방식 (텍스트 ⇄ 아이콘) 토글 버튼
         cur_mode = self.config.get("ribbon_display_mode", "text")
@@ -13005,6 +13011,7 @@ class ManualStudioWindow(QMainWindow):
 
         # -------------------------------------------------------------
         # 하단 상시 퀵 서식 바 (Quick Format Strip)
+        # 캔버스 최대 공간 확보를 위해 화면 상단에서는 숨김(hide) 처리하고 기능은 서식/설정 메뉴에 완벽 편입
         # -------------------------------------------------------------
         quick_strip = QFrame(self)
         quick_strip.setObjectName("QuickStrip")
@@ -13019,6 +13026,8 @@ class ManualStudioWindow(QMainWindow):
                 padding: 1px 16px 1px 4px;
             }
         """)
+        self.quick_strip = quick_strip
+        quick_strip.hide()  # 이미지 1: 캔버스 최대 공간 확보를 위해 화면 숨김
         qs_lay = QHBoxLayout(quick_strip)
         qs_lay.setContentsMargins(4, 2, 4, 2)
         qs_lay.setSpacing(3)
@@ -13146,20 +13155,19 @@ class ManualStudioWindow(QMainWindow):
 
         qs_lay.addWidget(self.create_separator())
 
-        # 모드 / 선택 상태 배지
+        # 모드 / 선택 상태 배지 (하단 상태바에 편입)
         self.lbl_active_mode = QLabel(f"{tr('lbl_qs_status', '도구:')} {tr('btn_mode_select', '선택 도구')}", self)
         self.lbl_active_mode.setStyleSheet("""
             QLabel {
-                background-color: #E2E8F0;
+                background-color: #F1F5F9;
                 color: #1E293B;
                 border: 1px solid #CBD5E1;
                 border-radius: 4px;
-                padding: 2px 6px;
+                padding: 1px 8px;
                 font-weight: bold;
                 font-size: 11px;
             }
         """)
-        qs_lay.addWidget(self.lbl_active_mode)
 
         qs_lay.addStretch(1)
         ribbon_vlayout.addWidget(quick_strip)
@@ -13306,6 +13314,9 @@ class ManualStudioWindow(QMainWindow):
         status_layout.setContentsMargins(4, 2, 6, 2)
         status_layout.setSpacing(8)
 
+        if hasattr(self, "lbl_active_mode") and self.lbl_active_mode:
+            status_layout.addWidget(self.lbl_active_mode)
+
         self.status_label = QLabel(tr("status_ready", "준비 완료 (F9: 고정 캡처, Shift+F9: 영역 지정, F10: 새 슬라이드)"), self)
         self.status_label.setStyleSheet("color: #666666; font-size: 11px; padding: 2px 4px;")
         status_layout.addWidget(self.status_label, 1)
@@ -13448,6 +13459,8 @@ class ManualStudioWindow(QMainWindow):
         self.act_shift_f9.triggered.connect(self.start_capture)
         self.act_f8 = self.menu_file.addAction("부분 추가 캡처 (F8)")
         self.act_f8.triggered.connect(self.start_sub_capture)
+        self.act_file_save_rect = self.menu_file.addAction("현재 영역을 고정 캡처로 저장")
+        self.act_file_save_rect.triggered.connect(self.save_current_as_fixed_rect)
         self.menu_file.addSeparator()
         self.act_export_ppt = self.menu_file.addAction("PowerPoint 슬라이드 전송 (F10)")
         self.act_export_ppt.setShortcut(QKeySequence("F10"))
@@ -13480,10 +13493,7 @@ class ManualStudioWindow(QMainWindow):
         self.act_exit = self.menu_file.addAction("종료 (Alt+F4)")
         self.act_exit.triggered.connect(self.close)
 
-
-        # 4. 설정(S) 메뉴
-        
-        # 1.5 보기(V) 메뉴 (UI 스타일 및 패널 제어)
+        # 1.5 보기(V) 메뉴 (UI 스타일, 패널 제어 및 리본 편집)
         self.menu_view = menubar.addMenu("보기(&V)")
         self.act_style_ribbon = self.menu_view.addAction("리본 메뉴 스타일")
         self.act_style_ribbon.setCheckable(True)
@@ -13493,6 +13503,12 @@ class ManualStudioWindow(QMainWindow):
         self.act_style_vertical.setCheckable(True)
         self.act_style_vertical.setShortcut(QKeySequence("Ctrl+M"))
         self.act_style_vertical.triggered.connect(lambda: self.set_ui_style_mode("vertical"))
+
+        self.menu_view.addSeparator()
+        self.act_view_ribbon_customize = self.menu_view.addAction("리본 메뉴 그룹 편집...")
+        self.act_view_ribbon_customize.triggered.connect(self.open_ribbon_customize)
+        self.act_ribbon_mode = self.menu_view.addAction("리본 표시 모드 (텍스트 ⇄ 아이콘)")
+        self.act_ribbon_mode.triggered.connect(self.toggle_ribbon_display_mode)
 
         self.menu_view.addSeparator()
         self.act_toggle_filmstrip = self.menu_view.addAction("스토리보드 패널 표시")
@@ -13507,7 +13523,113 @@ class ManualStudioWindow(QMainWindow):
         self.act_toggle_doc.setChecked(bool(self.config.get("doc_dock_visible", False)))
         self.act_toggle_doc.triggered.connect(lambda chk: self.doc_dock.setVisible(chk))
 
+        # 1.6 서식(O) 메뉴 (도형 두께, 색상, 음영 채우기, 스탬프/화살표/텍스트 서식 - 이미지 1 편입)
+        self.menu_format = menubar.addMenu("서식(&O)")
+
+        # 선/테두리 두께
+        menu_stroke = self.menu_format.addMenu("선/테두리 두께(&T)")
+        for w in [1, 2, 3, 4, 5, 8]:
+            lbl = f"{w} px" + (" (기본)" if w == 3 else "")
+            act_w = menu_stroke.addAction(lbl)
+            act_w.triggered.connect(lambda chk=False, val=w: self.spin_box_width.setValue(val))
+        act_custom_w = menu_stroke.addAction("두께 직접 설정...")
+        def _prompt_stroke_width():
+            from PySide6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getInt(self, "선/테두리 두께", "두께 (px):", self.spin_box_width.value(), 1, 20, 1)
+            if ok:
+                self.spin_box_width.setValue(val)
+        act_custom_w.triggered.connect(_prompt_stroke_width)
+
+        # 강조 색상
+        menu_color = self.menu_format.addMenu("강조 색상(&C)")
+        color_presets = [
+            ("빨강 (#E53935)", "#E53935"),
+            ("파랑 (#1E88E5)", "#1E88E5"),
+            ("초록 (#43A047)", "#43A047"),
+            ("주황 (#FB8C00)", "#FB8C00"),
+            ("노랑 (#FDD835)", "#FDD835"),
+        ]
+        for c_name, c_code in color_presets:
+            act_c = menu_color.addAction(c_name)
+            act_c.triggered.connect(lambda chk=False, code=c_code: self.choose_box_preset_color(code))
+        menu_color.addSeparator()
+        act_custom_c = menu_color.addAction("사용자 지정 색상...")
+        act_custom_c.triggered.connect(self.choose_box_custom_color)
+
+        # 사각 강조 음영 채우기
+        self.act_box_fill = self.menu_format.addAction("사각 강조 음영 채우기(&F)")
+        self.act_box_fill.setCheckable(True)
+        self.act_box_fill.setChecked(self.config.get("highlight_box_style", {}).get("fill", False))
+        self.act_box_fill.toggled.connect(lambda c: self.chk_box_fill.setChecked(c) if hasattr(self, "chk_box_fill") else None)
+
+        self.menu_format.addSeparator()
+
+        # 스탬프 서식
+        menu_stamp = self.menu_format.addMenu("스탬프 서식(&S)")
+        act_stamp_size = menu_stamp.addAction("스탬프 크기 설정...")
+        def _prompt_stamp_size():
+            from PySide6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getInt(self, "스탬프 크기", "크기 (px):", self.spin_stamp_size.value() if hasattr(self, "spin_stamp_size") else 32, 16, 120, 2)
+            if ok and hasattr(self, "spin_stamp_size"):
+                self.spin_stamp_size.setValue(val)
+        act_stamp_size.triggered.connect(_prompt_stamp_size)
+        act_stamp_col = menu_stamp.addAction("스탬프 배경색 변경...")
+        act_stamp_col.triggered.connect(self.choose_stamp_color)
+        act_stamp_op = menu_stamp.addAction("스탬프 투명도 설정...")
+        act_stamp_op.triggered.connect(lambda: self.action_set_stamp_opacity())
+        act_stamp_rst = menu_stamp.addAction("스탬프 1번 초기화")
+        act_stamp_rst.triggered.connect(self.reset_stamp_index)
+
+        # 화살표 서식
+        menu_arrow = self.menu_format.addMenu("화살표 서식(&A)")
+        act_arrow_head = menu_arrow.addAction("화살표 촉 크기...")
+        def _prompt_arrow_head():
+            from PySide6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getInt(self, "촉 크기", "크기 (px):", self.spin_arrow_head.value() if hasattr(self, "spin_arrow_head") else 14, 6, 40, 1)
+            if ok and hasattr(self, "spin_arrow_head"):
+                self.spin_arrow_head.setValue(val)
+        act_arrow_head.triggered.connect(_prompt_arrow_head)
+        menu_arrow.addSeparator()
+        act_el_tr = menu_arrow.addAction("직각 화살표: 우하향 (가로 우선 ㄱ자)")
+        act_el_tr.triggered.connect(lambda: self.on_elbow_preset_clicked("tr"))
+        act_el_br = menu_arrow.addAction("직각 화살표: 우상향 (가로 우선 ┘자)")
+        act_el_br.triggered.connect(lambda: self.on_elbow_preset_clicked("br"))
+        act_el_bl = menu_arrow.addAction("직각 화살표: 하우향 (세로 우선 ㄴ자)")
+        act_el_bl.triggered.connect(lambda: self.on_elbow_preset_clicked("bl"))
+        act_el_tl = menu_arrow.addAction("직각 화살표: 상우향 (세로 우선 ┌자)")
+        act_el_tl.triggered.connect(lambda: self.on_elbow_preset_clicked("tl"))
+
+        # 글꼴 및 텍스트
+        menu_font = self.menu_format.addMenu("글꼴 및 텍스트(&X)")
+        act_txt_size = menu_font.addAction("글자 크기...")
+        def _prompt_text_size():
+            from PySide6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getInt(self, "글자 크기", "크기 (pt):", self.spin_text_font_size.value() if hasattr(self, "spin_text_font_size") else 14, 8, 72, 1)
+            if ok and hasattr(self, "spin_text_font_size"):
+                self.spin_text_font_size.setValue(val)
+        act_txt_size.triggered.connect(_prompt_text_size)
+        act_txt_col = menu_font.addAction("글자색 변경...")
+        act_txt_col.triggered.connect(self.choose_text_color)
+        act_txt_bg = menu_font.addAction("글자 배경색 변경...")
+        act_txt_bg.triggered.connect(self.choose_text_bg_color)
+
+        # 4. 설정(S) 메뉴
         self.menu_settings = menubar.addMenu("설정(&S)")
+
+        # 화면 모니터 선택 및 고정 캡처 제어 (이미지 1 편입)
+        self.menu_monitor_select = self.menu_settings.addMenu("캡처 대상 화면 (모니터 선택)(&M)")
+        self.act_fixed_rect_toggle = self.menu_settings.addAction("고정 캡처 영역 활성화(&X)")
+        self.act_fixed_rect_toggle.setCheckable(True)
+        self.act_fixed_rect_toggle.setChecked(self.config.get("fixed_rect_enabled", True))
+        self.act_fixed_rect_toggle.toggled.connect(lambda c: self.chk_fixed_rect.setChecked(c) if hasattr(self, "chk_fixed_rect") else None)
+
+        self.act_save_fixed_rect = self.menu_settings.addAction("현재 영역을 고정 캡처로 저장(&K)")
+        self.act_save_fixed_rect.triggered.connect(self.save_current_as_fixed_rect)
+
+        self.act_fixed_coords = self.menu_settings.addAction("고정 캡처 좌표 설정 (X, Y, W, H)...")
+        self.act_fixed_coords.triggered.connect(self.open_settings_dialog)
+        self.menu_settings.addSeparator()
+
         self.act_cfg = self.menu_settings.addAction("환경 설정...")
         self.act_cfg.triggered.connect(self.open_settings_dialog)
         self.act_watermark = self.menu_settings.addAction("워터마크 설정(W)...")
@@ -13891,6 +14013,9 @@ class ManualStudioWindow(QMainWindow):
             self.act_tx.setText(tr("btn_mode_text", "텍스트 라벨"))
         if hasattr(self, "act_hk"):
             self.act_hk.setText(tr("btn_mode_hotkey", "단축키 배지"))
+
+        if hasattr(self, "menu_format"):
+            self.menu_format.setTitle(tr("menu_format", "서식(&O)"))
 
         if hasattr(self, "menu_settings"):
             self.menu_settings.setTitle(tr("menu_settings", "설정(&S)"))
@@ -15675,6 +15800,19 @@ class ManualStudioWindow(QMainWindow):
                 cb.setCurrentIndex(0)
             cb.blockSignals(False)
 
+        if hasattr(self, "menu_monitor_select") and self.menu_monitor_select:
+            self.menu_monitor_select.clear()
+            act_all = self.menu_monitor_select.addAction(tr("settings_monitor_all", "전체 가상 화면 (모든 모니터)"))
+            act_all.setCheckable(True)
+            act_all.setChecked(cur_target == -1)
+            act_all.triggered.connect(lambda: self.set_active_monitor(-1))
+            for m in monitors:
+                m_idx = m["index"]
+                act_m = self.menu_monitor_select.addAction(m["label"])
+                act_m.setCheckable(True)
+                act_m.setChecked(cur_target == m_idx)
+                act_m.triggered.connect(lambda checked=False, midx=m_idx: self.set_active_monitor(midx))
+
     def on_tab_monitor_changed(self, idx):
         if hasattr(self, "combo_tab_monitor") and self.combo_tab_monitor is not None:
             val = self.combo_tab_monitor.currentData()
@@ -15703,6 +15841,15 @@ class ManualStudioWindow(QMainWindow):
             if idx >= 0:
                 self.combo_monitor.setCurrentIndex(idx)
             self.combo_monitor.blockSignals(False)
+
+        if hasattr(self, "menu_monitor_select") and self.menu_monitor_select:
+            acts = self.menu_monitor_select.actions()
+            for act in acts:
+                act.setChecked(False)
+            if monitor_index == -1 and len(acts) > 0:
+                acts[0].setChecked(True)
+            elif monitor_index >= 0 and monitor_index + 1 < len(acts):
+                acts[monitor_index + 1].setChecked(True)
 
         name = "전체 가상 화면" if monitor_index == -1 else f"모니터 {monitor_index + 1}"
         self.show_toast(f"캡처 대상 화면: {name}")
