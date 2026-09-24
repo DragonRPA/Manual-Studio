@@ -6906,10 +6906,17 @@ class StudioCanvasWidget(QWidget):
         if not hasattr(self, "auto_fit") or not self.auto_fit:
             logical_sz = self.get_logical_size()
             self.zoom_scale = 1.0
+            self.offset = QPointF(0, 0)
             self.setFixedSize(logical_sz)
+            self.update()
             return
 
         logical_sz = self.get_logical_size()
+        pw = logical_sz.width()
+        ph = logical_sz.height()
+        if pw <= 0 or ph <= 0:
+            return
+
         scroll_area = None
         p = self.parent()
         while p:
@@ -6920,60 +6927,36 @@ class StudioCanvasWidget(QWidget):
             p = p.parent()
 
         if scroll_area:
-            vw = scroll_area.viewport().width()
-            vh = scroll_area.viewport().height()
-            pad = 20
-            vw -= pad
-            vh -= pad
-            if vw < 100: vw = 100
-            if vh < 100: vh = 100
-
-            scale_w = vw / float(logical_sz.width())
-            scale_h = vh / float(logical_sz.height())
-            self.zoom_scale = min(scale_w, scale_h)
+            vw = scroll_area.viewport().width() - 20
+            vh = scroll_area.viewport().height() - 20
         else:
-            self.zoom_scale = 1.0
+            vw = self.width() - 20
+            vh = self.height() - 20
 
-        new_w = int(logical_sz.width() * self.zoom_scale)
-        new_h = int(logical_sz.height() * self.zoom_scale)
+        if vw < 100: vw = 100
+        if vh < 100: vh = 100
+
+        scale_w = vw / float(pw)
+        scale_h = vh / float(ph)
+        self.zoom_scale = min(scale_w, scale_h)
+
+        new_w = max(100, int(pw * self.zoom_scale))
+        new_h = max(100, int(ph * self.zoom_scale))
+        self.offset = QPointF(0, 0)
         self.setFixedSize(new_w, new_h)
+        self.update()
 
     def get_canvas_pt(self, event):
         pos = get_mouse_pos(event)
         scale = getattr(self, "zoom_scale", 1.0)
         return QPointF(pos.x() / scale, pos.y() / scale)
 
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.update_auto_fit()
+        self.update_fit_size()
 
     def update_auto_fit(self):
-        if getattr(self, "auto_fit", False) and getattr(self, "pixmap", None) and not self.pixmap.isNull():
-            vw = self.width()
-            vh = self.height()
-            pw = self.pixmap.width()
-            ph = self.pixmap.height()
-            
-            # Add small padding
-            vw -= 20
-            vh -= 20
-            
-            if vw <= 0 or vh <= 0:
-                return
-                
-            scale_x = vw / pw
-            scale_y = vh / ph
-            self.zoom_scale = min(scale_x, scale_y)
-            
-            new_w = pw * self.zoom_scale
-            new_h = ph * self.zoom_scale
-            
-            self.offset = QPointF((self.width() - new_w) / 2, (self.height() - new_h) / 2)
-        else:
-            self.zoom_scale = 1.0
-            self.offset = QPointF(10, 10)
-        self.update()
+        self.update_fit_size()
 
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
@@ -8587,7 +8570,8 @@ class StudioCanvasWidget(QWidget):
             else:
                 # 투명 캔버스: 16px 체커보드 투명 격자 패턴 렌더링
                 grid_sz = 16
-                r = self.rect()
+                log_sz = self.get_logical_size()
+                r = QRect(0, 0, log_sz.width(), log_sz.height())
                 col1 = QColor(255, 255, 255)
                 col2 = QColor(241, 245, 249)
                 for gx in range(0, r.width(), grid_sz):
@@ -10611,7 +10595,7 @@ class StepCardWidget(QFrame):
             self.lbl_check.setStyleSheet("background-color: #2563EB; color: #FFFFFF; border-radius: 6px; font-size: 8.5px; font-weight: bold;")
         else:
             self.lbl_check.setText("")
-            self.lbl_check.setStyleSheet("border: 1px solid #CBD5E1; border-radius: 6px; background-color: #FFFFFF;")
+            self.lbl_check.setStyleSheet("border: 1.5px solid #94A3B8; border-radius: 6px; background-color: #FFFFFF;")
 
         if self.is_selected:
             self.setStyleSheet("""
@@ -10642,18 +10626,18 @@ class StepCardWidget(QFrame):
         else:
             self.setStyleSheet("""
                 QFrame {
-                    background-color: #F8FAFC;
-                    border: 1px solid #E2E8F0;
+                    background-color: #FFFFFF;
+                    border: 1.5px solid #94A3B8;
                     border-radius: 6px;
                 }
                 QFrame:hover {
-                    border-color: #94A3B8;
-                    background-color: #F1F5F9;
+                    border-color: #475569;
+                    background-color: #F8FAFC;
                 }
                 QLabel {
-                    color: #94A3B8;
+                    color: #475569;
                     font-size: 10.5px;
-                    font-weight: 500;
+                    font-weight: 600;
                 }
             """)
 
@@ -13231,6 +13215,7 @@ class ManualStudioWindow(QMainWindow):
         # 2. 캔버스 영역 (스크롤 지원)
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setAlignment(Qt.AlignCenter)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("background-color: #555555; border: 1px solid #CCCCCC;")
@@ -13241,37 +13226,42 @@ class ManualStudioWindow(QMainWindow):
         self.canvas.sig_item_selected.connect(self.on_canvas_item_selected)
         self.canvas.sig_request_mode_change.connect(self.switch_mode)
         self.scroll_area.setWidget(self.canvas)
+
+        orig_scroll_resize = self.scroll_area.resizeEvent
+        def _on_scroll_resize(event):
+            orig_scroll_resize(event)
+            if hasattr(self, "canvas") and self.canvas:
+                self.canvas.update_fit_size()
+        self.scroll_area.resizeEvent = _on_scroll_resize
         
         self.main_splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(self.main_splitter, 1)
         
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
-        self.left_layout.setContentsMargins(0,0,0,0)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.setSpacing(0)
         
         self.vertical_toolbar = VerticalToolBarWidget(self)
         self.vertical_toolbar.setVisible(False)
         
         self.right_panel = QWidget()
         self.right_layout = QHBoxLayout(self.right_panel)
-        self.right_layout.setContentsMargins(0,0,0,0)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
         self.right_layout.addWidget(self.vertical_toolbar)
         self.right_layout.addWidget(self.scroll_area, 1)
         
         self.main_splitter.addWidget(self.left_panel)
         self.main_splitter.addWidget(self.right_panel)
-        self.main_splitter.setSizes([135, 1200])
+        self.main_splitter.splitterMoved.connect(lambda pos, idx: self.canvas.update_fit_size() if hasattr(self, 'canvas') and self.canvas else None)
 
-
-        # 2-2. 하단 타임라인 스토리보드 토글 바 및 독
+        # 2-2. 하단 타임라인 스토리보드 독 (접기/펼치기 버튼 전면 제거, Ctrl+B 단축키로 제어)
         film_vis = bool(self.config.get("filmstrip_visible", True))
         self.storyboard_toggle_bar = StoryboardToggleBar(film_vis, self)
-        self.storyboard_toggle_bar.sig_toggled.connect(self.on_storyboard_toggle_bar_toggled)
-        self.left_layout.addWidget(self.storyboard_toggle_bar)
+        self.storyboard_toggle_bar.hide()  # 호환성 유지용 객체 생성 후 숨김 (UI 미노출)
 
         self.filmstrip = FilmstripDockWidget(self)
-        if hasattr(self.filmstrip, "btn_close"):
-            self.filmstrip.btn_close.clicked.connect(lambda: self.on_storyboard_toggle_bar_toggled(False))
+        self.left_layout.addWidget(self.filmstrip, 1)
 
         # 2-3. 문서 참조 보조 독 패널 초기화 및 등록
         self.doc_dock = DocumentReferenceDockWidget(self)
@@ -13280,8 +13270,12 @@ class ManualStudioWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.doc_dock)
         self.doc_dock.setVisible(bool(self.config.get("doc_dock_visible", False)))
 
-        self.filmstrip.setVisible(film_vis)
         self.left_panel.setVisible(film_vis)
+        self.filmstrip.setVisible(film_vis)
+        if film_vis:
+            self.main_splitter.setSizes([140, 1200])
+        else:
+            self.main_splitter.setSizes([0, 1200])
         self.filmstrip.hover_preview_enabled = bool(self.config.get("enable_hover_preview", True))
         self.filmstrip.chk_hover_preview.setChecked(self.filmstrip.hover_preview_enabled)
         self.filmstrip.sig_step_selected.connect(self.on_filmstrip_step_selected)
@@ -13305,7 +13299,6 @@ class ManualStudioWindow(QMainWindow):
         self.filmstrip.sig_export_word.connect(self.action_export_word_doc)
         self.filmstrip.sig_export_notion.connect(self.action_export_notion)
         self.filmstrip.sig_export_confluence.connect(self.action_export_confluence)
-        self.left_layout.addWidget(self.filmstrip)
 
         # 3. 하단 상태바
         status_bar_widget = QWidget(self)
@@ -16451,7 +16444,7 @@ class ManualStudioWindow(QMainWindow):
                 self.hide_keytips()
                 return
             elif key == Qt.Key_B:
-                self.toggle_ribbon_collapsed()
+                self.toggle_storyboard()
                 self.hide_keytips()
                 return
             elif key in (Qt.Key_Delete, Qt.Key_Backspace) or (modifiers & Qt.ShiftModifier and key == Qt.Key_X):
@@ -16805,10 +16798,10 @@ class ManualStudioWindow(QMainWindow):
         self.show_toast(f"창틀 & 소프트 섀도우 액자 효과: {status_text}")
 
     def on_toggle_filmstrip(self):
-        cur = self.btn_filmstrip_toggle.isChecked()
-        self.config["filmstrip_visible"] = cur
-        save_config(self.config)
-        self.filmstrip.setVisible(cur)
+        cur = not self.left_panel.isVisible() if hasattr(self, "left_panel") else True
+        if hasattr(self, "btn_filmstrip_toggle") and self.btn_filmstrip_toggle:
+            cur = self.btn_filmstrip_toggle.isChecked()
+        self.on_storyboard_toggle_bar_toggled(cur)
 
     def action_auto_pii(self):
         if not hasattr(self, "canvas") or not self.canvas:
@@ -16980,12 +16973,33 @@ class ManualStudioWindow(QMainWindow):
     def on_filmstrip_delete_step(self, del_idx: int):
         self.on_filmstrip_delete_selected([del_idx])
 
+    def toggle_storyboard(self):
+        """Ctrl+B 스토리보드 열기 / 닫기 (접을 시 X폭 100% 캔버스 확장)"""
+        cur = not self.left_panel.isVisible() if hasattr(self, "left_panel") else True
+        self.on_storyboard_toggle_bar_toggled(cur)
+
     def on_storyboard_toggle_bar_toggled(self, is_visible: bool):
-        self.filmstrip.setVisible(is_visible)
+        if hasattr(self, "filmstrip"):
+            self.filmstrip.setVisible(is_visible)
+        if hasattr(self, "left_panel"):
+            self.left_panel.setVisible(is_visible)
+            if hasattr(self, "main_splitter"):
+                if not is_visible:
+                    self.main_splitter.setSizes([0, max(100, self.width())])
+                else:
+                    self.main_splitter.setSizes([140, max(100, self.width() - 140)])
         self.config["filmstrip_visible"] = is_visible
         save_config(self.config)
+        if hasattr(self, "act_toggle_filmstrip") and self.act_toggle_filmstrip:
+            self.act_toggle_filmstrip.setChecked(is_visible)
         if hasattr(self, "btn_toggle_filmstrip") and self.btn_toggle_filmstrip:
             self.btn_toggle_filmstrip.setChecked(is_visible)
+        if hasattr(self, "storyboard_toggle_bar") and self.storyboard_toggle_bar:
+            self.storyboard_toggle_bar.is_expanded = is_visible
+            self.storyboard_toggle_bar.update_text()
+        if hasattr(self, "canvas") and self.canvas:
+            self.canvas.update_fit_size()
+            QTimer.singleShot(40, self.canvas.update_fit_size)
 
     def on_filmstrip_toggle_hover_preview(self, enabled: bool):
         self.config["enable_hover_preview"] = enabled
