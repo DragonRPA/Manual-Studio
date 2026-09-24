@@ -11871,13 +11871,15 @@ class RibbonCustomizeDialog(QDialog):
 
 
 class VerticalToolBarWidget(QFrame):
-    """캔버스 좌측 고밀도 전문 세로 툴바 (RibbonIconProvider 벡터 아이콘 연동)"""
+    """캔버스 좌측 고밀도 전문 2열 세로 툴바 (RibbonIconProvider 벡터 아이콘 연동)"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("VerticalToolBarWidget")
-        self.setFixedWidth(46)
+        self.setFixedWidth(62)
         self.main_window = parent
         self.mode_buttons = {}
+        self._cur_row = 0
+        self._cur_col = 0
         self.setStyleSheet("""
             QFrame#VerticalToolBarWidget {
                 background-color: #1E293B;
@@ -11887,12 +11889,12 @@ class VerticalToolBarWidget(QFrame):
                 background-color: transparent;
                 border: 1px solid transparent;
                 border-radius: 4px;
-                padding: 4px;
-                margin: 1px 3px;
-                min-width: 28px;
-                min-height: 28px;
-                max-width: 28px;
-                max-height: 28px;
+                padding: 2px;
+                margin: 0px;
+                min-width: 25px;
+                min-height: 25px;
+                max-width: 25px;
+                max-height: 25px;
             }
             QToolButton:hover {
                 background-color: #334155;
@@ -11907,10 +11909,26 @@ class VerticalToolBarWidget(QFrame):
                 background-color: #1D4ED8 !important;
                 border: 2px solid #7DD3FC !important;
             }
+            QScrollBar:vertical {
+                width: 4px;
+                background: transparent;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #475569;
+                min-height: 16px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #64748B;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
         """)
         
         self.vlayout = QVBoxLayout(self)
-        self.vlayout.setContentsMargins(2, 6, 2, 6)
+        self.vlayout.setContentsMargins(2, 4, 2, 4)
         self.vlayout.setSpacing(2)
         
         self.scroll = QScrollArea(self)
@@ -11921,34 +11939,46 @@ class VerticalToolBarWidget(QFrame):
         
         self.scroll_content = QWidget()
         self.scroll_content.setStyleSheet("background: transparent;")
-        self.btn_layout = QVBoxLayout(self.scroll_content)
-        self.btn_layout.setContentsMargins(0, 0, 0, 0)
-        self.btn_layout.setSpacing(2)
+        self.grid_layout = QGridLayout(self.scroll_content)
+        self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_layout.setSpacing(2)
+        self.grid_layout.setHorizontalSpacing(2)
+        self.grid_layout.setVerticalSpacing(2)
         
         self.scroll.setWidget(self.scroll_content)
         self.vlayout.addWidget(self.scroll)
 
-    def add_action_tool(self, icon_name, tooltip, callback, is_check=False, mode_key=None):
+    def add_action_tool(self, icon_name, tooltip, callback, is_check=False, mode_key=None, color=None):
         btn = QToolButton(self)
-        icon = RibbonIconProvider.get_icon(icon_name, 20, "#F8FAFC")
+        icon_color = color if color else "#F8FAFC"
+        icon = RibbonIconProvider.get_icon(icon_name, 16, icon_color)
         btn.setIcon(icon)
-        btn.setIconSize(QSize(20, 20))
+        btn.setIconSize(QSize(16, 16))
         btn.setToolTip(tooltip)
         if is_check:
             btn.setCheckable(True)
             if mode_key:
                 self.mode_buttons[mode_key] = btn
         btn.clicked.connect(callback)
-        self.btn_layout.addWidget(btn)
+        self.grid_layout.addWidget(btn, self._cur_row, self._cur_col)
+        if self._cur_col == 1:
+            self._cur_col = 0
+            self._cur_row += 1
+        else:
+            self._cur_col = 1
         return btn
 
     def add_separator(self):
+        if self._cur_col == 1:
+            self._cur_col = 0
+            self._cur_row += 1
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet("background-color: #334155; margin: 3px 2px;")
+        line.setStyleSheet("background-color: #334155; margin: 3px 1px;")
         line.setFixedHeight(1)
-        self.btn_layout.addWidget(line)
+        self.grid_layout.addWidget(line, self._cur_row, 0, 1, 2)
+        self._cur_row += 1
 
     def set_active_mode(self, mode):
         mode_upper = str(mode).upper() if mode else "SELECT"
@@ -13336,26 +13366,34 @@ class ManualStudioWindow(QMainWindow):
                 self.canvas.update_fit_size()
         self.scroll_area.resizeEvent = _on_scroll_resize
         
+        # 메인 작업 영역 컨테이너: [세로 툴바] | [스토리보드 | 캔버스]
+        content_container = QWidget(self)
+        content_layout = QHBoxLayout(content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+
+        self.vertical_toolbar = VerticalToolBarWidget(self)
+        self.vertical_toolbar.setVisible(False)
+        content_layout.addWidget(self.vertical_toolbar)
+
         self.main_splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(self.main_splitter, 1)
+        content_layout.addWidget(self.main_splitter, 1)
         
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.setSpacing(0)
         
-        self.vertical_toolbar = VerticalToolBarWidget(self)
-        self.vertical_toolbar.setVisible(False)
-        
         self.right_panel = QWidget()
         self.right_layout = QHBoxLayout(self.right_panel)
         self.right_layout.setContentsMargins(0, 0, 0, 0)
-        self.right_layout.addWidget(self.vertical_toolbar)
         self.right_layout.addWidget(self.scroll_area, 1)
         
         self.main_splitter.addWidget(self.left_panel)
         self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.splitterMoved.connect(lambda pos, idx: self.canvas.update_fit_size() if hasattr(self, 'canvas') and self.canvas else None)
+
+        main_layout.addWidget(content_container, 1)
 
         # 2-2. 하단 타임라인 스토리보드 독 (접기/펼치기 버튼 전면 제거, Ctrl+B 단축키로 제어)
         film_vis = bool(self.config.get("filmstrip_visible", True))
@@ -13436,37 +13474,81 @@ class ManualStudioWindow(QMainWindow):
         
         if hasattr(self, 'vertical_toolbar'):
             vt = self.vertical_toolbar
+            # 1. 스타일 전환 & 뷰 & 프로젝트
             vt.add_action_tool("merge_project", "리본 메뉴 스타일로 전환 (Ctrl+M)", lambda: self.set_ui_style_mode("ribbon"))
+            vt.add_action_tool("filmstrip", "스토리보드 패널 표시/숨김 (Ctrl+B)", self.on_toggle_filmstrip)
+            vt.add_action_tool("new_project", "새 프로젝트 (Ctrl+N)", self.action_new_project)
+            vt.add_action_tool("open_project", "프로젝트 열기 (Ctrl+O)", self.action_open_project)
+            vt.add_action_tool("save_project", "프로젝트 저장 (Ctrl+S)", self.action_save_project)
+            vt.add_action_tool("autosave", "자동 저장 토글 (Alt+A)", self.on_autosave_toggle_clicked, is_check=True)
             vt.add_separator()
-            # 캡처 도구
+
+            # 2. 캡처 도구
             vt.add_action_tool("capture_fixed", "고정 캡처 (F9)", self.handle_hotkey_capture)
             vt.add_action_tool("capture_area", "영역 지정 캡처 (Shift+F9)", self.start_capture)
             vt.add_action_tool("capture_sub", "부분 캡처 (F8)", self.start_sub_capture)
+            vt.add_action_tool("scroll_stitch", "스크롤 스티칭 캡처", self.action_scroll_stitch)
             vt.add_separator()
-            # 주석 및 도형 도구 (Checkable 모드 연동)
-            vt.add_action_tool("select", "선택 도구 (V)", lambda: self.switch_mode("SELECT"), is_check=True, mode_key="SELECT")
-            vt.add_action_tool("stamp", "번호 스탬프 (S)", lambda: self.switch_mode("STAMP"), is_check=True, mode_key="STAMP")
-            vt.add_action_tool("box", "사각 박스 (B)", lambda: self.switch_mode("BOX"), is_check=True, mode_key="BOX")
-            vt.add_action_tool("arrow", "화살표 (A)", lambda: self.switch_mode("ARROW"), is_check=True, mode_key="ARROW")
-            vt.add_action_tool("elbow", "꺾은 화살표 (E)", lambda: self.switch_mode("ELBOW"), is_check=True, mode_key="ELBOW")
-            vt.add_action_tool("step_arrow", "순번 화살표", lambda: self.switch_mode("STEP_ARROW"), is_check=True, mode_key="STEP_ARROW")
-            vt.add_action_tool("text", "텍스트 (T)", lambda: self.switch_mode("TEXT"), is_check=True, mode_key="TEXT")
-            vt.add_action_tool("callout", "말풍선 (C)", lambda: self.switch_mode("CALLOUT"), is_check=True, mode_key="CALLOUT")
-            vt.add_action_tool("blur", "모자이크/블러 (M)", lambda: self.switch_mode("BLUR"), is_check=True, mode_key="BLUR")
-            vt.add_action_tool("eraser", "스마트 지우개 (X)", lambda: self.switch_mode("ERASER"), is_check=True, mode_key="ERASER")
-            vt.add_action_tool("ocr", "OCR 텍스트 인식", lambda: self.switch_mode("OCR"), is_check=True, mode_key="OCR")
-            vt.add_separator()
-            # 플로우차트
-            vt.add_action_tool("flowchart", "플로우차트", self.open_flowchart_studio)
-            vt.add_separator()
-            # 실행 취소 / 삭제 / 내보내기
+
+            # 3. 편집 및 실행 취소
+            vt.add_action_tool("select", "선택 도구 (V / ESC)", lambda: self.switch_mode("SELECT"), is_check=True, mode_key="SELECT")
+            vt.add_action_tool("reset_index", "스탬프 1번 초기화", self.reset_stamp_index)
             vt.add_action_tool("undo", "실행 취소 (Ctrl+Z)", self.action_undo)
-            vt.add_action_tool("clear", "전체 삭제", self.action_clear)
-            vt.add_action_tool("save_project", "PowerPoint 슬라이드 전송 (F10)", self.action_export_all_ppt)
-            vt.add_action_tool("open_project", "Google Slides 전송 (F11)", self.action_export_all_slides)
-            vt.add_action_tool("autosave", "한컴 한글 전송 (F12)", self.action_export_all_hwp)
-            vt.add_action_tool("save_rect", "환경 설정...", self.open_settings_dialog)
-            vt.btn_layout.addStretch(1)
+            vt.add_action_tool("clear", "캔버스 전체 삭제", self.action_clear, color="#F87171")
+            vt.add_action_tool("ppt_renumber", "순번 재정렬", self.action_renumber_powerpoint_steps)
+            vt.add_action_tool("draft", "Draft 스탬프 추가", self.action_add_draft_stamp)
+            vt.add_separator()
+
+            # 4. 주석 및 그래픽 도구
+            vt.add_action_tool("stamp", "번호 스탬프 (S)", lambda: self.switch_mode("STAMP"), is_check=True, mode_key="STAMP")
+            vt.add_action_tool("step_arrow", "순번 화살표", lambda: self.switch_mode("STEP_ARROW"), is_check=True, mode_key="STEP_ARROW")
+            vt.add_action_tool("elbow", "직각 화살표 (E)", lambda: self.switch_mode("ELBOW"), is_check=True, mode_key="ELBOW")
+            vt.add_action_tool("arrow", "직선 화살표 (A)", lambda: self.switch_mode("ARROW"), is_check=True, mode_key="ARROW")
+            vt.add_action_tool("box", "사각 강조 박스 (B)", lambda: self.switch_mode("BOX"), is_check=True, mode_key="BOX")
+            vt.add_action_tool("callout", "설명 말풍선 (C)", lambda: self.switch_mode("CALLOUT"), is_check=True, mode_key="CALLOUT")
+            vt.add_action_tool("text", "텍스트 라벨 (T)", lambda: self.switch_mode("TEXT"), is_check=True, mode_key="TEXT")
+            vt.add_action_tool("wordart", "워드아트 텍스트", lambda: self.switch_mode("WORDART"), is_check=True, mode_key="WORDART")
+            vt.add_action_tool("hotkey", "단축키 키캡 배지 (K)", lambda: self.switch_mode("HOTKEY"), is_check=True, mode_key="HOTKEY")
+            vt.add_action_tool("window_frame", "창틀 프레임 토글", self.on_toggle_window_frame)
+            vt.add_separator()
+
+            # 5. 보안 & 측정 & 텍스트 인식
+            vt.add_action_tool("dimension", "선 치수선 (D)", lambda: self.switch_mode("DIMENSION"), is_check=True, mode_key="DIMENSION")
+            vt.add_action_tool("box_dimension", "영역 치수 박스", lambda: self.switch_mode("BOX_DIMENSION"), is_check=True, mode_key="BOX_DIMENSION")
+            vt.add_action_tool("blur", "모자이크/블러 (M)", lambda: self.switch_mode("BLUR"), is_check=True, mode_key="BLUR")
+            vt.add_action_tool("auto_pii", "개인정보 자동 마스킹", self.action_auto_pii, color="#60A5FA")
+            vt.add_action_tool("eraser", "스마트 배경 지우개 (X)", lambda: self.switch_mode("ERASER"), is_check=True, mode_key="ERASER")
+            vt.add_action_tool("ppt_autofit", "배율 맞춤", self.auto_fit_ppt_scale)
+            vt.add_action_tool("ocr", "OCR 텍스트 추출 (O)", lambda: self.switch_mode("OCR"), is_check=True, mode_key="OCR")
+            vt.add_action_tool("ocr_label", "OCR 라벨 생성 (Shift+O)", lambda: self.switch_mode("OCR_LABEL"), is_check=True, mode_key="OCR_LABEL")
+            vt.add_separator()
+
+            # 6. 플로우차트 도구
+            vt.add_action_tool("flowchart", "플로우차트 빌더", self.open_flowchart_studio, color="#4ADE80")
+            vt.add_action_tool("flow_line", "지능형 연결선", lambda: self.switch_mode("FLOW_CONNECT_LINE"), is_check=True, mode_key="FLOW_CONNECT_LINE")
+            vt.add_action_tool("flow_terminal", "시작/종료 노드", lambda: self.switch_mode("FLOW_TERMINAL"), is_check=True, mode_key="FLOW_TERMINAL")
+            vt.add_action_tool("flow_process", "일반 작업 노드", lambda: self.switch_mode("FLOW_PROCESS"), is_check=True, mode_key="FLOW_PROCESS")
+            vt.add_action_tool("flow_decision", "조건 분기 노드", lambda: self.switch_mode("FLOW_DECISION"), is_check=True, mode_key="FLOW_DECISION")
+            vt.add_action_tool("flow_io", "입출력 노드", lambda: self.switch_mode("FLOW_IO"), is_check=True, mode_key="FLOW_IO")
+            vt.add_action_tool("flow_database", "DB 노드", lambda: self.switch_mode("FLOW_DATABASE"), is_check=True, mode_key="FLOW_DATABASE")
+            vt.add_action_tool("flow_document", "문서 노드", lambda: self.switch_mode("FLOW_DOCUMENT"), is_check=True, mode_key="FLOW_DOCUMENT")
+            vt.add_action_tool("flow_auto_number", "자동 번호 스탬프 부착", self.action_auto_number_flowchart, color="#F87171")
+            vt.add_action_tool("flow_align", "노드 자동정렬 (TD)", lambda: self.action_auto_align_flowchart("TD"))
+            vt.add_action_tool("mobile_link", "모바일 손그림 연동", self.action_open_mobile_link)
+            vt.add_separator()
+
+            # 7. MarkItDown (문서 참조)
+            vt.add_action_tool("doc_ref", "문서 참조 패널 토글", self.toggle_document_dock, color="#C084FC")
+            vt.add_action_tool("flow_document", "외부 파일 변환 (MarkItDown)", self.action_markitdown_convert, color="#C084FC")
+            vt.add_separator()
+
+            # 8. 슬라이드 관리 & 내보내기 & 설정
+            vt.add_action_tool("add_step", "새 슬라이드 추가", self.action_add_new_slide)
+            vt.add_action_tool("ppt_export", "PowerPoint 슬라이드 전송 (F10)", self.export_to_ppt_and_clipboard, color="#FB923C")
+            vt.add_action_tool("export_hwp", "한컴 한글 전송 (Shift+F10 / F12)", self.action_export_all_hwp, color="#38BDF8")
+            vt.add_action_tool("slides_export", "Google Slides 전송 (F11)", self.action_export_all_slides, color="#FBBF24")
+            vt.add_action_tool("settings", "환경 설정...", self.open_settings_dialog)
+            vt.grid_layout.setRowStretch(vt._cur_row + 1, 1)
             vt.set_active_mode("SELECT")
         self.update_status_bar()
         self.sync_ui_from_config()
@@ -15234,10 +15316,11 @@ class ManualStudioWindow(QMainWindow):
         self._apply_ribbon_collapsed(collapsed)
 
     def _apply_ribbon_collapsed(self, collapsed: bool):
+        is_vertical = (getattr(self, "ui_style_mode", self.config.get("ui_style_mode", "ribbon")) == "vertical")
         if hasattr(self, "ribbon_frame"):
-            self.ribbon_frame.setVisible(not collapsed)
+            self.ribbon_frame.setVisible(not is_vertical and not collapsed)
         if hasattr(self, "vertical_toolbar"):
-            self.vertical_toolbar.setVisible(collapsed)
+            self.vertical_toolbar.setVisible(is_vertical or collapsed)
         if hasattr(self, "btn_ribbon_toggle"):
             self.btn_ribbon_toggle.setText(
                 "▶ 도구 리본" if collapsed else "▼ 도구 리본"
