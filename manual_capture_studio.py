@@ -8718,6 +8718,20 @@ class StudioCanvasWidget(QWidget):
             QGuiApplication.clipboard().setText(meta_json)
             self.sig_request_toast.emit("UIA 메타데이터 클립보드 복사 완료")
 
+    def copy_slide_to_clipboard(self):
+        """현재 슬라이드의 이미지와 모든 주석을 고해상도 합성하여 클립보드에 이미지로 복사"""
+        win = self.window()
+        if win and hasattr(win, "copy_current_composed_image"):
+            win.copy_current_composed_image()
+            return
+
+        qimg = self.get_composed_image()
+        if qimg and not qimg.isNull():
+            QGuiApplication.clipboard().setImage(qimg)
+            self.sig_request_toast.emit("현재 슬라이드 클립보드 복사 완료 (Ctrl+V)")
+        else:
+            self.sig_request_toast.emit("복사할 슬라이드 이미지가 없습니다.")
+
     def show_canvas_quick_menu(self, canvas_pt, global_pos):
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -8754,7 +8768,19 @@ class StudioCanvasWidget(QWidget):
             act_excel_range = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), f"엑셀 범위 작업 ({r_str} · {c_cnt}개 셀)...")
             menu.addSeparator()
 
-        # 1. 도구 전환 서브메뉴
+        # 1. 슬라이드 복사 & 클립보드 이미지 붙여넣기
+        act_copy_slide = menu.addAction(RibbonIconProvider.get_icon("copy", 16, "#2563EB"), "현재 슬라이드 복사")
+        has_slide_content = bool((self.pixmap and not self.pixmap.isNull()) or self.items)
+        act_copy_slide.setEnabled(has_slide_content)
+
+        clipboard = QGuiApplication.clipboard()
+        has_cb_img = bool(clipboard.mimeData() and clipboard.mimeData().hasImage())
+        act_paste = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "클립보드 이미지 붙여넣기 (Ctrl+V)")
+        act_paste.setEnabled(has_cb_img)
+
+        menu.addSeparator()
+
+        # 2. 도구 전환 서브메뉴
         menu_tools = menu.addMenu(RibbonIconProvider.get_icon("select", 16, "#2563EB"), "도구 전환")
         menu_tools.setStyleSheet(menu.styleSheet())
         tools_list = [
@@ -8778,26 +8804,12 @@ class StudioCanvasWidget(QWidget):
 
         menu.addSeparator()
 
-        # 2. 현재 커서 위치 주석 추가
+        # 3. 현재 커서 위치 주석 추가
         act_add_stamp = menu.addAction(RibbonIconProvider.get_icon("stamp", 16, "#2563EB"), f"스탬프 추가 (№ {self.next_stamp_index})")
         act_add_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#2563EB"), "말풍선 추가...")
         act_add_text = menu.addAction(RibbonIconProvider.get_icon("text", 16, "#2563EB"), "텍스트 추가...")
         act_add_hotkey = menu.addAction(RibbonIconProvider.get_icon("hotkey", 16, "#2563EB"), "단축키 배지 추가...")
         act_ocr_cursor = menu.addAction(RibbonIconProvider.get_icon("ocr", 16, "#2563EB"), "커서 위치 OCR 인식")
-
-        menu.addSeparator()
-
-        # 3. 클립보드 이미지 붙여넣기
-        clipboard = QGuiApplication.clipboard()
-        has_cb_img = bool(clipboard.mimeData() and clipboard.mimeData().hasImage())
-        act_paste = menu.addAction(RibbonIconProvider.get_icon("copy_image", 16, "#2563EB"), "클립보드 이미지 붙여넣기 (Ctrl+V)")
-        act_paste.setEnabled(has_cb_img)
-
-        menu.addSeparator()
-
-        # 4. 히스토리 & 스탬프 리셋
-        act_undo = menu.addAction(RibbonIconProvider.get_icon("undo", 16, "#2563EB"), "실행 취소 (Ctrl+Z)")
-        act_undo.setEnabled(len(self.history) > 0)
         try:
             chosen = menu.exec_(global_pos)
         finally:
@@ -8812,6 +8824,10 @@ class StudioCanvasWidget(QWidget):
 
         if act_excel_range and chosen == act_excel_range:
             self.show_excel_range_smart_menu(self._active_excel_range, global_pos)
+            return
+
+        if act_copy_slide and chosen == act_copy_slide:
+            self.copy_slide_to_clipboard()
             return
 
         if chosen in tool_actions:
@@ -8894,9 +8910,6 @@ class StudioCanvasWidget(QWidget):
                 self.update()
                 self.sig_content_changed.emit()
                 self.sig_request_toast.emit(f"이미지 붙여넣기 완료 ({pw}×{ph}px)")
-
-        elif chosen == act_undo:
-            self.undo()
 
         elif chosen == act_reset_stamp:
             self.next_stamp_index = 1
