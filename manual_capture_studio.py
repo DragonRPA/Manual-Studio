@@ -8207,6 +8207,12 @@ class StudioCanvasWidget(QWidget):
                 self.set_mode("SELECT")
 
             elif self.current_mode == "SELECT":
+                # 0. 엑셀 셀 범위 상단 배지([우클릭]) 클릭 시 즉시 엑셀 범위 스마트 메뉴 표출
+                if getattr(self, "_active_excel_range", None) and self._is_pt_in_excel_range_badge(self._active_excel_range, pt):
+                    global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                    self.show_excel_range_smart_menu(self._active_excel_range, global_pt)
+                    return
+
                 # 1. 이미 선택된 ImageOverlayItem의 4각 코너 리사이즈 핸들 클릭 여부 확인
                 if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
                     handle = self.selected_item.get_handle_at(QPointF(pt))
@@ -8257,8 +8263,7 @@ class StudioCanvasWidget(QWidget):
                         self.selected_items.clear()
                         self.selected_item = None
                         if getattr(self, "_active_excel_range", None):
-                            r_rect = self._active_excel_range.get("rect")
-                            if not (r_rect and r_rect.contains(pt)):
+                            if not self._is_pt_in_excel_range(self._active_excel_range, pt):
                                 self._active_excel_range = None
                         self.rubber_band_active = True
                         self.rubber_band_start = pt
@@ -8297,10 +8302,9 @@ class StudioCanvasWidget(QWidget):
             is_ctrl = self.is_ctrl_down()
             global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
 
-            # 0. 엑셀 셀 범위가 지정되어 있고, 우클릭 위치가 해당 범위 내이거나 인접한 경우: 엑셀 범위 스마트 추천 메뉴
+            # 0. 엑셀 셀 범위가 지정되어 있고, 우클릭 위치가 해당 범위 내이거나 상단 배지인 경우: 엑셀 범위 스마트 추천 메뉴
             if getattr(self, "_active_excel_range", None):
-                range_rect = self._active_excel_range.get("rect")
-                if range_rect and range_rect.adjusted(-12, -12, 12, 12).contains(pt):
+                if self._is_pt_in_excel_range(self._active_excel_range, pt):
                     self.show_excel_range_smart_menu(self._active_excel_range, global_pt)
                     return
 
@@ -8747,7 +8751,7 @@ class StudioCanvasWidget(QWidget):
         if getattr(self, "_active_excel_range", None):
             r_str = self._active_excel_range.get("range_str", "")
             c_cnt = self._active_excel_range.get("cell_count", 0)
-            act_excel_range = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), f"엑셀 범위 스마트 작업 ({r_str} · {c_cnt}개 셀)...")
+            act_excel_range = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), f"엑셀 범위 작업 ({r_str} · {c_cnt}개 셀)...")
             menu.addSeparator()
 
         # 1. 도구 전환 서브메뉴
@@ -8976,11 +8980,13 @@ class StudioCanvasWidget(QWidget):
         min_y = min(c["rect"].top() for c in matched_cells)
         max_x = max(c["rect"].right() for c in matched_cells)
         max_y = max(c["rect"].bottom() for c in matched_cells)
-        union_rect = QRect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
+        union_rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        int_rect = QRect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
 
         return {
             "range_str": range_str,
             "rect": union_rect,
+            "int_rect": int_rect,
             "cells": [c["element"] for c in matched_cells],
             "cell_entries": matched_cells,
             "min_col_idx": min_col_idx,
@@ -9016,16 +9022,69 @@ class StudioCanvasWidget(QWidget):
         full_rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
         return self._detect_excel_range_in_rect(full_rect)
 
+    def _get_excel_range_hit_areas(self, range_info: dict):
+        """엑셀 범위 사각형(rng_rect)과 상단 정보 배지(badge_rect)의 QRectF를 반환 (SSOT)"""
+        if not range_info:
+            return None, None
+        raw_rect = range_info.get("rect")
+        if not raw_rect:
+            return None, None
+        rng_rect = QRectF(raw_rect)
+        range_str = range_info.get("range_str", "")
+        c_cnt = range_info.get("cell_count", 0)
+
+        tag_text = f"[엑셀 범위] {range_str} ({c_cnt}개 셀 · {int(rng_rect.width())}×{int(rng_rect.height())}) [우클릭]"
+        font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+        b_font = QFont(font_family, 9, QFont.Bold)
+        fm = QFontMetrics(b_font)
+        txt_w = fm.horizontalAdvance(tag_text) + 14
+        txt_h = 20.0
+
+        badge_x = rng_rect.left()
+        if rng_rect.top() >= txt_h + 4:
+            badge_y = rng_rect.top() - txt_h - 2.0
+        else:
+            badge_y = rng_rect.top() + 2.0
+        badge_rect = QRectF(badge_x, badge_y, float(txt_w), txt_h)
+        return rng_rect, badge_rect
+
+    def _is_pt_in_excel_range(self, range_info: dict, pt: QPointF, margin: float = 12.0) -> bool:
+        """주어진 좌표가 엑셀 범위 본문 또는 상단 배지 영역에 포함되는지 정밀 판별"""
+        if not range_info or pt is None:
+            return False
+        rng_rect, badge_rect = self._get_excel_range_hit_areas(range_info)
+        if not rng_rect:
+            return False
+        pt_f = QPointF(pt)
+        if rng_rect.adjusted(-margin, -margin, margin, margin).contains(pt_f):
+            return True
+        if badge_rect and badge_rect.adjusted(-4, -4, 4, 4).contains(pt_f):
+            return True
+        return False
+
+    def _is_pt_in_excel_range_badge(self, range_info: dict, pt: QPointF) -> bool:
+        """주어진 좌표가 상단 정보 배지([엑셀 범위 ... 우클릭]) 영역 내에 위치하는지 판별"""
+        if not range_info or pt is None:
+            return False
+        _, badge_rect = self._get_excel_range_hit_areas(range_info)
+        if not badge_rect:
+            return False
+        pt_f = QPointF(pt)
+        return badge_rect.adjusted(-4, -4, 4, 4).contains(pt_f)
+
     def show_excel_range_smart_menu(self, range_info: dict, global_pos: QPoint):
         """가로세로로 연결된 엑셀 셀들의 집합(범위)에 대한 UIA 우클릭 스마트 작업 메뉴 표출"""
         if not range_info:
             return
         range_str = range_info.get("range_str", "")
-        union_rect = range_info.get("rect", QRect())
+        raw_rect = range_info.get("rect", QRectF())
+        union_rect = QRectF(raw_rect)
         cell_count = range_info.get("cell_count", 0)
         row_count = range_info.get("row_count", 0)
         col_count = range_info.get("col_count", 0)
+        rx, ry = int(union_rect.x()), int(union_rect.y())
         rw, rh = int(union_rect.width()), int(union_rect.height())
+        int_rect = QRect(rx, ry, rw, rh)
 
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -9065,15 +9124,15 @@ class StudioCanvasWidget(QWidget):
         act_hdr.setEnabled(False)
         menu.addSeparator()
 
-        # 2. 가이드 일괄 생성 (스탬프+전체박스+설명문)
+        # 2. 핵심 가이드 일괄 생성 (스탬프 / 우클릭)
         act_bundle = menu.addAction(RibbonIconProvider.get_icon("flowchart", 16, "#107C41"), "가이드 일괄 생성 (스탬프+범위박스+설명문)")
+        act_rclick_guide = menu.addAction(RibbonIconProvider.get_icon("rclick", 16, "#D97706"), "우클릭 조작 지시 생성 (범위박스+우클릭+말풍선)")
         menu.addSeparator()
 
         # 3. 주석 배치 옵션
         act_box = menu.addAction(RibbonIconProvider.get_icon("box", 16, "#107C41"), f"범위 강조 박스 맞춤 ({range_str})")
         act_grid_boxes = menu.addAction(RibbonIconProvider.get_icon("grid", 16, "#107C41"), f"개별 셀 일괄 박스 맞춤 ({cell_count}개)")
         act_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#107C41"), "설명 말풍선 배치")
-        act_rclick_guide = menu.addAction(RibbonIconProvider.get_icon("hotkey", 16, "#D97706"), f"우클릭 조작 지시 배치 (R-CLICK+말풍선)")
 
         menu.addSeparator()
 
@@ -9093,6 +9152,8 @@ class StudioCanvasWidget(QWidget):
 
         if chosen == act_bundle:
             self._add_excel_range_bundle(range_info)
+        elif chosen == act_rclick_guide:
+            self._add_excel_range_rclick_guide(range_info)
         elif chosen == act_box:
             self.push_undo()
             box_style = {
@@ -9100,7 +9161,7 @@ class StudioCanvasWidget(QWidget):
                 "border_width": self.current_box_width,
                 "fill": False
             }
-            b_item = HighlightBoxItem(QRect(union_rect), box_style)
+            b_item = HighlightBoxItem(int_rect, box_style)
             self.items.append(b_item)
             self.selected_item = b_item
             self.sig_item_selected.emit(b_item)
@@ -9116,9 +9177,9 @@ class StudioCanvasWidget(QWidget):
             }
             for c_entry in range_info.get("cell_entries", []):
                 el = c_entry.get("element", {})
-                rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
-                if rw > 0 and rh > 0:
-                    self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
+                cell_rx, cell_ry, cell_rw, cell_rh = el.get("rect", [0, 0, 0, 0])
+                if cell_rw > 0 and cell_rh > 0:
+                    self.items.append(HighlightBoxItem(QRect(cell_rx, cell_ry, cell_rw, cell_rh), box_style))
             self.update()
             self.sig_content_changed.emit()
             self.sig_request_toast.emit(f"개별 셀 {cell_count}개 박스 배치 완료")
@@ -9129,13 +9190,13 @@ class StudioCanvasWidget(QWidget):
             th = 40.0
             cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
             ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
-            target_pt = QPointF(union_rect.x() + union_rect.width() / 2.0, union_rect.y() + union_rect.height() / 2.0)
-            if union_rect.right() + tw + 20 <= cw:
-                c_rect = QRectF(union_rect.right() + 20, union_rect.top() + (union_rect.height() - th) / 2.0, tw, th)
-            elif union_rect.left() - tw - 20 >= 0:
-                c_rect = QRectF(union_rect.left() - tw - 20, union_rect.top() + (union_rect.height() - th) / 2.0, tw, th)
+            target_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+            if rx + rw + tw + 20 <= cw:
+                c_rect = QRectF(rx + rw + 20, ry + (rh - th) / 2.0, tw, th)
+            elif rx - tw - 20 >= 0:
+                c_rect = QRectF(rx - tw - 20, ry + (rh - th) / 2.0, tw, th)
             else:
-                c_rect = QRectF(max(10.0, min(cw - tw - 10.0, union_rect.left() + (union_rect.width() - tw) / 2.0)), min(ch - th - 10.0, union_rect.bottom() + 20.0), tw, th)
+                c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rx + (rw - tw) / 2.0)), min(ch - th - 10.0, ry + rh + 20.0), tw, th)
             callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
             callout_st["border_color"] = "#107C41"
             callout_st["border_width"] = 2
@@ -9145,11 +9206,9 @@ class StudioCanvasWidget(QWidget):
             self.sig_item_selected.emit(c_item)
             self.update()
             self.sig_content_changed.emit()
-        elif chosen == act_rclick_guide:
-            self._add_excel_range_rclick_guide(range_info)
         elif chosen == act_blur:
             self.push_undo()
-            blur_item = BlurMosaicItem(QRect(union_rect), {"block_size": 12})
+            blur_item = BlurMosaicItem(int_rect, {"block_size": 12})
             self.items.append(blur_item)
             self.selected_item = blur_item
             self.sig_item_selected.emit(blur_item)
@@ -9160,7 +9219,7 @@ class StudioCanvasWidget(QWidget):
             self._redact_pii_in_excel_range(range_info)
         elif chosen == act_spotlight:
             self.push_undo()
-            spot_item = SpotlightMaskItem(QRect(union_rect))
+            spot_item = SpotlightMaskItem(int_rect)
             self.items.append(spot_item)
             self.selected_item = spot_item
             self.sig_item_selected.emit(spot_item)
@@ -9174,6 +9233,10 @@ class StudioCanvasWidget(QWidget):
         """엑셀 범위 가이드 일괄 생성 (스탬프+전체박스+설명문)"""
         self.push_undo()
         rect = range_info["rect"]
+        rx = int(rect.x())
+        ry = int(rect.y())
+        rw = int(rect.width())
+        rh = int(rect.height())
         range_str = range_info["range_str"]
 
         # 1) 전체 외곽 강조 박스
@@ -9182,12 +9245,12 @@ class StudioCanvasWidget(QWidget):
             "border_width": 3,
             "fill": False
         }
-        self.items.append(HighlightBoxItem(QRect(rect), box_style))
+        self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
 
         # 2) 스탬프
         stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
         stamp_style["bg_color"] = "#107C41"
-        self.items.append(StampItem(self.next_stamp_index, rect.x(), rect.y(), stamp_style))
+        self.items.append(StampItem(self.next_stamp_index, rx, ry, stamp_style))
         self.next_stamp_index += 1
 
         # 3) 설명 말풍선
@@ -9197,13 +9260,13 @@ class StudioCanvasWidget(QWidget):
         cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
         ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
 
-        target_pt = QPointF(rect.x() + rect.width() / 2.0, rect.y() + rect.height() / 2.0)
-        if rect.right() + tw + 20 <= cw:
-            c_rect = QRectF(rect.right() + 20, rect.top() + (rect.height() - th) / 2.0, tw, th)
-        elif rect.left() - tw - 20 >= 0:
-            c_rect = QRectF(rect.left() - tw - 20, rect.top() + (rect.height() - th) / 2.0, tw, th)
+        target_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+        if rx + rw + tw + 20 <= cw:
+            c_rect = QRectF(rx + rw + 20, ry + (rh - th) / 2.0, tw, th)
+        elif rx - tw - 20 >= 0:
+            c_rect = QRectF(rx - tw - 20, ry + (rh - th) / 2.0, tw, th)
         else:
-            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rect.left() + (rect.width() - tw) / 2.0)), min(ch - th - 10.0, rect.bottom() + 20.0), tw, th)
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rx + (rw - tw) / 2.0)), min(ch - th - 10.0, ry + rh + 20.0), tw, th)
 
         callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
         callout_st["border_color"] = "#107C41"
@@ -9215,21 +9278,33 @@ class StudioCanvasWidget(QWidget):
         self.sig_request_toast.emit(f"엑셀 범위 가이드 일괄 생성 완료: {range_str}")
 
     def _add_excel_range_rclick_guide(self, range_info: dict):
-        """엑셀 범위 우클릭 조작 지시 배치 (R-CLICK 인디케이터 + 말풍선)"""
+        """엑셀 범위 우클릭 조작 지시 배치 (범위박스 + 우클릭 인디케이터 + 말풍선)"""
         self.push_undo()
         rect = range_info["rect"]
-        cx = rect.x() + rect.width() / 2.0
-        cy = rect.y() + rect.height() / 2.0
+        rx = int(rect.x())
+        ry = int(rect.y())
+        rw = int(rect.width())
+        rh = int(rect.height())
+        cx = rx + rw / 2.0
+        cy = ry + rh / 2.0
 
-        # 1) 우클릭 파동 인디케이터
+        # 1) 범위 외곽 강조 박스 (호박색 #D97706)
+        box_style = {
+            "color": "#D97706",
+            "border_width": 2,
+            "fill": False
+        }
+        self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
+
+        # 2) 우클릭 파동 인디케이터
         rclick_style = {
             "color": "#D97706",
-            "size": 40,
+            "size": 36,
             "label": "우클릭"
         }
         self.items.append(ClickRippleItem(cx, cy, "right", rclick_style))
 
-        # 2) 설명 말풍선
+        # 3) 설명 말풍선
         range_str = range_info["range_str"]
         action_text = f"'{range_str}' 영역 우클릭 메뉴 선택"
         tw = max(130.0, float(len(action_text) * 13 + 24))
@@ -9243,7 +9318,7 @@ class StudioCanvasWidget(QWidget):
         elif cx - 50 - tw >= 0:
             c_rect = QRectF(cx - 50 - tw, cy - th / 2.0, tw, th)
         else:
-            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, cx - tw / 2.0)), min(ch - th - 10.0, rect.bottom() + 15.0), tw, th)
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, cx - tw / 2.0)), min(ch - th - 10.0, ry + rh + 15.0), tw, th)
 
         callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
         callout_st["border_color"] = "#D97706"
@@ -10300,59 +10375,50 @@ class StudioCanvasWidget(QWidget):
             # 2.6. 엑셀 셀 범위(Range) 하이라이트 및 배지 시각화
             if getattr(self, "_active_excel_range", None):
                 range_info = self._active_excel_range
-                rng_rect = QRectF(range_info["rect"])
-                range_str = range_info.get("range_str", "")
-                c_cnt = range_info.get("cell_count", 0)
+                rng_rect, badge_rect = self._get_excel_range_hit_areas(range_info)
+                if rng_rect:
+                    range_str = range_info.get("range_str", "")
+                    c_cnt = range_info.get("cell_count", 0)
 
-                painter.save()
-                # 1) 전체 범위 반투명 에메랄드 배경 및 대시 외곽선
-                painter.setPen(QPen(QColor("#107C41"), 2.0, Qt.DashLine))
-                painter.setBrush(QColor(16, 124, 65, 30))
-                painter.drawRect(rng_rect)
+                    painter.save()
+                    # 1) 전체 범위 반투명 에메랄드 배경 및 대시 외곽선
+                    painter.setPen(QPen(QColor("#107C41"), 2.0, Qt.DashLine))
+                    painter.setBrush(QColor(16, 124, 65, 30))
+                    painter.drawRect(rng_rect)
 
-                # 2) 범위 내 각 셀 경계선 점선 표시
-                painter.setPen(QPen(QColor(16, 124, 65, 60), 1.0, Qt.DotLine))
-                painter.setBrush(Qt.NoBrush)
-                for c_entry in range_info.get("cell_entries", []):
-                    c_r = c_entry.get("rect")
-                    if c_r:
-                        painter.drawRect(c_r)
+                    # 2) 범위 내 각 셀 경계선 점선 표시
+                    painter.setPen(QPen(QColor(16, 124, 65, 60), 1.0, Qt.DotLine))
+                    painter.setBrush(Qt.NoBrush)
+                    for c_entry in range_info.get("cell_entries", []):
+                        c_r = c_entry.get("rect")
+                        if c_r:
+                            painter.drawRect(c_r)
 
-                # 3) 모서리 강조 브래킷
-                c_len = min(14.0, min(rng_rect.width(), rng_rect.height()) / 3.0)
-                p_corner = QPen(QColor("#0E6233"), 3.0)
-                painter.setPen(p_corner)
-                painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left() + c_len, rng_rect.top()))
-                painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left(), rng_rect.top() + c_len))
-                painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right() - c_len, rng_rect.top()))
-                painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right(), rng_rect.top() + c_len))
-                painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() + c_len, rng_rect.bottom()))
-                painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() - c_len, rng_rect.bottom()))
-                painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right() - c_len, rng_rect.bottom()))
-                painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right(), rng_rect.bottom() - c_len))
+                    # 3) 모서리 강조 브래킷
+                    c_len = min(14.0, min(rng_rect.width(), rng_rect.height()) / 3.0)
+                    p_corner = QPen(QColor("#0E6233"), 3.0)
+                    painter.setPen(p_corner)
+                    painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left() + c_len, rng_rect.top()))
+                    painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left(), rng_rect.top() + c_len))
+                    painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right() - c_len, rng_rect.top()))
+                    painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right(), rng_rect.top() + c_len))
+                    painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() + c_len, rng_rect.bottom()))
+                    painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() - c_len, rng_rect.bottom()))
+                    painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right() - c_len, rng_rect.bottom()))
+                    painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right(), rng_rect.bottom() - c_len))
 
-                # 4) 정보 배지 ([엑셀 범위] A2:D10 (36개 셀 · 480×220))
-                tag_text = f"[엑셀 범위] {range_str} ({c_cnt}개 셀 · {int(rng_rect.width())}×{int(rng_rect.height())}) [우클릭]"
-                font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
-                b_font = QFont(font_family, 9, QFont.Bold)
-                fm = QFontMetrics(b_font)
-                txt_w = fm.horizontalAdvance(tag_text) + 14
-                txt_h = 20
+                    # 4) 정보 배지 ([엑셀 범위] A2:D10 (36개 셀 · 480×220) [우클릭])
+                    tag_text = f"[엑셀 범위] {range_str} ({c_cnt}개 셀 · {int(rng_rect.width())}×{int(rng_rect.height())}) [우클릭]"
+                    font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+                    b_font = QFont(font_family, 9, QFont.Bold)
 
-                badge_x = rng_rect.left()
-                if rng_rect.top() >= txt_h + 4:
-                    badge_y = rng_rect.top() - txt_h - 2
-                else:
-                    badge_y = rng_rect.top() + 2
-                badge_rect = QRectF(badge_x, badge_y, txt_w, txt_h)
-
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(6, 78, 59, 230))
-                painter.drawRoundedRect(badge_rect, 4, 4)
-                painter.setFont(b_font)
-                painter.setPen(QColor("#FFFFFF"))
-                painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
-                painter.restore()
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(6, 78, 59, 230))
+                    painter.drawRoundedRect(badge_rect, 4, 4)
+                    painter.setFont(b_font)
+                    painter.setPen(QColor("#FFFFFF"))
+                    painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
+                    painter.restore()
 
             # 3. 실시간 드로잉 프리뷰
             if self.drawing_box:
@@ -12192,6 +12258,11 @@ class RibbonIconProvider:
         "export_html": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
         "select_all": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10v10H7z"/>',
         "check": '<polyline points="20 6 9 17 4 12"/>',
+        "table": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
+        "grid": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
+        "shield": '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+        "copy": '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+        "rclick": '<rect width="14" height="20" x="5" y="2" rx="7"/><path d="M12 2v7"/><path d="M12 9h7"/>',
     }
 
     @classmethod
