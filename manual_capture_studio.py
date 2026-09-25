@@ -3048,6 +3048,26 @@ class OcrResultDialog(QDialog):
     def _copy_to_clipboard(self):
         QApplication.clipboard().setText(self.text_edit.toPlainText())
         self.btn_copy.setText(tr("ocr_copy_btn_done", "✓ 복사됨"))
+def excel_col_to_index(col_str: str) -> int:
+    """엑셀 열 알파벳을 1-기반 정수 인덱스로 변환 ('A'->1, 'Z'->26, 'AA'->27)"""
+    col_str = str(col_str or "").upper().strip()
+    idx = 0
+    for ch in col_str:
+        if 'A' <= ch <= 'Z':
+            idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return max(1, idx) if idx > 0 else 1
+
+
+def excel_index_to_col(col_idx: int) -> str:
+    """1-기반 정수 인덱스를 엑셀 열 알파벳으로 변환 (1->'A', 26->'Z', 27->'AA')"""
+    if col_idx <= 0:
+        return "A"
+    chars = []
+    curr = int(col_idx)
+    while curr > 0:
+        curr, rem = divmod(curr - 1, 26)
+        chars.append(chr(ord('A') + rem))
+    return "".join(reversed(chars))
 
 
 class PiiRedactionEngine:
@@ -7237,6 +7257,7 @@ class StudioCanvasWidget(QWidget):
         self.uia_elements = []
         self._active_uia_rect = None
         self._active_uia_el = None
+        self._active_excel_range = None
 
     def is_ctrl_down(self) -> bool:
         """물리적 Ctrl 키의 실시간 눌림 상태를 운영체제 하드웨어 레벨에서 정확히 판정합니다."""
@@ -7261,6 +7282,11 @@ class StudioCanvasWidget(QWidget):
             self._check_uia_hover()
             self.update()
         if event.key() == Qt.Key_Escape:
+            if getattr(self, "_active_excel_range", None):
+                self._active_excel_range = None
+                self.update()
+                event.accept()
+                return
             if self.current_mode != "SELECT":
                 self.sig_request_mode_change.emit("SELECT")
                 event.accept()
@@ -7494,6 +7520,7 @@ class StudioCanvasWidget(QWidget):
 
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
+        self._active_excel_range = None
         if self.pixmap is None or self.pixmap.isNull():
             default_w = self.config.get("target_width", 960)
             default_h = int(default_w * 9 / 16)
@@ -8179,6 +8206,10 @@ class StudioCanvasWidget(QWidget):
                         # 빈 캔버스 클릭 시 선택 해제 및 러버밴드 드래그 시작
                         self.selected_items.clear()
                         self.selected_item = None
+                        if getattr(self, "_active_excel_range", None):
+                            r_rect = self._active_excel_range.get("rect")
+                            if not (r_rect and r_rect.contains(pt)):
+                                self._active_excel_range = None
                         self.rubber_band_active = True
                         self.rubber_band_start = pt
                         self.rubber_band_end = pt
@@ -8215,6 +8246,13 @@ class StudioCanvasWidget(QWidget):
         elif event.button() == Qt.RightButton:
             is_ctrl = self.is_ctrl_down()
             global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+
+            # 0. 엑셀 셀 범위가 지정되어 있고, 우클릭 위치가 해당 범위 내이거나 인접한 경우: 엑셀 범위 스마트 추천 메뉴
+            if getattr(self, "_active_excel_range", None):
+                range_rect = self._active_excel_range.get("rect")
+                if range_rect and range_rect.adjusted(-12, -12, 12, 12).contains(pt):
+                    self.show_excel_range_smart_menu(self._active_excel_range, global_pt)
+                    return
 
             # 1. Ctrl 키다운 상태에서 UIA 객체 우클릭 시: UIA 스마트 추천 메뉴
             if is_ctrl:
@@ -8444,6 +8482,12 @@ class StudioCanvasWidget(QWidget):
         # 4. 부가 기능 (OCR / 블러 / 메타데이터 복사)
         act_ocr = menu.addAction(RibbonIconProvider.get_icon("ocr", 16, "#2563EB"), "OCR 텍스트 추출 및 복사")
         act_blur = menu.addAction(RibbonIconProvider.get_icon("blur", 16, "#2563EB"), "블러 모자이크 처리")
+
+        act_expand_table = None
+        if t_label == "엑셀셀" or el.get("cell_coord"):
+            menu.addSeparator()
+            act_expand_table = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), "연결된 엑셀 표 전체 범위 선택...")
+
         try:
             chosen = menu.exec_(global_pos)
         finally:
@@ -8454,6 +8498,14 @@ class StudioCanvasWidget(QWidget):
                 self.update()
 
         if not chosen:
+            return
+
+        if act_expand_table and chosen == act_expand_table:
+            range_info = self._find_connected_excel_table(el)
+            if range_info:
+                self._active_excel_range = range_info
+                self.update()
+                self.show_excel_range_smart_menu(range_info, global_pos)
             return
 
         cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
@@ -8620,6 +8672,14 @@ class StudioCanvasWidget(QWidget):
             }
         """)
 
+        # 0. 엑셀 셀 범위 지정 시 최우선 액션 노출
+        act_excel_range = None
+        if getattr(self, "_active_excel_range", None):
+            r_str = self._active_excel_range.get("range_str", "")
+            c_cnt = self._active_excel_range.get("cell_count", 0)
+            act_excel_range = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), f"엑셀 범위 스마트 작업 ({r_str} · {c_cnt}개 셀)...")
+            menu.addSeparator()
+
         # 1. 도구 전환 서브메뉴
         menu_tools = menu.addMenu(RibbonIconProvider.get_icon("select", 16, "#2563EB"), "도구 전환")
         menu_tools.setStyleSheet(menu.styleSheet())
@@ -8674,6 +8734,10 @@ class StudioCanvasWidget(QWidget):
                 self.update()
 
         if not chosen:
+            return
+
+        if act_excel_range and chosen == act_excel_range:
+            self.show_excel_range_smart_menu(self._active_excel_range, global_pos)
             return
 
         if chosen in tool_actions:
@@ -8764,6 +8828,406 @@ class StudioCanvasWidget(QWidget):
             self.next_stamp_index = 1
             self.sig_request_toast.emit("스탬프 번호 1 초기화 완료")
 
+    def _detect_excel_range_in_rect(self, rect: QRectF):
+        """지정된 사각 영역에 포함되거나 교차하는 엑셀 셀 집합을 탐색하여 범위 메타데이터 반환"""
+        if not getattr(self, "uia_elements", None):
+            return None
+
+        norm_rect = rect.normalized()
+        if norm_rect.width() < 10 or norm_rect.height() < 10:
+            return None
+
+        matched_cells = []
+        for el in self.uia_elements:
+            t_label = el.get("type_label") or ""
+            coord_str = el.get("cell_coord") or ""
+            name_str = el.get("name") or ""
+
+            # 엑셀 셀 판별
+            if t_label != "엑셀셀" and not coord_str:
+                m = re.search(r'\b([A-Za-z]{1,3}\d+)\b', name_str)
+                if not m:
+                    continue
+                coord_str = m.group(1).upper()
+
+            rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+            if rw <= 0 or rh <= 0:
+                continue
+
+            cell_r = QRectF(rx, ry, rw, rh)
+            center_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+            if norm_rect.contains(center_pt) or norm_rect.intersects(cell_r):
+                inter = norm_rect.intersected(cell_r)
+                if norm_rect.contains(center_pt) or (inter.width() * inter.height() >= 0.20 * rw * rh):
+                    if not coord_str:
+                        m = re.search(r'\b([A-Za-z]{1,3}\d+)\b', name_str)
+                        if m:
+                            coord_str = m.group(1).upper()
+
+                    col_idx, row_num, col_str = None, None, None
+                    if coord_str:
+                        m_cr = re.match(r'^([A-Z]{1,3})(\d+)$', coord_str)
+                        if m_cr:
+                            col_str = m_cr.group(1)
+                            row_num = int(m_cr.group(2))
+                            col_idx = excel_col_to_index(col_str)
+
+                    matched_cells.append({
+                        "element": el,
+                        "coord": coord_str,
+                        "col_str": col_str,
+                        "col_idx": col_idx,
+                        "row_num": row_num,
+                        "rect": cell_r,
+                        "value": el.get("value") or ""
+                    })
+
+        if not matched_cells:
+            return None
+
+        valid_coords = [c for c in matched_cells if c["col_idx"] is not None and c["row_num"] is not None]
+        if not valid_coords:
+            return None
+
+        min_col_idx = min(c["col_idx"] for c in valid_coords)
+        max_col_idx = max(c["col_idx"] for c in valid_coords)
+        min_row_num = min(c["row_num"] for c in valid_coords)
+        max_row_num = max(c["row_num"] for c in valid_coords)
+
+        min_col_str = excel_index_to_col(min_col_idx)
+        max_col_str = excel_index_to_col(max_col_idx)
+
+        if min_col_str == max_col_str and min_row_num == max_row_num:
+            range_str = f"{min_col_str}{min_row_num}"
+        else:
+            range_str = f"{min_col_str}{min_row_num}:{max_col_str}{max_row_num}"
+
+        min_x = min(c["rect"].left() for c in matched_cells)
+        min_y = min(c["rect"].top() for c in matched_cells)
+        max_x = max(c["rect"].right() for c in matched_cells)
+        max_y = max(c["rect"].bottom() for c in matched_cells)
+        union_rect = QRect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
+
+        return {
+            "range_str": range_str,
+            "rect": union_rect,
+            "cells": [c["element"] for c in matched_cells],
+            "cell_entries": matched_cells,
+            "min_col_idx": min_col_idx,
+            "max_col_idx": max_col_idx,
+            "min_row_num": min_row_num,
+            "max_row_num": max_row_num,
+            "col_count": max_col_idx - min_col_idx + 1,
+            "row_count": max_row_num - min_row_num + 1,
+            "cell_count": len(matched_cells)
+        }
+
+    def _find_connected_excel_table(self, start_el: dict):
+        """단일 엑셀 셀로부터 전체 연결된 표 그리드를 탐색하여 범위 정보 반환"""
+        if not getattr(self, "uia_elements", None):
+            return None
+        all_excel_cells = []
+        for el in self.uia_elements:
+            t_label = el.get("type_label") or ""
+            coord_str = el.get("cell_coord") or ""
+            name_str = el.get("name") or ""
+            if t_label == "엑셀셀" or coord_str or re.search(r'\b[A-Za-z]{1,3}\d+\b', name_str):
+                rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+                if rw > 0 and rh > 0:
+                    all_excel_cells.append(el)
+
+        if not all_excel_cells:
+            return None
+
+        min_x = min(el.get("rect")[0] for el in all_excel_cells)
+        min_y = min(el.get("rect")[1] for el in all_excel_cells)
+        max_x = max(el.get("rect")[0] + el.get("rect")[2] for el in all_excel_cells)
+        max_y = max(el.get("rect")[1] + el.get("rect")[3] for el in all_excel_cells)
+        full_rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        return self._detect_excel_range_in_rect(full_rect)
+
+    def show_excel_range_smart_menu(self, range_info: dict, global_pos: QPoint):
+        """가로세로로 연결된 엑셀 셀들의 집합(범위)에 대한 UIA 우클릭 스마트 작업 메뉴 표출"""
+        if not range_info:
+            return
+        range_str = range_info.get("range_str", "")
+        union_rect = range_info.get("rect", QRect())
+        cell_count = range_info.get("cell_count", 0)
+        row_count = range_info.get("row_count", 0)
+        col_count = range_info.get("col_count", 0)
+        rw, rh = int(union_rect.width()), int(union_rect.height())
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #107C41;
+                color: #FFFFFF;
+            }
+            QMenu::item:disabled {
+                color: #064E3B;
+                font-weight: bold;
+                background-color: #ECFDF5;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """)
+
+        # 1. 헤더 (범위 정보)
+        hdr_title = f"[엑셀 셀 범위] {range_str} ({cell_count}개 셀 · {rw}×{rh})"
+        act_hdr = menu.addAction(hdr_title)
+        act_hdr.setEnabled(False)
+        menu.addSeparator()
+
+        # 2. 가이드 일괄 생성 (스탬프+전체박스+설명문)
+        act_bundle = menu.addAction(RibbonIconProvider.get_icon("flowchart", 16, "#107C41"), "가이드 일괄 생성 (스탬프+범위박스+설명문)")
+        menu.addSeparator()
+
+        # 3. 주석 배치 옵션
+        act_box = menu.addAction(RibbonIconProvider.get_icon("box", 16, "#107C41"), f"범위 강조 박스 맞춤 ({range_str})")
+        act_grid_boxes = menu.addAction(RibbonIconProvider.get_icon("grid", 16, "#107C41"), f"개별 셀 일괄 박스 맞춤 ({cell_count}개)")
+        act_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#107C41"), "설명 말풍선 배치")
+        act_rclick_guide = menu.addAction(RibbonIconProvider.get_icon("hotkey", 16, "#D97706"), f"우클릭 조작 지시 배치 (R-CLICK+말풍선)")
+
+        menu.addSeparator()
+
+        # 4. 마스킹 & 보호 & 조명
+        act_blur = menu.addAction(RibbonIconProvider.get_icon("blur", 16, "#107C41"), f"범위 일괄 블러 마스킹 ({rw}×{rh})")
+        act_pii = menu.addAction(RibbonIconProvider.get_icon("shield", 16, "#DC2626"), "범위 내 개인정보(PII) 자동 마스킹")
+        act_spotlight = menu.addAction(RibbonIconProvider.get_icon("spotlight", 16, "#107C41"), "범위 스포트라이트 조명 맞춤")
+
+        menu.addSeparator()
+
+        # 5. 데이터 복사 (TSV 표 형식)
+        act_copy_tsv = menu.addAction(RibbonIconProvider.get_icon("copy", 16, "#107C41"), f"범위 데이터 표 복사 (TSV · {row_count}행 {col_count}열)")
+
+        chosen = menu.exec_(global_pos)
+        if not chosen:
+            return
+
+        if chosen == act_bundle:
+            self._add_excel_range_bundle(range_info)
+        elif chosen == act_box:
+            self.push_undo()
+            box_style = {
+                "color": "#107C41",
+                "border_width": self.current_box_width,
+                "fill": False
+            }
+            b_item = HighlightBoxItem(QRect(union_rect), box_style)
+            self.items.append(b_item)
+            self.selected_item = b_item
+            self.sig_item_selected.emit(b_item)
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"범위 강조 박스 배치 완료: {range_str}")
+        elif chosen == act_grid_boxes:
+            self.push_undo()
+            box_style = {
+                "color": "#107C41",
+                "border_width": 2,
+                "fill": False
+            }
+            for c_entry in range_info.get("cell_entries", []):
+                el = c_entry.get("element", {})
+                rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+                if rw > 0 and rh > 0:
+                    self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"개별 셀 {cell_count}개 박스 배치 완료")
+        elif chosen == act_callout:
+            self.push_undo()
+            action_text = f"'{range_str}' 데이터 영역 확인"
+            tw = max(120.0, float(len(action_text) * 13 + 24))
+            th = 40.0
+            cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+            ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+            target_pt = QPointF(union_rect.x() + union_rect.width() / 2.0, union_rect.y() + union_rect.height() / 2.0)
+            if union_rect.right() + tw + 20 <= cw:
+                c_rect = QRectF(union_rect.right() + 20, union_rect.top() + (union_rect.height() - th) / 2.0, tw, th)
+            elif union_rect.left() - tw - 20 >= 0:
+                c_rect = QRectF(union_rect.left() - tw - 20, union_rect.top() + (union_rect.height() - th) / 2.0, tw, th)
+            else:
+                c_rect = QRectF(max(10.0, min(cw - tw - 10.0, union_rect.left() + (union_rect.width() - tw) / 2.0)), min(ch - th - 10.0, union_rect.bottom() + 20.0), tw, th)
+            callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+            callout_st["border_color"] = "#107C41"
+            callout_st["border_width"] = 2
+            c_item = CalloutItem(action_text, c_rect, target_pt, callout_st)
+            self.items.append(c_item)
+            self.selected_item = c_item
+            self.sig_item_selected.emit(c_item)
+            self.update()
+            self.sig_content_changed.emit()
+        elif chosen == act_rclick_guide:
+            self._add_excel_range_rclick_guide(range_info)
+        elif chosen == act_blur:
+            self.push_undo()
+            blur_item = BlurMosaicItem(QRect(union_rect), {"block_size": 12})
+            self.items.append(blur_item)
+            self.selected_item = blur_item
+            self.sig_item_selected.emit(blur_item)
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"엑셀 범위 '{range_str}' 블러 마스킹 완료")
+        elif chosen == act_pii:
+            self._redact_pii_in_excel_range(range_info)
+        elif chosen == act_spotlight:
+            self.push_undo()
+            spot_item = SpotlightMaskItem(QRect(union_rect))
+            self.items.append(spot_item)
+            self.selected_item = spot_item
+            self.sig_item_selected.emit(spot_item)
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"엑셀 범위 '{range_str}' 스포트라이트 적용 완료")
+        elif chosen == act_copy_tsv:
+            self._copy_excel_range_tsv(range_info)
+
+    def _add_excel_range_bundle(self, range_info: dict):
+        """엑셀 범위 가이드 일괄 생성 (스탬프+전체박스+설명문)"""
+        self.push_undo()
+        rect = range_info["rect"]
+        range_str = range_info["range_str"]
+
+        # 1) 전체 외곽 강조 박스
+        box_style = {
+            "color": "#107C41",
+            "border_width": 3,
+            "fill": False
+        }
+        self.items.append(HighlightBoxItem(QRect(rect), box_style))
+
+        # 2) 스탬프
+        stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+        stamp_style["bg_color"] = "#107C41"
+        self.items.append(StampItem(self.next_stamp_index, rect.x(), rect.y(), stamp_style))
+        self.next_stamp_index += 1
+
+        # 3) 설명 말풍선
+        action_text = f"'{range_str}' 데이터 영역 확인"
+        tw = max(120.0, float(len(action_text) * 13 + 24))
+        th = 40.0
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+
+        target_pt = QPointF(rect.x() + rect.width() / 2.0, rect.y() + rect.height() / 2.0)
+        if rect.right() + tw + 20 <= cw:
+            c_rect = QRectF(rect.right() + 20, rect.top() + (rect.height() - th) / 2.0, tw, th)
+        elif rect.left() - tw - 20 >= 0:
+            c_rect = QRectF(rect.left() - tw - 20, rect.top() + (rect.height() - th) / 2.0, tw, th)
+        else:
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rect.left() + (rect.width() - tw) / 2.0)), min(ch - th - 10.0, rect.bottom() + 20.0), tw, th)
+
+        callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+        callout_st["border_color"] = "#107C41"
+        callout_st["border_width"] = 2
+        self.items.append(CalloutItem(action_text, c_rect, target_pt, callout_st))
+
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"엑셀 범위 가이드 일괄 생성 완료: {range_str}")
+
+    def _add_excel_range_rclick_guide(self, range_info: dict):
+        """엑셀 범위 우클릭 조작 지시 배치 (R-CLICK 인디케이터 + 말풍선)"""
+        self.push_undo()
+        rect = range_info["rect"]
+        cx = rect.x() + rect.width() / 2.0
+        cy = rect.y() + rect.height() / 2.0
+
+        # 1) 우클릭 파동 인디케이터
+        rclick_style = {
+            "color": "#D97706",
+            "size": 40,
+            "label": "우클릭"
+        }
+        self.items.append(ClickRippleItem(cx, cy, "right", rclick_style))
+
+        # 2) 설명 말풍선
+        range_str = range_info["range_str"]
+        action_text = f"'{range_str}' 영역 우클릭 메뉴 선택"
+        tw = max(130.0, float(len(action_text) * 13 + 24))
+        th = 40.0
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+
+        target_pt = QPointF(cx, cy)
+        if cx + 50 + tw <= cw:
+            c_rect = QRectF(cx + 50, cy - th / 2.0, tw, th)
+        elif cx - 50 - tw >= 0:
+            c_rect = QRectF(cx - 50 - tw, cy - th / 2.0, tw, th)
+        else:
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, cx - tw / 2.0)), min(ch - th - 10.0, rect.bottom() + 15.0), tw, th)
+
+        callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+        callout_st["border_color"] = "#D97706"
+        callout_st["border_width"] = 2
+        self.items.append(CalloutItem(action_text, c_rect, target_pt, callout_st))
+
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"우클릭 조작 지시 배치 완료 ({range_str})")
+
+    def _redact_pii_in_excel_range(self, range_info: dict):
+        """엑셀 범위 내 개인정보(PII) 탐지 및 자동 블러 마스킹"""
+        cells = range_info.get("cells", [])
+        if not cells:
+            return
+        rects = PiiRedactionEngine.detect_pii_from_uia(cells)
+        if not rects:
+            self.sig_request_toast.emit(f"엑셀 범위 '{range_info['range_str']}' 내 감지된 개인정보 없음")
+            return
+
+        self.push_undo()
+        for r in rects:
+            self.items.append(BlurMosaicItem(r, {"block_size": 10}))
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"엑셀 범위 내 개인정보 {len(rects)}건 마스킹 완료 (Ctrl+Z 취소)")
+
+    def _copy_excel_range_tsv(self, range_info: dict):
+        """엑셀 범위 데이터를 2D 그리드 TSV(탭 구분 텍스트) 형식으로 클립보드에 복사"""
+        min_col = range_info["min_col_idx"]
+        max_col = range_info["max_col_idx"]
+        min_row = range_info["min_row_num"]
+        max_row = range_info["max_row_num"]
+
+        rows = max_row - min_row + 1
+        cols = max_col - min_col + 1
+        grid = [["" for _ in range(cols)] for _ in range(rows)]
+
+        for c in range_info.get("cell_entries", []):
+            c_col = c.get("col_idx")
+            c_row = c.get("row_num")
+            val = str(c.get("value") or "").replace("\t", " ").replace("\r\n", " ").replace("\n", " ")
+            if c_col is not None and c_row is not None:
+                r_idx = c_row - min_row
+                col_idx = c_col - min_col
+                if 0 <= r_idx < rows and 0 <= col_idx < cols:
+                    grid[r_idx][col_idx] = val
+
+        tsv_lines = ["\t".join(row) for row in grid]
+        tsv_text = "\r\n".join(tsv_lines)
+
+        QGuiApplication.clipboard().setText(tsv_text)
+        self.sig_request_toast.emit(f"엑셀 범위 '{range_info['range_str']}' 데이터 표 복사 완료 ({rows}행 {cols}열)")
+
     def mouseMoveEvent(self, event):
         pt = self.get_canvas_pt(event)
         if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle and isinstance(self.selected_item, ImageOverlayItem):
@@ -8792,6 +9256,13 @@ class StudioCanvasWidget(QWidget):
                 self.selected_items = hit_list
             self.selected_item = self.selected_items[-1] if self.selected_items else None
             self.sig_item_selected.emit(self.selected_item)
+
+            # 엑셀 셀 범위 실시간 감지
+            if rb_rect.width() > 10 and rb_rect.height() > 10:
+                self._active_excel_range = self._detect_excel_range_in_rect(rb_rect)
+            else:
+                self._active_excel_range = None
+
             self.update()
             return
         elif self.dragging_item and self.current_mode == "SELECT":
@@ -8958,6 +9429,10 @@ class StudioCanvasWidget(QWidget):
         if event.button() == Qt.LeftButton:
             if getattr(self, "rubber_band_active", False):
                 self.rubber_band_active = False
+                if getattr(self, "_active_excel_range", None):
+                    r_str = self._active_excel_range.get("range_str", "")
+                    c_cnt = self._active_excel_range.get("cell_count", 0)
+                    self.sig_request_toast.emit(f"엑셀 셀 범위 지정: {r_str} ({c_cnt}개 셀) — 우클릭 스마트 메뉴")
                 self.update()
             if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle:
                 self.resizing_overlay_handle = None
@@ -9747,6 +10222,63 @@ class StudioCanvasWidget(QWidget):
                 painter.setBrush(QColor(15, 23, 42, 220))
                 painter.drawRoundedRect(badge_rect, 3, 3)
 
+                painter.setFont(b_font)
+                painter.setPen(QColor("#FFFFFF"))
+                painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
+                painter.restore()
+
+            # 2.6. 엑셀 셀 범위(Range) 하이라이트 및 배지 시각화
+            if getattr(self, "_active_excel_range", None):
+                range_info = self._active_excel_range
+                rng_rect = QRectF(range_info["rect"])
+                range_str = range_info.get("range_str", "")
+                c_cnt = range_info.get("cell_count", 0)
+
+                painter.save()
+                # 1) 전체 범위 반투명 에메랄드 배경 및 대시 외곽선
+                painter.setPen(QPen(QColor("#107C41"), 2.0, Qt.DashLine))
+                painter.setBrush(QColor(16, 124, 65, 30))
+                painter.drawRect(rng_rect)
+
+                # 2) 범위 내 각 셀 경계선 점선 표시
+                painter.setPen(QPen(QColor(16, 124, 65, 60), 1.0, Qt.DotLine))
+                painter.setBrush(Qt.NoBrush)
+                for c_entry in range_info.get("cell_entries", []):
+                    c_r = c_entry.get("rect")
+                    if c_r:
+                        painter.drawRect(c_r)
+
+                # 3) 모서리 강조 브래킷
+                c_len = min(14.0, min(rng_rect.width(), rng_rect.height()) / 3.0)
+                p_corner = QPen(QColor("#0E6233"), 3.0)
+                painter.setPen(p_corner)
+                painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left() + c_len, rng_rect.top()))
+                painter.drawLine(QPointF(rng_rect.left(), rng_rect.top()), QPointF(rng_rect.left(), rng_rect.top() + c_len))
+                painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right() - c_len, rng_rect.top()))
+                painter.drawLine(QPointF(rng_rect.right(), rng_rect.top()), QPointF(rng_rect.right(), rng_rect.top() + c_len))
+                painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() + c_len, rng_rect.bottom()))
+                painter.drawLine(QPointF(rng_rect.left(), rng_rect.bottom()), QPointF(rng_rect.left() - c_len, rng_rect.bottom()))
+                painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right() - c_len, rng_rect.bottom()))
+                painter.drawLine(QPointF(rng_rect.right(), rng_rect.bottom()), QPointF(rng_rect.right(), rng_rect.bottom() - c_len))
+
+                # 4) 정보 배지 ([엑셀 범위] A2:D10 (36개 셀 · 480×220))
+                tag_text = f"[엑셀 범위] {range_str} ({c_cnt}개 셀 · {int(rng_rect.width())}×{int(rng_rect.height())}) [우클릭]"
+                font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+                b_font = QFont(font_family, 9, QFont.Bold)
+                fm = QFontMetrics(b_font)
+                txt_w = fm.horizontalAdvance(tag_text) + 14
+                txt_h = 20
+
+                badge_x = rng_rect.left()
+                if rng_rect.top() >= txt_h + 4:
+                    badge_y = rng_rect.top() - txt_h - 2
+                else:
+                    badge_y = rng_rect.top() + 2
+                badge_rect = QRectF(badge_x, badge_y, txt_w, txt_h)
+
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(6, 78, 59, 230))
+                painter.drawRoundedRect(badge_rect, 4, 4)
                 painter.setFont(b_font)
                 painter.setPen(QColor("#FFFFFF"))
                 painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
