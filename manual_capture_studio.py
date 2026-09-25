@@ -7308,6 +7308,7 @@ class StudioCanvasWidget(QWidget):
         self._active_uia_rect = None
         self._active_uia_el = None
         self._active_excel_range = None
+        self._active_uia_group = None
 
     def is_ctrl_down(self) -> bool:
         """물리적 Ctrl 키의 실시간 눌림 상태를 운영체제 하드웨어 레벨에서 정확히 판정합니다."""
@@ -7334,6 +7335,11 @@ class StudioCanvasWidget(QWidget):
         if event.key() == Qt.Key_Escape:
             if getattr(self, "_active_excel_range", None):
                 self._active_excel_range = None
+                self.update()
+                event.accept()
+                return
+            if getattr(self, "_active_uia_group", None):
+                self._active_uia_group = None
                 self.update()
                 event.accept()
                 return
@@ -7571,6 +7577,7 @@ class StudioCanvasWidget(QWidget):
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
         self._active_excel_range = None
+        self._active_uia_group = None
         if self.pixmap is None or self.pixmap.isNull():
             default_w = self.config.get("target_width", 960)
             default_h = int(default_w * 9 / 16)
@@ -8213,6 +8220,12 @@ class StudioCanvasWidget(QWidget):
                     self.show_excel_range_smart_menu(self._active_excel_range, global_pt)
                     return
 
+                # 0-1. UI 그룹 상단 배지([우클릭]) 클릭 시 즉시 UI 그룹 작업 메뉴 표출
+                if getattr(self, "_active_uia_group", None) and self._is_pt_in_uia_group_badge(self._active_uia_group, pt):
+                    global_pt = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                    self.show_uia_group_menu(self._active_uia_group, global_pt)
+                    return
+
                 # 1. 이미 선택된 ImageOverlayItem의 4각 코너 리사이즈 핸들 클릭 여부 확인
                 if self.selected_item and isinstance(self.selected_item, ImageOverlayItem):
                     handle = self.selected_item.get_handle_at(QPointF(pt))
@@ -8265,6 +8278,9 @@ class StudioCanvasWidget(QWidget):
                         if getattr(self, "_active_excel_range", None):
                             if not self._is_pt_in_excel_range(self._active_excel_range, pt):
                                 self._active_excel_range = None
+                        if getattr(self, "_active_uia_group", None):
+                            if not self._is_pt_in_uia_group(self._active_uia_group, pt):
+                                self._active_uia_group = None
                         self.rubber_band_active = True
                         self.rubber_band_start = pt
                         self.rubber_band_end = pt
@@ -8306,6 +8322,12 @@ class StudioCanvasWidget(QWidget):
             if getattr(self, "_active_excel_range", None):
                 if self._is_pt_in_excel_range(self._active_excel_range, pt):
                     self.show_excel_range_smart_menu(self._active_excel_range, global_pt)
+                    return
+
+            # 0-1. UI 그룹이 지정되어 있고, 우클릭 위치가 해당 그룹 내이거나 상단 배지인 경우: UI 그룹 작업 메뉴
+            if getattr(self, "_active_uia_group", None):
+                if self._is_pt_in_uia_group(self._active_uia_group, pt):
+                    self.show_uia_group_menu(self._active_uia_group, global_pt)
                     return
 
             # 1. Ctrl 키다운 상태에서 UIA 객체 우클릭 시: UIA 스마트 추천 메뉴
@@ -8760,12 +8782,18 @@ class StudioCanvasWidget(QWidget):
             }
         """)
 
-        # 0. 엑셀 셀 범위 지정 시 최우선 액션 노출
+        # 0. 엑셀 셀 범위 또는 UI 그룹 지정 시 최우선 액션 노출
         act_excel_range = None
+        act_uia_group = None
         if getattr(self, "_active_excel_range", None):
             r_str = self._active_excel_range.get("range_str", "")
             c_cnt = self._active_excel_range.get("cell_count", 0)
             act_excel_range = menu.addAction(RibbonIconProvider.get_icon("table", 16, "#107C41"), f"엑셀 범위 작업 ({r_str} · {c_cnt}개 셀)...")
+            menu.addSeparator()
+        elif getattr(self, "_active_uia_group", None):
+            c_cnt = self._active_uia_group.get("count", 0)
+            s_str = self._active_uia_group.get("summary_str", "")
+            act_uia_group = menu.addAction(RibbonIconProvider.get_icon("select", 16, "#2563EB"), f"UI 그룹 작업 ({c_cnt}개 컨트롤 · {s_str})...")
             menu.addSeparator()
 
         # 1. 슬라이드 복사 & 클립보드 이미지 붙여넣기
@@ -8824,6 +8852,10 @@ class StudioCanvasWidget(QWidget):
 
         if act_excel_range and chosen == act_excel_range:
             self.show_excel_range_smart_menu(self._active_excel_range, global_pos)
+            return
+
+        if act_uia_group and chosen == act_uia_group:
+            self.show_uia_group_menu(self._active_uia_group, global_pos)
             return
 
         if act_copy_slide and chosen == act_copy_slide:
@@ -9386,6 +9418,454 @@ class StudioCanvasWidget(QWidget):
         QGuiApplication.clipboard().setText(tsv_text)
         self.sig_request_toast.emit(f"엑셀 범위 '{range_info['range_str']}' 데이터 표 복사 완료 ({rows}행 {cols}열)")
 
+    def _detect_uia_group_in_rect(self, rect: QRectF):
+        """지정된 사각 영역에 포함되거나 유의미하게 교차하는 일반 Web/App UIA 컨트롤 집합을 탐색하여 그룹 메타데이터 반환"""
+        if not getattr(self, "uia_elements", None):
+            return None
+
+        norm_rect = rect.normalized()
+        if norm_rect.width() < 10 or norm_rect.height() < 10:
+            return None
+
+        matched_controls = []
+        for el in self.uia_elements:
+            t_label = el.get("type_label") or ""
+            coord_str = el.get("cell_coord") or ""
+            name_str = el.get("name") or ""
+
+            # 1. 엑셀 셀은 제외 (엑셀 범위 로직에서 별도 처리)
+            if t_label == "엑셀셀" or coord_str:
+                continue
+            if re.search(r'\b([A-Za-z]{1,3}\d+)\b', name_str) and el.get("type") == "DataItemControl":
+                continue
+
+            rx, ry, rw, rh = el.get("rect", [0, 0, 0, 0])
+            if rw < 8 or rh < 8:
+                continue
+
+            # 2. 과도하게 큰 루트 윈도우/문서 컨테이너 제외
+            ctype = el.get("type") or ""
+            if ctype in ("WindowControl", "PaneControl", "DocumentControl") and (rw > 500 or rh > 500):
+                continue
+            if rw > norm_rect.width() * 1.8 and rh > norm_rect.height() * 1.8:
+                continue
+            if rw > 1800 and rh > 900:
+                continue
+
+            ctrl_r = QRectF(rx, ry, rw, rh)
+            center_pt = QPointF(rx + rw / 2.0, ry + rh / 2.0)
+
+            # 3. 드래그 영역 내 포함 또는 25% 이상 유의미 교차 판별
+            if norm_rect.contains(center_pt) or norm_rect.contains(ctrl_r):
+                matched_controls.append(el)
+            elif norm_rect.intersects(ctrl_r):
+                inter = norm_rect.intersected(ctrl_r)
+                if (inter.width() * inter.height() >= 0.25 * rw * rh):
+                    matched_controls.append(el)
+
+        if not matched_controls:
+            return None
+
+        # 4. 거의 동일한 좌표의 중복/부모-자식 컨트롤 정제 (버튼/입력란 등 구체적 컨트롤 우선)
+        unique_controls = []
+        type_priority = {
+            "버튼": 10, "입력란": 10, "확인란": 9, "라디오버튼": 9, "드롭다운": 9,
+            "링크": 8, "탭": 8, "메뉴": 8, "목록항목": 7, "텍스트": 5, "커스텀": 3, "그룹": 1
+        }
+        for c in matched_controls:
+            c_r = c.get("rect", [0, 0, 0, 0])
+            duplicate = False
+            for idx, existing in enumerate(unique_controls):
+                e_r = existing.get("rect", [0, 0, 0, 0])
+                if abs(c_r[0] - e_r[0]) <= 4 and abs(c_r[1] - e_r[1]) <= 4 and \
+                   abs(c_r[2] - e_r[2]) <= 4 and abs(c_r[3] - e_r[3]) <= 4:
+                    duplicate = True
+                    c_prio = type_priority.get(c.get("type_label"), 0)
+                    e_prio = type_priority.get(existing.get("type_label"), 0)
+                    if c_prio > e_prio:
+                        unique_controls[idx] = c
+                    break
+            if not duplicate:
+                unique_controls.append(c)
+
+        if not unique_controls:
+            return None
+
+        # 5. 자연스러운 시각적 작업 흐름 순서 정렬 (위->아래 16px 행 밴드, 좌->우)
+        unique_controls.sort(key=lambda c: (round(c.get("rect", [0, 0, 0, 0])[1] / 16.0), c.get("rect", [0, 0, 0, 0])[0]))
+
+        # 6. 전체 그룹 합집합 외곽 영역 계산
+        min_x = min(c.get("rect", [0, 0, 0, 0])[0] for c in unique_controls)
+        min_y = min(c.get("rect", [0, 0, 0, 0])[1] for c in unique_controls)
+        max_x = max(c.get("rect", [0, 0, 0, 0])[0] + c.get("rect", [0, 0, 0, 0])[2] for c in unique_controls)
+        max_y = max(c.get("rect", [0, 0, 0, 0])[1] + c.get("rect", [0, 0, 0, 0])[3] for c in unique_controls)
+        union_rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        int_rect = QRect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
+
+        # 7. 컨트롤 유형별 집계 요약문 생성
+        type_counts = {}
+        for c in unique_controls:
+            tl = c.get("type_label") or "컨트롤"
+            type_counts[tl] = type_counts.get(tl, 0) + 1
+        summary_parts = [f"{k} {v}" for k, v in sorted(type_counts.items(), key=lambda x: -x[1])]
+        summary_str = ", ".join(summary_parts[:3])
+
+        return {
+            "type": "uia_group",
+            "rect": union_rect,
+            "int_rect": int_rect,
+            "controls": unique_controls,
+            "count": len(unique_controls),
+            "type_counts": type_counts,
+            "summary_str": summary_str
+        }
+
+    def _get_uia_group_hit_areas(self, group_info: dict):
+        """UI 그룹 사각형(grp_rect)과 상단 정보 배지(badge_rect)의 QRectF를 반환 (SSOT)"""
+        if not group_info:
+            return None, None
+        raw_rect = group_info.get("rect")
+        if not raw_rect:
+            return None, None
+        grp_rect = QRectF(raw_rect)
+        c_cnt = group_info.get("count", 0)
+        summary_str = group_info.get("summary_str", "")
+
+        tag_text = f"[UI 그룹] {c_cnt}개 ({summary_str}) [우클릭]" if summary_str else f"[UI 그룹] {c_cnt}개 컨트롤 [우클릭]"
+        font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+        b_font = QFont(font_family, 9, QFont.Bold)
+        fm = QFontMetrics(b_font)
+        txt_w = fm.horizontalAdvance(tag_text) + 14
+        txt_h = 20.0
+
+        badge_x = grp_rect.left()
+        if grp_rect.top() >= txt_h + 4:
+            badge_y = grp_rect.top() - txt_h - 2.0
+        else:
+            badge_y = grp_rect.top() + 2.0
+        badge_rect = QRectF(badge_x, badge_y, float(txt_w), txt_h)
+        return grp_rect, badge_rect
+
+    def _is_pt_in_uia_group(self, group_info: dict, pt: QPointF, margin: float = 12.0) -> bool:
+        """주어진 좌표가 UI 그룹 본문 또는 상단 배지 영역에 포함되는지 정밀 판별"""
+        if not group_info or pt is None:
+            return False
+        grp_rect, badge_rect = self._get_uia_group_hit_areas(group_info)
+        if not grp_rect:
+            return False
+        pt_f = QPointF(pt)
+        if grp_rect.adjusted(-margin, -margin, margin, margin).contains(pt_f):
+            return True
+        if badge_rect and badge_rect.adjusted(-4, -4, 4, 4).contains(pt_f):
+            return True
+        return False
+
+    def _is_pt_in_uia_group_badge(self, group_info: dict, pt: QPointF) -> bool:
+        """주어진 좌표가 상단 정보 배지([UI 그룹 ... 우클릭]) 영역 내에 위치하는지 판별"""
+        if not group_info or pt is None:
+            return False
+        _, badge_rect = self._get_uia_group_hit_areas(group_info)
+        if not badge_rect:
+            return False
+        pt_f = QPointF(pt)
+        return badge_rect.adjusted(-4, -4, 4, 4).contains(pt_f)
+
+    def show_uia_group_menu(self, group_info: dict, global_pos: QPoint):
+        """Web/App 다중 UIA 컨트롤 그룹에 대한 우클릭 작업 메뉴 표출"""
+        if not group_info:
+            return
+        c_cnt = group_info.get("count", 0)
+        summary_str = group_info.get("summary_str", "")
+        raw_rect = group_info.get("rect", QRectF())
+        union_rect = QRectF(raw_rect)
+        rx, ry = int(union_rect.x()), int(union_rect.y())
+        rw, rh = int(union_rect.width()), int(union_rect.height())
+        int_rect = QRect(rx, ry, rw, rh)
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                color: #1E293B;
+            }
+            QMenu::item:selected {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QMenu::item:disabled {
+                color: #1E3A8A;
+                font-weight: bold;
+                background-color: #EFF6FF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #E2E8F0;
+                margin: 4px 6px;
+            }
+        """)
+
+        # 1. 헤더 (UI 그룹 정보)
+        hdr_title = f"[UI 그룹] {c_cnt}개 컨트롤 ({summary_str} · {rw}×{rh})" if summary_str else f"[UI 그룹] {c_cnt}개 컨트롤 ({rw}×{rh})"
+        act_hdr = menu.addAction(hdr_title)
+        act_hdr.setEnabled(False)
+        menu.addSeparator()
+
+        # 2. 가이드 일괄 생성
+        act_bundle = menu.addAction(RibbonIconProvider.get_icon("flowchart", 16, "#2563EB"), "순차 스탬프 및 개별 강조박스 생성")
+        act_rclick_guide = menu.addAction(RibbonIconProvider.get_icon("rclick", 16, "#D97706"), "우클릭 조작 지시 생성 (클릭 표시+말풍선)")
+        menu.addSeparator()
+
+        # 3. 주석 배치 옵션
+        act_group_box = menu.addAction(RibbonIconProvider.get_icon("box", 16, "#2563EB"), "그룹 외곽 강조박스 생성")
+        act_ctrl_boxes = menu.addAction(RibbonIconProvider.get_icon("grid", 16, "#2563EB"), f"개별 컨트롤 강조박스 생성 ({c_cnt}개)")
+        act_scenario_callout = menu.addAction(RibbonIconProvider.get_icon("callout", 16, "#2563EB"), "조작 순서 설명상자 생성")
+        menu.addSeparator()
+
+        # 4. 마스킹 & 보호
+        act_redact_inputs = menu.addAction(RibbonIconProvider.get_icon("blur", 16, "#2563EB"), "입력값 블러 마스킹 처리")
+        act_pii = menu.addAction(RibbonIconProvider.get_icon("auto_pii", 16, "#DC2626"), "그룹 내 개인정보(PII) 마스킹")
+        menu.addSeparator()
+
+        # 5. 데이터 복사 (TSV 표 형식)
+        act_copy_tsv = menu.addAction(RibbonIconProvider.get_icon("copy", 16, "#2563EB"), f"컨트롤 목록 클립보드 복사 (TSV · {c_cnt}개)")
+        menu.addSeparator()
+
+        # 6. 그룹 선택 해제
+        act_deselect = menu.addAction(RibbonIconProvider.get_icon("clear", 16, "#64748B"), "그룹 선택 해제")
+
+        chosen = menu.exec_(global_pos)
+        if not chosen:
+            return
+
+        if chosen == act_bundle:
+            self._add_uia_group_sequential_bundle(group_info)
+        elif chosen == act_rclick_guide:
+            self._add_uia_group_rclick_guide(group_info)
+        elif chosen == act_group_box:
+            self.push_undo()
+            box_style = {
+                "color": "#2563EB",
+                "border_width": self.current_box_width,
+                "fill": False
+            }
+            b_item = HighlightBoxItem(int_rect, box_style)
+            self.items.append(b_item)
+            self.selected_item = b_item
+            self.sig_item_selected.emit(b_item)
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit("그룹 외곽 강조박스 배치 완료")
+        elif chosen == act_ctrl_boxes:
+            self.push_undo()
+            box_style = {
+                "color": "#2563EB",
+                "border_width": 2,
+                "fill": False
+            }
+            for ctrl in group_info.get("controls", []):
+                crx, cry, crw, crh = ctrl.get("rect", [0, 0, 0, 0])
+                if crw > 0 and crh > 0:
+                    self.items.append(HighlightBoxItem(QRect(crx, cry, crw, crh), box_style))
+            self.update()
+            self.sig_content_changed.emit()
+            self.sig_request_toast.emit(f"개별 컨트롤 {c_cnt}개 박스 배치 완료")
+        elif chosen == act_scenario_callout:
+            self._add_uia_group_scenario_callout(group_info)
+        elif chosen == act_redact_inputs:
+            self._redact_inputs_in_uia_group(group_info)
+        elif chosen == act_pii:
+            self._redact_pii_in_uia_group(group_info)
+        elif chosen == act_copy_tsv:
+            self._copy_uia_group_tsv(group_info)
+        elif chosen == act_deselect:
+            self._active_uia_group = None
+            self.update()
+            self.sig_request_toast.emit("UI 그룹 선택 해제 완료")
+
+    def _add_uia_group_sequential_bundle(self, group_info: dict):
+        """UI 그룹 내 모든 컨트롤에 순차 스탬프 번호와 개별 강조박스 일괄 생성"""
+        controls = group_info.get("controls", [])
+        if not controls:
+            return
+        self.push_undo()
+        start_idx = self.next_stamp_index
+        box_style = {
+            "color": "#2563EB",
+            "border_width": 2,
+            "fill": False
+        }
+        stamp_style = dict(self.config.get("stamp_style", DEFAULT_CONFIG["stamp_style"]))
+
+        for ctrl in controls:
+            crx, cry, crw, crh = ctrl.get("rect", [0, 0, 0, 0])
+            if crw <= 0 or crh <= 0:
+                continue
+            self.items.append(HighlightBoxItem(QRect(crx, cry, crw, crh), box_style))
+            self.items.append(StampItem(self.next_stamp_index, crx, cry, stamp_style))
+            self.next_stamp_index += 1
+
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"순차 스탬프 및 박스 {len(controls)}개 생성 완료 (№ {start_idx} ~ № {self.next_stamp_index - 1})")
+
+    def _add_uia_group_rclick_guide(self, group_info: dict):
+        """UI 그룹 영역 우클릭 조작 지시 배치 (그룹박스 + 우클릭 인디케이터 + 말풍선)"""
+        self.push_undo()
+        rect = group_info["rect"]
+        rx = int(rect.x())
+        ry = int(rect.y())
+        rw = int(rect.width())
+        rh = int(rect.height())
+        cx = rx + rw / 2.0
+        cy = ry + rh / 2.0
+
+        box_style = {
+            "color": "#D97706",
+            "border_width": 2,
+            "fill": False
+        }
+        self.items.append(HighlightBoxItem(QRect(rx, ry, rw, rh), box_style))
+
+        rclick_style = {
+            "color": "#D97706",
+            "size": 36,
+            "label": "우클릭"
+        }
+        self.items.append(ClickRippleItem(cx, cy, "right", rclick_style))
+
+        summary_str = group_info.get("summary_str", "")
+        action_text = f"'{summary_str}' 영역 우클릭 메뉴 선택" if summary_str else "선택 영역 우클릭 메뉴 조작"
+        tw = max(130.0, float(len(action_text) * 13 + 24))
+        th = 40.0
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+
+        target_pt = QPointF(cx, cy)
+        if cx + 50 + tw <= cw:
+            c_rect = QRectF(cx + 50, cy - th / 2.0, tw, th)
+        elif cx - 50 - tw >= 0:
+            c_rect = QRectF(cx - 50 - tw, cy - th / 2.0, tw, th)
+        else:
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, cx - tw / 2.0)), min(ch - th - 10.0, ry + rh + 15.0), tw, th)
+
+        callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+        callout_st["border_color"] = "#D97706"
+        callout_st["border_width"] = 2
+        self.items.append(CalloutItem(action_text, c_rect, target_pt, callout_st))
+
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"우클릭 조작 지시 배치 완료 ({group_info.get('count', 0)}개 컨트롤)")
+
+    def _add_uia_group_scenario_callout(self, group_info: dict):
+        """UI 그룹 내 컨트롤 조작 순서 요약 설명상자 생성"""
+        controls = group_info.get("controls", [])
+        if not controls:
+            return
+        self.push_undo()
+        lines = []
+        for idx, ctrl in enumerate(controls[:8], 1):
+            sent = self._generate_uia_action_sentence(ctrl)
+            lines.append(f"{idx}. {sent}")
+        if len(controls) > 8:
+            lines.append(f"...외 {len(controls) - 8}개 조작")
+        action_text = "\n".join(lines)
+
+        rect = group_info["rect"]
+        rx = int(rect.x())
+        ry = int(rect.y())
+        rw = int(rect.width())
+        rh = int(rect.height())
+        cx = rx + rw / 2.0
+        cy = ry + rh / 2.0
+
+        max_len = max(len(l) for l in lines) if lines else 10
+        tw = max(180.0, float(max_len * 12 + 30))
+        th = max(50.0, float(len(lines) * 22 + 20))
+        cw = self.pixmap.width() if self.pixmap and not self.pixmap.isNull() else 960
+        ch = self.pixmap.height() if self.pixmap and not self.pixmap.isNull() else 540
+
+        target_pt = QPointF(rx + rw, cy)
+        if rx + rw + tw + 20 <= cw:
+            c_rect = QRectF(rx + rw + 20, max(10.0, min(ch - th - 10.0, ry)), tw, th)
+        elif rx - tw - 20 >= 0:
+            c_rect = QRectF(rx - tw - 20, max(10.0, min(ch - th - 10.0, ry)), tw, th)
+        else:
+            c_rect = QRectF(max(10.0, min(cw - tw - 10.0, rx)), min(ch - th - 10.0, ry + rh + 20.0), tw, th)
+
+        callout_st = dict(self.config.get("callout_style", DEFAULT_CONFIG["callout_style"]))
+        callout_st["border_color"] = "#2563EB"
+        callout_st["border_width"] = 2
+        c_item = CalloutItem(action_text, c_rect, target_pt, callout_st)
+        self.items.append(c_item)
+        self.selected_item = c_item
+        self.sig_item_selected.emit(c_item)
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"조작 순서 설명상자 배치 완료 ({len(lines)}단계)")
+
+    def _redact_inputs_in_uia_group(self, group_info: dict):
+        """UI 그룹 내 모든 입력란(EditControl, 비밀번호 필드)에 블러 마스킹 일괄 적용"""
+        controls = group_info.get("controls", [])
+        input_ctrls = [c for c in controls if (c.get("type_label") == "입력란" or c.get("is_password") or c.get("type") == "EditControl")]
+        if not input_ctrls:
+            self.sig_request_toast.emit("그룹 내 감지된 입력란(Edit) 컨트롤 없음")
+            return
+
+        self.push_undo()
+        for c in input_ctrls:
+            crx, cry, crw, crh = c.get("rect", [0, 0, 0, 0])
+            if crw > 0 and crh > 0:
+                self.items.append(BlurMosaicItem(QRect(crx, cry, crw, crh), {"block_size": 10}))
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"입력란 {len(input_ctrls)}건 블러 마스킹 완료 (Ctrl+Z 취소)")
+
+    def _redact_pii_in_uia_group(self, group_info: dict):
+        """UI 그룹 내 개인정보(PII: 주민번호, 이메일, 전화번호 등) 탐지 및 자동 블러 마스킹"""
+        controls = group_info.get("controls", [])
+        if not controls:
+            return
+        rects = PiiRedactionEngine.detect_pii_from_uia(controls)
+        if not rects:
+            self.sig_request_toast.emit("UI 그룹 내 감지된 개인정보 없음")
+            return
+
+        self.push_undo()
+        for r in rects:
+            self.items.append(BlurMosaicItem(r, {"block_size": 10}))
+        self.update()
+        self.sig_content_changed.emit()
+        self.sig_request_toast.emit(f"UI 그룹 내 개인정보 {len(rects)}건 마스킹 완료 (Ctrl+Z 취소)")
+
+    def _copy_uia_group_tsv(self, group_info: dict):
+        """UI 그룹 컨트롤 목록을 TSV(탭 구분 텍스트) 형식으로 클립보드에 복사"""
+        controls = group_info.get("controls", [])
+        if not controls:
+            return
+        lines = ["순번\t유형\t컨트롤명\t값/내용\tX\tY\t너비\t높이\t단축키"]
+        for idx, c in enumerate(controls, 1):
+            tl = str(c.get("type_label") or "").replace("\t", " ")
+            nm = str(c.get("name") or "").replace("\t", " ").replace("\r\n", " ").replace("\n", " ")
+            vl = str(c.get("value") or "").replace("\t", " ").replace("\r\n", " ").replace("\n", " ")
+            rx, ry, rw, rh = c.get("rect", [0, 0, 0, 0])
+            ak = str(c.get("accelerator_key") or "").replace("\t", " ")
+            lines.append(f"{idx}\t{tl}\t{nm}\t{vl}\t{rx}\t{ry}\t{rw}\t{rh}\t{ak}")
+
+        tsv_text = "\r\n".join(lines)
+        QGuiApplication.clipboard().setText(tsv_text)
+        self.sig_request_toast.emit(f"UI 그룹 컨트롤 목록 {len(controls)}건 TSV 복사 완료")
+
     def mouseMoveEvent(self, event):
         pt = self.get_canvas_pt(event)
         if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle and isinstance(self.selected_item, ImageOverlayItem):
@@ -9415,11 +9895,16 @@ class StudioCanvasWidget(QWidget):
             self.selected_item = self.selected_items[-1] if self.selected_items else None
             self.sig_item_selected.emit(self.selected_item)
 
-            # 엑셀 셀 범위 실시간 감지
+            # 엑셀 셀 범위 또는 일반 Web/App UIA 컨트롤 그룹 실시간 감지
             if rb_rect.width() > 10 and rb_rect.height() > 10:
                 self._active_excel_range = self._detect_excel_range_in_rect(rb_rect)
+                if not self._active_excel_range:
+                    self._active_uia_group = self._detect_uia_group_in_rect(rb_rect)
+                else:
+                    self._active_uia_group = None
             else:
                 self._active_excel_range = None
+                self._active_uia_group = None
 
             self.update()
             return
@@ -9591,6 +10076,10 @@ class StudioCanvasWidget(QWidget):
                     r_str = self._active_excel_range.get("range_str", "")
                     c_cnt = self._active_excel_range.get("cell_count", 0)
                     self.sig_request_toast.emit(f"엑셀 셀 범위 지정: {r_str} ({c_cnt}개 셀) — 우클릭 스마트 메뉴")
+                elif getattr(self, "_active_uia_group", None):
+                    c_cnt = self._active_uia_group.get("count", 0)
+                    s_str = self._active_uia_group.get("summary_str", "")
+                    self.sig_request_toast.emit(f"UI 그룹 지정: {c_cnt}개 컨트롤 ({s_str}) — 우클릭 스마트 메뉴")
                 self.update()
             if hasattr(self, "resizing_overlay_handle") and self.resizing_overlay_handle:
                 self.resizing_overlay_handle = None
@@ -10427,6 +10916,54 @@ class StudioCanvasWidget(QWidget):
 
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(QColor(6, 78, 59, 230))
+                    painter.drawRoundedRect(badge_rect, 4, 4)
+                    painter.setFont(b_font)
+                    painter.setPen(QColor("#FFFFFF"))
+                    painter.drawText(badge_rect, Qt.AlignCenter, tag_text)
+                    painter.restore()
+
+            # 2.7. Web / App UI 그룹(Group) 하이라이트 및 배지 시각화
+            if getattr(self, "_active_uia_group", None) and not getattr(self, "_active_excel_range", None):
+                group_info = self._active_uia_group
+                grp_rect, badge_rect = self._get_uia_group_hit_areas(group_info)
+                if grp_rect:
+                    c_cnt = group_info.get("count", 0)
+                    summary_str = group_info.get("summary_str", "")
+
+                    painter.save()
+                    # 1) 전체 그룹 반투명 로열 블루 배경 및 대시 외곽선
+                    painter.setPen(QPen(QColor("#2563EB"), 2.0, Qt.DashLine))
+                    painter.setBrush(QColor(37, 99, 235, 25))
+                    painter.drawRect(grp_rect)
+
+                    # 2) 그룹 내 각 컨트롤 경계선 점선 표시
+                    painter.setPen(QPen(QColor(37, 99, 235, 80), 1.0, Qt.DotLine))
+                    painter.setBrush(Qt.NoBrush)
+                    for ctrl in group_info.get("controls", []):
+                        crx, cry, crw, crh = ctrl.get("rect", [0, 0, 0, 0])
+                        if crw > 0 and crh > 0:
+                            painter.drawRect(QRectF(crx, cry, crw, crh))
+
+                    # 3) 모서리 강조 브래킷
+                    c_len = min(14.0, min(grp_rect.width(), grp_rect.height()) / 3.0)
+                    p_corner = QPen(QColor("#1D4ED8"), 3.0)
+                    painter.setPen(p_corner)
+                    painter.drawLine(QPointF(grp_rect.left(), grp_rect.top()), QPointF(grp_rect.left() + c_len, grp_rect.top()))
+                    painter.drawLine(QPointF(grp_rect.left(), grp_rect.top()), QPointF(grp_rect.left(), grp_rect.top() + c_len))
+                    painter.drawLine(QPointF(grp_rect.right(), grp_rect.top()), QPointF(grp_rect.right() - c_len, grp_rect.top()))
+                    painter.drawLine(QPointF(grp_rect.right(), grp_rect.top()), QPointF(grp_rect.right(), grp_rect.top() + c_len))
+                    painter.drawLine(QPointF(grp_rect.left(), grp_rect.bottom()), QPointF(grp_rect.left() + c_len, grp_rect.bottom()))
+                    painter.drawLine(QPointF(grp_rect.left(), grp_rect.bottom()), QPointF(grp_rect.left() - c_len, grp_rect.bottom()))
+                    painter.drawLine(QPointF(grp_rect.right(), grp_rect.bottom()), QPointF(grp_rect.right() - c_len, grp_rect.bottom()))
+                    painter.drawLine(QPointF(grp_rect.right(), grp_rect.bottom()), QPointF(grp_rect.right(), grp_rect.bottom() - c_len))
+
+                    # 4) 정보 배지 ([UI 그룹] N개 (버튼 2, 입력란 1) [우클릭])
+                    tag_text = f"[UI 그룹] {c_cnt}개 ({summary_str}) [우클릭]" if summary_str else f"[UI 그룹] {c_cnt}개 컨트롤 [우클릭]"
+                    font_family = "Malgun Gothic" if sys.platform == "win32" else "Segoe UI"
+                    b_font = QFont(font_family, 9, QFont.Bold)
+
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(30, 64, 175, 230))
                     painter.drawRoundedRect(badge_rect, 4, 4)
                     painter.setFont(b_font)
                     painter.setPen(QColor("#FFFFFF"))
