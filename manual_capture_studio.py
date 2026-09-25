@@ -3664,7 +3664,8 @@ class UIACollectorThread(QThread):
                 cap_r = self.capture_rect.right()
                 cap_b = self.capture_rect.bottom()
 
-                # 엑셀(Microsoft Excel)인 경우 워크시트 테이블/그리드 우선 직행
+                excel_sheet = None
+                # 엑셀(Microsoft Excel)인 경우 워크시트 테이블/그리드 우선 직행 및 OLE/COM 브릿지 연결
                 if is_excel:
                     try:
                         sheet_ctrl = target_fw.Control(searchDepth=8, ClassName="EXCEL7")
@@ -3678,6 +3679,38 @@ class UIACollectorThread(QThread):
                                 root_search = sheet_ctrl
                     except Exception:
                         pass
+
+                    try:
+                        import win32gui, pythoncom, win32com.client
+                        excel7_hwnds = []
+                        target_h = getattr(target_fw, "NativeWindowHandle", 0) or (self.target_hwnd or 0)
+                        if target_h:
+                            def enum_excel7(h, l):
+                                if win32gui.GetClassName(h) == "EXCEL7":
+                                    l.append(h)
+                            win32gui.EnumChildWindows(target_h, enum_excel7, excel7_hwnds)
+                            if not excel7_hwnds and win32gui.GetClassName(target_h) == "EXCEL7":
+                                excel7_hwnds.append(target_h)
+
+                        if excel7_hwnds:
+                            oleacc = ctypes.windll.oleacc
+                            class GUID(ctypes.Structure):
+                                _fields_ = [
+                                    ('Data1', wintypes.DWORD),
+                                    ('Data2', wintypes.WORD),
+                                    ('Data3', wintypes.WORD),
+                                    ('Data4', ctypes.c_byte * 8)
+                                ]
+                            iid_disp = GUID(0x00020400, 0x0000, 0x0000, (ctypes.c_byte * 8)(0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46))
+                            p_disp = ctypes.c_void_p()
+                            OBJID_NATIVEOM = -16
+                            res = oleacc.AccessibleObjectFromWindow(excel7_hwnds[0], OBJID_NATIVEOM, ctypes.byref(iid_disp), ctypes.byref(p_disp))
+                            if res == 0 and p_disp.value:
+                                disp = pythoncom.ObjectFromAddress(p_disp.value, pythoncom.IID_IDispatch)
+                                excel_win = win32com.client.Dispatch(disp)
+                                excel_sheet = excel_win.ActiveSheet
+                    except Exception:
+                        excel_sheet = None
 
                 # 수집 대상 컨트롤 타입 (매뉴얼 작성용 조작 가능 핵심 컨트롤)
                 actionable_types = {
@@ -3781,6 +3814,19 @@ class UIACollectorThread(QThread):
                                         if m_cell:
                                             cell_coord = m_cell.group(1).upper()
 
+                                        # 4-1. Excel COM Bridge 최우선 값 조회 (cell.value / cell.text)
+                                        if excel_sheet and cell_coord and not val_str:
+                                            try:
+                                                c_text = excel_sheet.Range(cell_coord).Text
+                                                if c_text is not None and str(c_text).strip():
+                                                    val_str = str(c_text).strip()
+                                                else:
+                                                    c_val = excel_sheet.Range(cell_coord).Value
+                                                    if c_val is not None and str(c_val).strip():
+                                                        val_str = str(c_val).strip()
+                                            except Exception:
+                                                pass
+
                                         m_quote = re.search(r'["\']([^"\']*)["\']', name_str)
                                         if m_quote:
                                             q_val = m_quote.group(1).strip()
@@ -3790,6 +3836,10 @@ class UIACollectorThread(QThread):
                                             cleaned = re.sub(rf'\b{re.escape(cell_coord)}\b', '', name_str).strip()
                                             if cleaned:
                                                 val_str = cleaned
+
+                                        # 실제 셀값이 확보된 경우 name을 '"값" 셀좌표'로 갱신하여 주소 단독 노출 원천 방지
+                                        if val_str and cell_coord:
+                                            name_str = f'"{val_str}" {cell_coord}'
 
                                     final_type_label = type_label or "컨트롤"
                                     if cell_coord or (is_excel and ctype == auto.ControlType.DataItemControl):
@@ -8413,6 +8463,16 @@ class StudioCanvasWidget(QWidget):
             return f"'{name}' 항목 선택" if name else "목록 항목 선택"
         elif t_label == "트리항목":
             return f"'{name}' 트리 노드 선택" if name else "트리 노드 선택"
+        elif t_label == "엑셀셀":
+            val = (el.get("value") or "").strip()
+            coord = (el.get("cell_coord") or "").strip()
+            if coord and val:
+                return f"'{coord}' 셀 값 '{val}' 확인"
+            elif val:
+                return f"'{val}' 셀 선택"
+            elif coord:
+                return f"'{coord}' 셀 선택"
+            return "엑셀 셀 선택"
         elif t_label == "데이터셀":
             return f"'{name}' 셀 선택/조회" if name else "데이터셀 선택"
         else:
@@ -8591,7 +8651,8 @@ class StudioCanvasWidget(QWidget):
             self.sig_content_changed.emit()
 
         elif chosen == act_label:
-            lbl_text = name if name else t_label
+            val = (el.get("value") or "").strip()
+            lbl_text = val if val else (name if name else t_label)
             text, ok = self.prompt_text_dialog(lbl_text)
             if ok and text.strip():
                 self.push_undo()
@@ -8615,6 +8676,15 @@ class StudioCanvasWidget(QWidget):
             self.sig_content_changed.emit()
 
         elif chosen == act_ocr:
+            val_text = (el.get("value") or "").strip()
+            # 엑셀 셀인 경우 cell.address(A1) 대신 cell.value를 최우선 반환
+            if val_text:
+                QGuiApplication.clipboard().setText(val_text)
+                self.sig_request_toast.emit(f"텍스트 복사 완료: '{val_text}'")
+                dlg = OcrResultDialog(val_text, self.window())
+                dlg.exec()
+                return
+
             extracted = name
             if self.pixmap and not self.pixmap.isNull():
                 crop_rect = QRect(rx, ry, rw, rh).intersected(QRect(0, 0, self.pixmap.width(), self.pixmap.height()))
