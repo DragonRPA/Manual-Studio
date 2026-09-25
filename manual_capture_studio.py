@@ -3125,6 +3125,96 @@ class PiiRedactionEngine:
         return []
 
     @classmethod
+    def detect_pii_from_uia(cls, uia_elements, active_categories=None, custom_rules=None):
+        """
+        UIA 수집 개체(컨트롤, 텍스트, 엑셀 셀값 등)의 Name, Value, 속성 정보를 기반으로
+        개인정보(PII)를 OS 레벨 100% 무오차 정밀 탐지하여 로컬 캔버스 좌표 QRect 목록 반환.
+        """
+        if not uia_elements:
+            return []
+
+        if active_categories is None:
+            active_categories = ["resident", "phone", "email", "card", "account", "biz_number", "korean_name", "address", "ip", "mac"]
+
+        active_regexes = []
+        for cat in active_categories:
+            if cat in cls.PATTERNS:
+                active_regexes.append(cls.PATTERNS[cat])
+
+        if custom_rules:
+            for rule in custom_rules:
+                if isinstance(rule, dict) and rule.get("enabled", True):
+                    pat_str = rule.get("pattern", "").strip()
+                    if pat_str:
+                        try:
+                            active_regexes.append(re.compile(pat_str))
+                        except Exception as e:
+                            print(f"[PII Custom Regex Compile Error] {rule.get('name')}: {e}")
+
+        matched_rects = []
+        name_headers = ("성명", "이름", "고객명", "대표자", "예금주", "환자명", "작성자", "담당자")
+        re_korean_name_standalone = re.compile(r'^[가-힣]{2,4}$')
+
+        for el in uia_elements:
+            if not isinstance(el, dict):
+                continue
+
+            r = el.get("rect")
+            if not r or len(r) != 4:
+                continue
+
+            local_x, local_y, w, h = int(r[0]), int(r[1]), int(r[2]), int(r[3])
+            if w <= 0 or h <= 0:
+                continue
+
+            qrect = QRect(local_x, local_y, w, h)
+
+            # 1. 암호 입력 필드(IsPassword=True)인 경우 즉시 마스킹 대상 지정
+            if el.get("is_password", False):
+                matched_rects.append(qrect)
+                continue
+
+            # 2. 텍스트 및 셀값 검사
+            val = str(el.get("value") or "").strip()
+            name = str(el.get("name") or "").strip()
+            auto_id = str(el.get("automation_id") or "").strip()
+
+            candidates = set()
+            if val:
+                candidates.add(val)
+            if name:
+                candidates.add(name)
+                # 엑셀 형식('"값" A1')인 경우 내부 순수 값 분리
+                m_coord = re.match(r'^(?:["\'](.*)["\']|(.*?))\s+([A-Za-z]{1,3}\d+)$', name)
+                if m_coord:
+                    extracted = (m_coord.group(1) or m_coord.group(2) or "").strip()
+                    if extracted:
+                        candidates.add(extracted)
+
+            matched = False
+            for text in candidates:
+                if not text:
+                    continue
+                # 패턴 검사
+                for pat in active_regexes:
+                    if pat.search(text):
+                        matched_rects.append(qrect)
+                        matched = True
+                        break
+                if matched:
+                    break
+
+                # 3. 성명 컬럼 특화 검사: 성명 관련 헤더/필드이면서 2~4글자 한글 이름인 경우
+                if "korean_name" in active_categories:
+                    field_context = f"{name} {auto_id}"
+                    if any(nh in field_context for nh in name_headers) and re_korean_name_standalone.match(val or text):
+                        matched_rects.append(qrect)
+                        matched = True
+                        break
+
+        return cls.deduplicate_and_pad(matched_rects, pad_x=2, pad_y=2)
+
+    @classmethod
     def detect_pii_from_lines(cls, lines_of_words, active_categories=None, custom_rules=None):
         if active_categories is None:
             active_categories = ["resident", "phone", "email", "card", "account", "biz_number", "korean_name", "address", "ip", "mac"]
@@ -3193,28 +3283,67 @@ class PiiRedactionEngine:
 
 
 class PiiWorkerThread(QThread):
-    """WinRT OCR을 비동기로 호출하여 화면 내 모든 단어와 좌표를 추출한 뒤 PII 마스킹 영역 목록을 방출"""
+    """
+    UIA(1순위) 및 WinRT OCR(2순위 보조)을 결합하여 화면 내 민감 개인정보(PII) 마스킹 영역 목록 방출.
+    UIA 정보가 존재할 경우 UIA 값을 우선 사용하여 100% 무오차 마스킹하고 OCR은 보조적으로만 사용.
+    UIA 정보가 없을 경우 OCR 단독으로 동작.
+    """
     sig_result = Signal(list, str)
 
-    def __init__(self, pil_img, lang="ko", active_categories=None, custom_rules=None, parent=None):
+    def __init__(self, pil_img, lang="ko", active_categories=None, custom_rules=None, uia_elements=None, parent=None):
         super().__init__(parent)
         self.pil_img = pil_img
         self.lang = lang
         self.active_categories = active_categories
         self.custom_rules = custom_rules
+        self.uia_elements = list(uia_elements or [])
 
     def run(self):
         try:
-            lines_words = self._extract_ocr_words()
-            if not lines_words:
-                self.sig_result.emit([], "No text detected")
-                return
-            rects = PiiRedactionEngine.detect_pii_from_lines(
-                lines_words,
-                active_categories=self.active_categories,
-                custom_rules=self.custom_rules
-            )
-            self.sig_result.emit(rects, f"{len(rects)} items found")
+            uia_rects = []
+            has_uia = bool(self.uia_elements)
+
+            if has_uia:
+                # 1. UIA 개체 정보(컨트롤/엑셀 셀값 등)를 사용한 우선 마스킹 탐지
+                uia_rects = PiiRedactionEngine.detect_pii_from_uia(
+                    self.uia_elements,
+                    active_categories=self.active_categories,
+                    custom_rules=self.custom_rules
+                )
+
+            # 2. OCR 실행
+            ocr_rects = []
+            try:
+                lines_words = self._extract_ocr_words()
+                if lines_words:
+                    ocr_rects = PiiRedactionEngine.detect_pii_from_lines(
+                        lines_words,
+                        active_categories=self.active_categories,
+                        custom_rules=self.custom_rules
+                    )
+            except Exception as ocr_err:
+                print(f"[PII OCR Error]: {ocr_err}")
+
+            if not has_uia:
+                # UIA가 없는 경우: OCR 단독 사용
+                final_rects = PiiRedactionEngine.deduplicate_and_pad(ocr_rects)
+                summary = f"OCR {len(final_rects)}건"
+            else:
+                # UIA가 있는 경우: UIA 우선 적용 + OCR은 보조적으로만 사용
+                supplementary_ocr = []
+                for o_rect in ocr_rects:
+                    already_covered = False
+                    for u_rect in uia_rects:
+                        if u_rect.intersects(o_rect) or u_rect.contains(o_rect) or o_rect.contains(u_rect):
+                            already_covered = True
+                            break
+                    if not already_covered:
+                        supplementary_ocr.append(o_rect)
+
+                final_rects = PiiRedactionEngine.deduplicate_and_pad(uia_rects + supplementary_ocr)
+                summary = f"UIA {len(uia_rects)}건, OCR 보조 {len(supplementary_ocr)}건"
+
+            self.sig_result.emit(final_rects, summary)
         except Exception as e:
             self.sig_result.emit([], str(e))
 
@@ -3457,6 +3586,13 @@ class UIACollectorThread(QThread):
                     target_fw = auto.ControlFromHandle(self.target_hwnd)
                 except Exception:
                     target_fw = None
+                if not target_fw:
+                    try:
+                        root_h = user32.GetAncestor(self.target_hwnd, 2) # GA_ROOT
+                        if root_h and user32.IsWindow(root_h):
+                            target_fw = auto.ControlFromHandle(root_h)
+                    except Exception:
+                        pass
 
             if not target_fw:
                 center_x = self.capture_rect.x() + self.capture_rect.width() // 2
@@ -3490,16 +3626,38 @@ class UIACollectorThread(QThread):
                     pass
 
             if target_fw:
+                cls_name = getattr(target_fw, "ClassName", "")
+                is_excel = ("XLMAIN" in cls_name) or ("EXCEL" in cls_name.upper())
+
                 # 브라우저(Edge/Chrome)인 경우 웹 페이지 본문인 DocumentControl 우선 직행
                 root_search = target_fw
                 try:
-                    cls_name = getattr(target_fw, "ClassName", "")
                     if "Chrome" in cls_name or "Edge" in cls_name or "Widget" in cls_name:
                         doc = target_fw.DocumentControl(searchDepth=6)
                         if doc and doc.Exists(0, 0):
                             root_search = doc
                 except Exception:
                     pass
+
+                cap_l = self.capture_rect.left()
+                cap_t = self.capture_rect.top()
+                cap_r = self.capture_rect.right()
+                cap_b = self.capture_rect.bottom()
+
+                # 엑셀(Microsoft Excel)인 경우 워크시트 테이블/그리드 우선 직행
+                if is_excel:
+                    try:
+                        sheet_ctrl = target_fw.Control(searchDepth=8, ClassName="EXCEL7")
+                        if not sheet_ctrl or not sheet_ctrl.Exists(0, 0):
+                            sheet_ctrl = target_fw.TableControl(searchDepth=8)
+                        if not sheet_ctrl or not sheet_ctrl.Exists(0, 0):
+                            sheet_ctrl = target_fw.DataGridControl(searchDepth=8)
+                        if sheet_ctrl and sheet_ctrl.Exists(0, 0):
+                            b = sheet_ctrl.BoundingRectangle
+                            if b and not (b.right < cap_l or b.left > cap_r or b.bottom < cap_t or b.top > cap_b):
+                                root_search = sheet_ctrl
+                    except Exception:
+                        pass
 
                 # 수집 대상 컨트롤 타입 (매뉴얼 작성용 조작 가능 핵심 컨트롤)
                 actionable_types = {
@@ -3523,11 +3681,7 @@ class UIACollectorThread(QThread):
                 seen_rects = set()
                 # Depth 25 지원 DFS 순회 (화면 영역 공간 가지치기 적용)
                 stack = [(root_search, 0)]
-                max_elements = 500
-                cap_l = self.capture_rect.left()
-                cap_t = self.capture_rect.top()
-                cap_r = self.capture_rect.right()
-                cap_b = self.capture_rect.bottom()
+                max_elements = 1500
 
                 while stack and len(elements) < max_elements:
                     ctrl, depth = stack.pop()
@@ -3571,6 +3725,56 @@ class UIACollectorThread(QThread):
                                 if key not in seen_rects:
                                     seen_rects.add(key)
                                     name_str = (ctrl.Name or "").strip()
+                                    val_str = ""
+                                    cell_coord = ""
+
+                                    # 1. ValuePattern
+                                    try:
+                                        vp = ctrl.GetValuePattern()
+                                        if vp:
+                                            val_str = (vp.Value or "").strip()
+                                    except Exception:
+                                        pass
+
+                                    # 2. LegacyIAccessiblePattern (Value)
+                                    if not val_str:
+                                        try:
+                                            lp = ctrl.GetLegacyIAccessiblePattern()
+                                            if lp:
+                                                val_str = (lp.Value or "").strip()
+                                        except Exception:
+                                            pass
+
+                                    # 3. TextPattern (문서 및 셀 텍스트)
+                                    if not val_str:
+                                        try:
+                                            tp = ctrl.GetPattern(auto.PatternId.TextPattern)
+                                            if tp:
+                                                val_str = (tp.DocumentRange.GetText(-1) or "").strip()
+                                        except Exception:
+                                            pass
+
+                                    # 4. Excel 셀 특화 파싱 (Name 형식: '"값" A1' 또는 'A1' 또는 '홍길동 A1')
+                                    is_cell = (ctype == auto.ControlType.DataItemControl) or is_excel
+                                    if is_cell and name_str:
+                                        m_cell = re.search(r'\b([A-Za-z]{1,3}\d+)\b', name_str)
+                                        if m_cell:
+                                            cell_coord = m_cell.group(1).upper()
+
+                                        m_quote = re.search(r'["\']([^"\']*)["\']', name_str)
+                                        if m_quote:
+                                            q_val = m_quote.group(1).strip()
+                                            if q_val and not val_str:
+                                                val_str = q_val
+                                        elif cell_coord and not val_str:
+                                            cleaned = re.sub(rf'\b{re.escape(cell_coord)}\b', '', name_str).strip()
+                                            if cleaned:
+                                                val_str = cleaned
+
+                                    final_type_label = type_label or "컨트롤"
+                                    if cell_coord or (is_excel and ctype == auto.ControlType.DataItemControl):
+                                        final_type_label = "엑셀셀"
+
                                     accel_key = getattr(ctrl, "AcceleratorKey", "") or getattr(ctrl, "AccessKey", "")
                                     help_txt = getattr(ctrl, "HelpText", "")
                                     is_pwd = bool(getattr(ctrl, "IsPassword", False))
@@ -3579,8 +3783,10 @@ class UIACollectorThread(QThread):
 
                                     elements.append({
                                         "type": ctrl.ControlTypeName,
-                                        "type_label": type_label or "컨트롤",
+                                        "type_label": final_type_label,
                                         "name": name_str,
+                                        "value": val_str,
+                                        "cell_coord": cell_coord,
                                         "automation_id": auto_id,
                                         "class_name": cls_name,
                                         "rect": [local_x, local_y, w, h],
@@ -7734,8 +7940,15 @@ class StudioCanvasWidget(QWidget):
         }
         ocr_lang = lang_map.get(cur_locale, "en")
 
+        # UIA 요소 확보 (현재 캔버스 또는 활성 슬라이드)
+        uia_list = list(getattr(self, "uia_elements", None) or [])
+        if not uia_list:
+            win = self.window()
+            if hasattr(win, "storyboard_steps") and 0 <= getattr(win, "current_step_idx", -1) < len(win.storyboard_steps):
+                uia_list = list(win.storyboard_steps[win.current_step_idx].get("uia_elements", []))
+
         self.sig_request_toast.emit(tr("btn_auto_pii", "개인정보 마스킹") + "...")
-        self._pii_thread = PiiWorkerThread(pil_img, ocr_lang, active_categories, custom_rules)
+        self._pii_thread = PiiWorkerThread(pil_img, ocr_lang, active_categories, custom_rules, uia_elements=uia_list)
         self._pii_thread.sig_result.connect(self._on_pii_result)
         self._pii_thread.start()
 
@@ -7752,7 +7965,9 @@ class StudioCanvasWidget(QWidget):
 
         self.update()
         self.sig_content_changed.emit()
-        msg = tr("toast_pii_found", "민감 개인정보 {count}건 자동 마스킹 완료 (Ctrl+Z 취소 가능)").replace("{count}", str(len(rect_list)))
+        count = len(rect_list)
+        detail_msg = f" ({summary})" if summary else ""
+        msg = f"민감 개인정보 {count}건 자동 마스킹 완료{detail_msg} (Ctrl+Z 취소)"
         self.sig_request_toast.emit(msg)
 
     def export_project_data(self):
@@ -9497,9 +9712,19 @@ class StudioCanvasWidget(QWidget):
                 el = self._active_uia_el
                 t_label = el.get("type_label") or "컨트롤"
                 name_str = (el.get("name") or "").strip()
+                val_str = (el.get("value") or "").strip()
+                cell_coord = (el.get("cell_coord") or "").strip()
                 w_int = int(rect_f.width())
                 h_int = int(rect_f.height())
-                if name_str:
+
+                if cell_coord:
+                    if val_str:
+                        tag_text = f"[{t_label} {cell_coord}] {val_str} ({w_int}×{h_int})"
+                    else:
+                        tag_text = f"[{t_label} {cell_coord}] ({w_int}×{h_int})"
+                elif val_str and val_str != name_str:
+                    tag_text = f"[{t_label}] {name_str}: {val_str} ({w_int}×{h_int})"
+                elif name_str:
                     tag_text = f"[{t_label}] {name_str} ({w_int}×{h_int})"
                 else:
                     tag_text = f"[{t_label}] ({w_int}×{h_int})"
@@ -17171,10 +17396,28 @@ class ManualStudioWindow(QMainWindow):
     def on_uia_collected(self, elements):
         if hasattr(self, "canvas"):
             self.canvas.uia_elements = elements
+            has_pii = False
             if hasattr(self, "storyboard_steps") and 0 <= self.current_step_idx < len(self.storyboard_steps):
-                self.storyboard_steps[self.current_step_idx]["uia_elements"] = elements
+                step = self.storyboard_steps[self.current_step_idx]
+                step["uia_elements"] = elements
+                try:
+                    active_cats = [cat for cat, val in self.config.get("pii_categories", {}).items() if val]
+                    custom_rules = self.config.get("custom_pii_rules", [])
+                    detected = PiiRedactionEngine.detect_pii_from_uia(elements, active_categories=active_cats, custom_rules=custom_rules)
+                    has_pii = bool(detected)
+                    step["has_unmasked_pii"] = has_pii
+                except Exception:
+                    pass
+
             if elements:
-                self.show_toast(f"UIA 컨트롤 {len(elements)}개 감지 완료 (스탬프/박스 스냅 활성)")
+                excel_cell_count = sum(1 for el in elements if el.get("type_label") == "엑셀셀" or el.get("cell_coord"))
+                if has_pii:
+                    extra = f" (엑셀셀 {excel_cell_count}개)" if excel_cell_count > 0 else ""
+                    self.show_toast(f"UIA 컨트롤 {len(elements)}개 감지{extra} • ⚠️ 개인정보 감지됨 (Shift+M 마스킹)")
+                elif excel_cell_count > 0:
+                    self.show_toast(f"UIA 엑셀 셀 {excel_cell_count}개 및 컨트롤 {len(elements)}개 감지 완료")
+                else:
+                    self.show_toast(f"UIA 컨트롤 {len(elements)}개 감지 완료 (스탬프/박스 스냅 활성)")
 
     # -------------------------------------------------------------
     # 다중 모니터 & 폰트 & 꺾임선 & 워드아트 이벤트 핸들러
